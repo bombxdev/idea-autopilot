@@ -6,6 +6,7 @@
   import Board from "./pages/Board.svelte";
   import Quota from "./pages/Quota.svelte";
   import Library from "./pages/Library.svelte";
+  import Skills from "./pages/Skills.svelte";
   import Settings from "./pages/Settings.svelte";
   import Activity from "./pages/Activity.svelte";
   import IdeaDrawer from "./components/IdeaDrawer.svelte";
@@ -19,6 +20,7 @@
     { key: "board", icon: "🗂", label: "บอร์ด" },
     { key: "quota", icon: "⛽", label: "โควต้า" },
     { key: "library", icon: "📚", label: "คลังความรู้" },
+    { key: "skills", icon: "🧰", label: "สกิล" },
     { key: "activity", icon: "📜", label: "บันทึก" },
     { key: "settings", icon: "⚙️", label: "ตั้งค่า" },
   ];
@@ -120,6 +122,7 @@
       {:else if store.page === "board"}<Board />
       {:else if store.page === "quota"}<Quota />
       {:else if store.page === "library"}<Library />
+      {:else if store.page === "skills"}<Skills />
       {:else if store.page === "activity"}<Activity />
       {:else}<Settings />{/if}
     </section>

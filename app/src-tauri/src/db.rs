@@ -101,6 +101,27 @@ pub fn open(path: &Path) -> Result<Connection> {
             idea_id INTEGER,
             text TEXT NOT NULL
         );
+        -- skill library (files live in data/skills/<slug>/SKILL.md); see skills.rs
+        CREATE TABLE IF NOT EXISTS skills (
+            slug TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            family TEXT NOT NULL DEFAULT '',
+            enabled INTEGER NOT NULL DEFAULT 1,
+            pinned INTEGER NOT NULL DEFAULT 0,
+            trust TEXT NOT NULL DEFAULT 'local',
+            source TEXT NOT NULL DEFAULT '',
+            sha256 TEXT NOT NULL DEFAULT '',
+            commit_sha TEXT NOT NULL DEFAULT '',
+            license TEXT NOT NULL DEFAULT '',
+            installed INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS skill_runs (
+            run_id INTEGER NOT NULL,
+            slug TEXT NOT NULL,
+            used INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (run_id, slug)
+        );
         "#,
     )?;
     // migrations for columns added after the first release

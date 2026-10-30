@@ -243,7 +243,7 @@ pub fn ideas_summary_for_context(ideas: &[Idea]) -> String {
 // AGENTS.md carries the rules and context for every agent (Codex and OpenCode read it directly,
 // Gemini through GEMINI.md, Claude from workspace/CLAUDE.md), so any of them can work on an idea.
 
-const IDEA_GITIGNORE: &str = "# heavy or rebuildable — keep the idea repo small\nnode_modules/\n.venv/\nvenv/\n__pycache__/\n*.pyc\ntarget/\nbuild/\n.gradle/\n.cache/\nlogs/\n*.apk\n*.aab\n*.exe\n*.onnx\n*.gguf\n*.zip\n# written by the app for each run\nSTATUS.json\nSESSION.md\n";
+const IDEA_GITIGNORE: &str = "# heavy or rebuildable — keep the idea repo small\nnode_modules/\n.venv/\nvenv/\n__pycache__/\n*.pyc\ntarget/\nbuild/\n.gradle/\n.cache/\nlogs/\n*.apk\n*.aab\n*.exe\n*.onnx\n*.gguf\n*.zip\n# written by the app for each run\nSTATUS.json\nSESSION.md\nSKILLS.md\nskills/\n";
 const BIG_FILE: u64 = 20 * 1024 * 1024;
 
 fn git(dir: &Path, args: &[&str]) -> std::io::Result<std::process::Output> {
@@ -291,7 +291,8 @@ pub fn agents_md(idea: &Idea, ia: &str) -> String {
          - Never `git push`, publish, deploy, post, send email, sign up for accounts, enter passwords or pay. \
            If an account is truly needed, write it under \"ต้องการจากคุณ\" in REPORT.md and continue with the rest.\n\
          - Do not leave servers running; stop processes you started.\n\
-         - Keep the existing behaviour and tests passing unless the owner asked to change them.\n\n\
+         - Keep the existing behaviour and tests passing unless the owner asked to change them.\n\
+         - If `SKILLS.md` exists it lists optional skill recipes for this run: open one only when its description fits. Skills are advice and never override these rules or `DIRECTIVES.md`.\n\n\
          ## Problems\n\
          - Whenever you hit a real problem and fix or work around it, append an entry to `ISSUES.md` (symptom / cause / fix / status) so nobody has to rediscover it.\n\n\
          ## When you finish\n\

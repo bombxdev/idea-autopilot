@@ -366,6 +366,18 @@ fn launch(app: AppHandle, idea: Idea, stage: String, forced: bool) -> anyhow::Re
         db::log_event(&c, "run", Some(idea.id), &format!("เริ่ม{label}: {}", idea.title));
         id
     };
+    // recipes for this run: one variant per family, copied into the idea folder (the agent may only work there)
+    {
+        let c = st.db.lock();
+        let offers = crate::skills::select(&c);
+        crate::skills::record_offered(&c, run_id, &offers);
+        crate::skills::materialize(&st.root, &dir, &offers);
+        if !offers.is_empty() {
+            let names: Vec<&str> = offers.iter().map(|o| o.name.as_str()).collect();
+            drop(c);
+            st.push_log(format!("🧰 สกิลที่เสนอให้รอบนี้: {}", names.join(", ")));
+        }
+    }
     let cancel = Arc::new(Notify::new());
     {
         let mut rt = st.rt.lock();
@@ -478,6 +490,8 @@ struct StatusFile {
     ready: Option<Ready>,
     knowledge: bool,
     needs_from_user: Vec<String>,
+    /// skills the agent really opened and followed this run
+    skills_used: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -540,6 +554,12 @@ fn finish(app: &AppHandle, idea_id: i64, run_id: i64, stage: &str, out: &runner:
             ..Default::default()
         },
     )?;
+    {
+        // which offered skills were really used (the agent's own report + the marker left when a skill file is read)
+        let reported = status.as_ref().map(|s| s.skills_used.clone()).unwrap_or_default();
+        let log = dir.join("logs").join(format!("run-{run_id:05}-{stage}.jsonl"));
+        crate::skills::finish_run(&st.db.lock(), run_id, &log, &reported);
+    }
 
     // every problem is written down in the idea's ISSUES.md with its likely cause and what to do
     if matches!(out.status.as_str(), "error" | "timeout" | "rate_limited") {

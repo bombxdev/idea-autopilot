@@ -52,6 +52,17 @@ export const api = {
   syncStatus: () => invoke("sync_status"),
   takeover: () => invoke("takeover"),
   showMain: (idea) => invoke("show_main", { idea: idea ?? null }),
+  skills: () => invoke("skills_list"),
+  skillRead: (slug) => invoke("skills_read", { slug }),
+  skillSet: (slug, field, value) => invoke("skills_set", { slug, field, value }),
+  skillDelete: (slug) => invoke("skills_delete", { slug }),
+  skillAddLocal: (text, acceptWarnings) => invoke("skills_add_local", { text, acceptWarnings }),
+  skillCheck: (text) => invoke("skills_check_text", { text }),
+  shopSearch: (query) => invoke("skills_shop_search", { query }),
+  shopBrowse: (repo) => invoke("skills_shop_browse", { repo }),
+  shopResolve: (url) => invoke("skills_shop_resolve", { url }),
+  shopPreview: (repo, commit, path) => invoke("skills_shop_preview", { repo, commit, path }),
+  shopInstall: (repo, commit, path, sha256, acceptWarnings) => invoke("skills_shop_install", { repo, commit, path, sha256, acceptWarnings }),
 };
 
 export { listen };

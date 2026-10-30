@@ -16,6 +16,7 @@ mod runner;
 mod scheduler;
 mod tuner;
 mod skill;
+mod skills;
 mod state;
 mod sync;
 mod brain;
@@ -358,6 +359,17 @@ pub fn run() {
             commands::sync_status,
             commands::takeover,
             commands::show_main,
+            skills::skills_list,
+            skills::skills_read,
+            skills::skills_set,
+            skills::skills_delete,
+            skills::skills_add_local,
+            skills::skills_check_text,
+            skills::skills_shop_search,
+            skills::skills_shop_browse,
+            skills::skills_shop_resolve,
+            skills::skills_shop_preview,
+            skills::skills_shop_install,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Idea Autopilot")
