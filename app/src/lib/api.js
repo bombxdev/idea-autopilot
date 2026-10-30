@@ -1,0 +1,98 @@
+import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import { listen as tauriListen } from "@tauri-apps/api/event";
+import { mockInvoke } from "./mock.js";
+
+// outside Tauri (plain browser preview) fall back to sample data
+const inTauri = typeof window !== "undefined" && !!window.__TAURI_INTERNALS__;
+const invoke = inTauri ? tauriInvoke : mockInvoke;
+const listen = inTauri ? tauriListen : async () => () => {};
+
+/** a narrated step (not the AI talking): old "›" lines or emoji-led lines except 💬 */
+export const isStep = (l) => l.startsWith("›") || (/^\p{Extended_Pictographic}/u.test(l) && !l.startsWith("💬"));
+
+export const api = {
+  state: () => invoke("get_state"),
+  ideas: () => invoke("list_ideas"),
+  addIdea: (text) => invoke("add_idea", { text }),
+  idea: (id) => invoke("get_idea", { id }),
+  answer: (id, answer) => invoke("answer_question", { id, answer }),
+  action: (id, action, text) => invoke("idea_action", { id, action, text: text ?? null }),
+  reorder: (ids) => invoke("reorder", { ids }),
+  setPaused: (paused) => invoke("set_paused", { paused }),
+  setTurbo: (hours) => invoke("set_turbo", { hours }),
+  stopCurrent: () => invoke("stop_current"),
+  refreshUsage: () => invoke("refresh_usage"),
+  reports: (days) => invoke("get_reports", { days }),
+  exportCsv: () => invoke("export_csv"),
+  digest: () => invoke("get_digest"),
+  makeDigest: () => invoke("make_digest"),
+  events: (hours) => invoke("get_events", { hours }),
+  calendar: (days) => invoke("get_calendar", { days }),
+  listDays: () => invoke("list_days"),
+  setDay: (date, kind, note) => invoke("set_day", { date, kind, note: note ?? null }),
+  settings: () => invoke("get_settings"),
+  setSetting: (key, value) => invoke("set_setting", { key, value }),
+  library: (q) => invoke("library", { q: q ?? null }),
+  openFolder: (id) => invoke("open_folder", { id }),
+  runPrototype: (id) => invoke("run_prototype", { id }),
+  hideCapture: () => invoke("hide_capture"),
+  exportBrain: () => invoke("export_brain"),
+  activity: (days) => invoke("get_activity", { days }),
+  policy: () => invoke("get_policy"),
+  remote: (id, on) => invoke("idea_remote", { id, on }),
+  ask: (id, text) => invoke("idea_ask", { id, text }),
+  handoff: (id, agent, text) => invoke("idea_handoff", { id, agent, text }),
+  hold: (id, on) => invoke("idea_hold", { id, on }),
+  runLog: (runId) => invoke("get_run_log", { runId }),
+  providers: () => invoke("get_providers"),
+  about: () => invoke("get_about"),
+  editIdea: (id, text) => invoke("edit_idea", { id, text }),
+  switchCopy: () => invoke("switch_copy"),
+  testProvider: (provider) => invoke("test_provider", { provider: provider ?? null }),
+  syncStatus: () => invoke("sync_status"),
+  takeover: () => invoke("takeover"),
+  showMain: (idea) => invoke("show_main", { idea: idea ?? null }),
+};
+
+export { listen };
+
+export const INTENTS = {
+  money: { label: "หารายได้", icon: "💰", color: "amber" },
+  experiment: { label: "ทดลอง", icon: "🧪", color: "blue" },
+  learn: { label: "อยากเข้าใจ", icon: "📚", color: "purple" },
+  tool: { label: "ใช้เอง", icon: "🛠", color: "teal" },
+  sell: { label: "ต่อยอดขาย", icon: "🚀", color: "pink" },
+};
+
+export function intentMeta(key) {
+  return INTENTS[key] ?? { label: key, icon: "✨", color: "blue" };
+}
+
+export const STATUS = {
+  inbox: { label: "รอตีความ", color: "blue" },
+  active: { label: "กำลังทำ", color: "teal" },
+  ready: { label: "พร้อมใช้", color: "teal" },
+  done: { label: "เสร็จแล้ว", color: "purple" },
+  failed: { label: "ติดปัญหา", color: "red" },
+  archived: { label: "เก็บแล้ว", color: "blue" },
+};
+
+export function ago(ts) {
+  if (!ts) return "";
+  const s = Math.floor(Date.now() / 1000 - ts);
+  if (s < 60) return "เมื่อกี้";
+  if (s < 3600) return `${Math.floor(s / 60)} นาทีที่แล้ว`;
+  if (s < 86400) return `${Math.floor(s / 3600)} ชม.ที่แล้ว`;
+  return `${Math.floor(s / 86400)} วันที่แล้ว`;
+}
+
+export function clock(ts) {
+  if (!ts) return "—";
+  const d = new Date(ts * 1000);
+  const days = ["อา.", "จ.", "อ.", "พ.", "พฤ.", "ศ.", "ส."];
+  return `${days[d.getDay()]} ${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
+}
+
+export function pct(v, d = 0) {
+  return v == null ? "—" : `${Number(v).toFixed(d)}%`;
+}

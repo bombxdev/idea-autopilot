@@ -1,0 +1,31 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'app.ideaautopilot.mobile'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'app.ideaautopilot.mobile'
+        minSdk 26
+        targetSdk 35
+        versionCode 6
+        versionName '0.3.1'
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            // debug key so the APK installs directly; this is a personal sideloaded app
+            signingConfig signingConfigs.debug
+        }
+    }
+    lint {
+        checkReleaseBuilds false
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}

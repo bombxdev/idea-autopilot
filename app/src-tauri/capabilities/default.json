@@ -1,0 +1,15 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "main + capture windows",
+  "windows": ["main", "capture"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-hide",
+    "core:window:allow-show",
+    "core:window:allow-set-focus",
+    "notification:default",
+    "opener:default",
+    "global-shortcut:default"
+  ]
+}

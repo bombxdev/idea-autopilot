@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "[Console]::OutputEncoding = [Text.Encoding]::UTF8; if ($env:IDEA_AUTOPILOT_BRIEF) { Get-Content -Raw -Encoding UTF8 $env:IDEA_AUTOPILOT_BRIEF }",
+            "shell": "powershell",
+            "timeout": 10,
+            "type": "command"
+          }
+        ],
+        "matcher": ""
+      }
+    ]
+  }
+}

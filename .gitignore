@@ -1,0 +1,29 @@
+# personal data — never commit to the public app repo
+data/
+workspace/ideas/
+workspace/inbox/
+workspace/knowledge/
+brain/
+screenshots/
+
+# build output
+bin/*.exe
+dist/
+app/node_modules/
+app/dist/
+app/src-tauri/target/
+app/src-tauri/target-dist/
+app/src-tauri/gen/
+mobile/.gradle/
+mobile/build/
+mobile/app/build/
+mobile/local.properties
+mobile/.truststore.jks
+
+# personal words the privacy check should refuse to ship (company, your own ideas)
+scripts/privacy-words.txt
+
+# generated at runtime from the code — never hand-written, never personal
+workspace/AGENTS.md
+workspace/CLAUDE.md
+workspace/REMOTE_BRIEF.md

@@ -1,0 +1,94 @@
+<script>
+  import { store, questionsFor, stageLabel, progress } from "../lib/store.svelte.js";
+  import { ago, STATUS } from "../lib/api.js";
+  import Intents from "./Intents.svelte";
+  import Question from "./Question.svelte";
+  import Actions from "./Actions.svelte";
+
+  let { idea, showQuestions = true, showActions = true, compact = false } = $props();
+  const qs = $derived(questionsFor(idea.id));
+  const running = $derived(store.state?.current?.idea_id === idea.id);
+  const stage = $derived(idea.status === "inbox" ? "clarify" : idea.recipe[idea.stage_idx]);
+  const st = $derived(STATUS[idea.status] ?? { label: idea.status, color: "blue" });
+</script>
+
+<article class="card idea rise" class:running class:ask={qs.length > 0}>
+  <div class="row top">
+    <button class="title ghost" onclick={() => (store.openIdea = idea.id)}>
+      <span class="idn" title="เลขไอเดีย ใช้อ้างอิงเวลาสั่งงาน">#{idea.id}</span>{#if idea.priority > 0}<span class="urgent">ด่วน</span>{/if}{idea.title}
+    </button>
+    {#if idea.verdict}
+      <span class="chip v-{idea.verdict.toLowerCase()}">{idea.verdict === "GO" ? "✓ GO" : idea.verdict === "NO-GO" ? "✕ NO-GO" : "≈ MAYBE"}</span>
+    {/if}
+    <span class="chip s-{st.color}">{running ? "● กำลังทำ" : st.label}</span>
+  </div>
+
+  <div class="row wrap meta">
+    <Intents intents={idea.intents} />
+    {#if idea.research_only}<span class="chip">research อย่างเดียว</span>{/if}
+    {#if idea.knowledge}<span class="chip">📚 มีในคลัง</span>{/if}
+  </div>
+
+  {#if idea.summary}
+    <p class="summary">{idea.summary}</p>
+  {:else if idea.status === "inbox"}
+    <p class="summary faint">รอ AI ตีความ…</p>
+  {/if}
+
+  <div class="prog"><div class="pbar"><i style="width:{progress(idea)}%"></i></div><span class="small faint">{progress(idea)}%</span></div>
+
+  {#if idea.recipe.length && !compact}
+    <div class="steps">
+      {#each idea.recipe as s, i}
+        <span class="step" class:done={i < idea.stage_idx} class:now={i === idea.stage_idx && ["active"].includes(idea.status)}>
+          {stageLabel(s)}{#if i === idea.stage_idx && idea.repeat_count > 0} ×{idea.repeat_count + 1}{/if}
+        </span>
+      {/each}
+    </div>
+  {/if}
+
+  {#if idea.needs.length && !compact}
+    <div class="needs small">
+      <b>ต้องการจากคุณ:</b>
+      <ul>{#each idea.needs as n}<li>{n}</li>{/each}</ul>
+    </div>
+  {/if}
+
+  {#if showQuestions && qs.length}
+    <div class="qs">{#each qs as q (q.id)}<Question {q} />{/each}</div>
+  {/if}
+
+  {#if showActions}
+    <Actions {idea} compact={compact} />
+  {/if}
+  <div class="faint small foot">{running ? `ขั้น: ${stageLabel(stage)}` : `อัปเดต ${ago(idea.updated)}`}</div>
+</article>
+
+<style>
+  .idea { display: flex; flex-direction: column; gap: 10px; transition: border-color .2s; }
+  .idea.running { border-color: var(--teal); }
+  .idea.ask { border-color: var(--amber); }
+  .top { align-items: flex-start; }
+  .title { flex: 1; text-align: left; border: none; padding: 0; font-size: 16px; font-weight: 600; line-height: 1.4; }
+  .title:hover { background: none; color: var(--teal); }
+  .urgent { font-size: 11px; background: var(--red-bg); color: var(--red); border-radius: 6px; padding: 1px 6px; margin-right: 6px; vertical-align: 2px; }
+  .summary { margin: 0; color: var(--text-2); }
+  .prog { display: flex; align-items: center; gap: 8px; }
+  .pbar { flex: 1; height: 6px; background: var(--bg-2); border-radius: 6px; overflow: hidden; }
+  .pbar i { display: block; height: 100%; background: var(--teal); transition: width .4s; }
+  .steps { display: flex; flex-wrap: wrap; gap: 4px; }
+  .step { font-size: 12px; padding: 2px 9px; border-radius: 6px; background: var(--bg-2); color: var(--text-3); }
+  .step.done { color: var(--teal); background: var(--teal-bg); }
+  .step.now { color: var(--text); background: var(--card-2); outline: 1px solid var(--teal); }
+  .qs { display: flex; flex-direction: column; gap: 8px; }
+  .needs { background: var(--blue-bg); color: var(--text); padding: 8px 12px; border-radius: 8px; }
+  .needs ul { margin: 4px 0 0; padding-left: 18px; }
+  .foot { margin-top: -4px; }
+  .v-go { background: var(--teal-bg); color: var(--teal); }
+  .v-no-go { background: var(--red-bg); color: var(--red); }
+  .v-maybe { background: var(--amber-bg); color: var(--amber); }
+  .s-teal { background: var(--teal-bg); color: var(--teal); }
+  .s-blue { background: var(--blue-bg); color: var(--blue); }
+  .s-purple { background: var(--purple-bg); color: var(--purple); }
+  .s-red { background: var(--red-bg); color: var(--red); }
+</style>

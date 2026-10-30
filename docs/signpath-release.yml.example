@@ -1,0 +1,41 @@
+# Template — NOT active. After SignPath approves the project, copy to .github/workflows/release.yml
+# and replace the slugs. See docs/SIGNPATH.md.
+name: Release
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build unsigned installer
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File scripts/package.ps1
+      - uses: actions/upload-artifact@v4
+        id: upload
+        with:
+          name: unsigned-installer
+          path: dist/IdeaAutopilot-*-Setup.exe
+      - name: Sign with SignPath
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: idea-autopilot            # <- from SignPath
+          signing-policy-slug: release-signing    # <- from SignPath
+          github-artifact-id: ${{ steps.upload.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: signed/*.exe
