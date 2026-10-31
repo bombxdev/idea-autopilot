@@ -9,6 +9,19 @@
 - **Windows 10/11**, built with Tauri 2 (Rust + Svelte). The interface and the AI's reports are in Thai by default (English reports can be chosen in Settings); the UI is not translated yet — contributions welcome.
 - **License:** GPL-3.0-or-later, © 2026 bombxdev. See `LICENSE`, `CONTRIBUTING.md`, `CHANGELOG.md`, `docs/ISSUES.md`.
 
+## Install (easiest first)
+
+1. **Scoop** (one-time setup of [Scoop](https://scoop.sh), then two commands; no admin rights, updates keep your ideas):
+   ```
+   scoop bucket add bomb https://github.com/bombxdev/scoop-bucket
+   scoop install idea-autopilot
+   ```
+   Update later with `scoop update idea-autopilot`.
+2. **Installer:** download `IdeaAutopilot-<version>-Setup.exe` from [Releases](https://github.com/bombxdev/idea-autopilot/releases) and double-click.
+3. **Portable:** download `IdeaAutopilot-<version>-portable.zip`, right-click it → Properties → tick **Unblock** → Extract, then run `bin\idea-autopilot.exe`.
+
+Windows may show a SmartScreen warning for the installer (not signed yet): More info → Run anyway. You also need git and one logged-in AI agent (see the first-run steps below).
+
 Build: `cd app && npm install && npm run build`, then `cd src-tauri && cargo build --release --features tauri/custom-protocol`. Installer + portable zip: `powershell -ExecutionPolicy Bypass -File scripts\package.ps1`. Not code-signed yet, so Windows SmartScreen may warn (More info → Run anyway) — see `docs/SIGNING.md`. Signing policy and privacy: `docs/CODE_SIGNING_POLICY.md`.
 
 Code signing: free code signing is being requested from [SignPath Foundation](https://signpath.org) (SignPath.io); once approved, released installers will be signed with a certificate issued by SignPath Foundation. Policy: [docs/CODE_SIGNING_POLICY.md](docs/CODE_SIGNING_POLICY.md).
@@ -18,6 +31,19 @@ Code signing: free code signing is being requested from [SignPath Foundation](ht
 (ภาษาไทย)
 
 จดไอเดียทิ้งไว้ แล้วให้ AI (Claude Code, Codex CLI, Gemini CLI, OpenCode หรือคำสั่งของคุณเอง — ใช้ตัวที่คุณมี ไม่ต้องมีครบ) ไปค้นคว้า ตัดสิน หรือสร้างให้ตอนที่คุณไม่ได้ใช้ โดยหลบเวลางานของคุณ กันโควต้าไว้ให้งานหลักก่อน แล้วใช้ส่วนที่เหลือให้คุ้มก่อนโควต้ารายสัปดาห์รีเซ็ต
+
+## ติดตั้งแบบง่าย (เรียงจากง่ายสุด)
+
+1. **Scoop** (ติดตั้ง [Scoop](https://scoop.sh) ครั้งเดียว แล้วพิมพ์สองบรรทัดนี้ ไม่ต้องสิทธิ์แอดมิน อัปเดตแล้วไอเดียไม่หาย):
+   ```
+   scoop bucket add bomb https://github.com/bombxdev/scoop-bucket
+   scoop install idea-autopilot
+   ```
+   อัปเดตทีหลังด้วย `scoop update idea-autopilot`
+2. **ตัวติดตั้ง:** โหลด `IdeaAutopilot-<เวอร์ชัน>-Setup.exe` จากหน้า [Releases](https://github.com/bombxdev/idea-autopilot/releases) แล้วดับเบิลคลิก
+3. **แบบพกพา:** โหลด `IdeaAutopilot-<เวอร์ชัน>-portable.zip` คลิกขวา → Properties → ติ๊ก **Unblock** → แตกไฟล์ แล้วเปิด `bin\idea-autopilot.exe`
+
+ถ้า Windows ขึ้นหน้าเตือน SmartScreen (ยังไม่ได้เซ็นชื่อ) ให้กด More info → Run anyway ต้องมี git และ AI agent ที่ login แล้ว 1 ตัว (ดูขั้นตอนด้านล่าง)
 
 ## เริ่มใช้ครั้งแรก (สำหรับเพื่อนที่ได้ไฟล์ zip)
 
