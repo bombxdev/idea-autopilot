@@ -11,6 +11,8 @@
 
 Build: `cd app && npm install && npm run build`, then `cd src-tauri && cargo build --release --features tauri/custom-protocol`. Installer + portable zip: `powershell -ExecutionPolicy Bypass -File scripts\package.ps1`. Not code-signed yet, so Windows SmartScreen may warn (More info → Run anyway) — see `docs/SIGNING.md`. Signing policy and privacy: `docs/CODE_SIGNING_POLICY.md`.
 
+Code signing: free code signing is being requested from [SignPath Foundation](https://signpath.org) (SignPath.io); once approved, released installers will be signed with a certificate issued by SignPath Foundation. Policy: [docs/CODE_SIGNING_POLICY.md](docs/CODE_SIGNING_POLICY.md).
+
 ---
 
 (ภาษาไทย)
