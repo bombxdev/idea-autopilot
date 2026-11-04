@@ -2,6 +2,9 @@
   import { onMount } from "svelte";
   import { api } from "../lib/api.js";
   import { toast } from "../lib/store.svelte.js";
+  import { ask } from "../lib/dialog.svelte.js";
+  import SkillCheck from "../components/SkillCheck.svelte";
+  import SkillEngine from "../components/SkillEngine.svelte";
 
   let tab = $state("mine");
   let data = $state({ skills: [], families: {}, max_offered: 8 });
@@ -18,6 +21,18 @@
     community: { t: "ชุมชน", c: "amber" },
   };
   const trust = (k) => TRUST[k] ?? TRUST.community;
+
+  // result of the deep check, as shown next to each installed skill
+  function badge(s) {
+    const x = s.ss;
+    if (!x || !x.status) return { t: "🛡 ยังไม่ได้ตรวจเชิงลึก", c: "", tip: "ตรวจด้วยตัวสแกนในโปรแกรมตอนติดตั้งแล้ว แต่ SkillSpector ยังไม่ได้ตรวจสกิลนี้" };
+    const top = (x.issues ?? []).slice(0, 3).map((i) => `${i.severity}: ${i.pattern} (${i.category})`).join(" | ");
+    const when = `ตรวจด้วย SkillSpector v${x.version} · คะแนนเสี่ยง ${x.score}/100`;
+    const stale = x.current ? "" : " (ไฟล์หรือเวอร์ชันตัวตรวจเปลี่ยน — รอตรวจใหม่)";
+    if (x.status === "pass") return { t: x.current ? "🛡 ผ่านการตรวจ" : "🛡 ผ่าน (รอตรวจใหม่)", c: "teal", tip: when + stale };
+    if (x.status === "caution") return { t: "🛡 ควรระวัง", c: "amber", tip: `${when}${stale} — ${top}` };
+    return { t: "🛡 ไม่ผ่าน — ไม่ถูกเสนอให้บอท", c: "red", tip: `${when}${stale} — ${top}` };
+  }
 
   // skills grouped by family: one dish, several recipes
   const groups = $derived.by(() => {
@@ -42,7 +57,7 @@
     viewing = viewing?.slug === slug ? null : { slug, text: await api.skillRead(slug) };
   }
   async function remove(s) {
-    if (!confirm(`ลบสกิล “${s.name}” ออกจากเครื่อง?`)) return;
+    if (!(await ask("สกิลจะถูกลบออกจากเครื่องนี้", { title: `ลบสกิล “${s.name}”?`, ok: "ลบสกิล", danger: true }))) return;
     await api.skillDelete(s.slug);
     toast("ลบแล้ว");
     load();
@@ -61,6 +76,8 @@
   let previewing = $state("");
   let accept = $state(false);
   let installing = $state(false);
+  let deep = $state(null); // SkillSpector result for the open preview
+  let deepLocal = $state(null); // ... for the pasted text
 
   async function search() {
     searching = true;
@@ -91,6 +108,7 @@
     previewing = path;
     accept = false;
     try {
+      deep = null;
       preview = { ...(await api.shopPreview(repo.repo, repo.commit, path)), repo: repo.repo, commit: repo.commit, path };
       setTimeout(() => document.querySelector(".pv")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
     } catch (e) {
@@ -120,6 +138,9 @@
     }
     installing = false;
   }
+  // verdict of the open preview: built-in scan, plus SkillSpector once its result is in
+  const pv = $derived(deep?.verdict ?? preview?.verdict);
+  const pvWait = $derived(!!preview?.ss_available && !deep);
   const shownSkills = $derived(
     (repo?.skills ?? []).filter((s) => !skillFilter.trim() || (s.name + " " + s.path).toLowerCase().includes(skillFilter.trim().toLowerCase())),
   );
@@ -130,6 +151,7 @@
   let acceptLocal = $state(false);
   async function check() {
     try {
+      deepLocal = null;
       checked = await api.skillCheck(text);
     } catch (e) {
       checked = null;
@@ -148,6 +170,8 @@
       toast(String(e).replace(/^NEEDS_ACCEPT: /, ""), "err");
     }
   }
+  const lv = $derived(deepLocal?.verdict ?? checked?.verdict);
+  const lwait = $derived(!!checked?.ss_available && !deepLocal);
   const TEMPLATE = `---\nname: my-skill\ndescription: ใช้เมื่อ… (บอกให้ชัดว่าสกิลนี้ช่วยเรื่องอะไร AI จะอ่านบรรทัดนี้เพื่อตัดสินว่าจะเปิดใช้ไหม)\nfamily: \n---\n\n# ชื่อสกิล\n\n1. ขั้นตอนแรก\n2. ขั้นตอนต่อไป\n`;
 </script>
 
@@ -157,6 +181,7 @@
     สกิลคือ<b>สูตร</b>ที่ AI เปิดอ่านเมื่อจำเป็น — สูตรต่างกันได้ผลต่างกันแม้เป็นอาหารจานเดียวกัน จึงไม่มีสูตร “ถูก” ตัวเดียว
     ใส่สูตรที่ทำงานเดียวกันไว้ใน <b>ตระกูล</b> (family) เดียวกัน บอทจะเสนอทีละสูตรแล้วเก็บผลให้คุณดู คุณปักหมุดสูตรโปรดได้เสมอ
   </p>
+  <SkillEngine onchange={load} />
   <div class="row wrap tabs">
     <button class="f" class:on={tab === "mine"} onclick={() => (tab = "mine")}>สกิลของฉัน ({data.skills.length})</button>
     <button class="f" class:on={tab === "shop"} onclick={() => { tab = "shop"; if (!repos) search(); }}>🛒 ช็อปสกิล (ฟรี)</button>
@@ -178,6 +203,7 @@
               <label class="sw" title="เปิด/ปิดสกิลนี้"><input type="checkbox" checked={s.enabled} onchange={(e) => set(s.slug, "enabled", e.currentTarget.checked)} /></label>
               <b class="grow">{s.name}</b>
               <span class="chip {trust(s.trust).c}">{trust(s.trust).t}</span>
+              <span class="chip {badge(s).c}" title={badge(s).tip}>{badge(s).t}</span>
               {#if s.family}
                 <button class="small" class:pin={s.pinned} onclick={() => set(s.slug, "pinned", !s.pinned)} title="ปักหมุด: ใช้สูตรนี้เสมอในตระกูลนี้">{s.pinned ? "📌 ปักหมุดอยู่" : "📍 ปักหมุด"}</button>
               {/if}
@@ -263,7 +289,7 @@
     {#if preview}
       <div class="card pv">
         <div class="row wrap"><b class="grow">{preview.name}</b>
-          <span class="chip {preview.verdict === 'clean' ? 'teal' : preview.verdict === 'warn' ? 'amber' : 'red'}">{preview.verdict === "clean" ? "ผ่านการสแกน" : preview.verdict === "warn" ? "มีคำเตือน" : "อันตราย — ติดตั้งไม่ได้"}</span></div>
+          <span class="chip {pv === 'clean' ? 'teal' : pv === 'warn' ? 'amber' : 'red'}">{pv === "clean" ? "ผ่านการสแกน" : pv === "warn" ? "มีคำเตือน" : "อันตราย — ติดตั้งไม่ได้"}</span></div>
         <div class="muted small">{preview.description}</div>
         <div class="small faint">ที่มา <a href={preview.source} target="_blank" rel="noreferrer">{preview.source}</a> · ไลเซนส์ {preview.license || "ไม่ระบุ"} · sha256 {preview.sha256.slice(0, 12)}… · {(preview.size / 1024).toFixed(1)} KB</div>
         {#if preview.domains.length}<div class="small faint">ลิงก์ในไฟล์ไปยัง: {preview.domains.join(", ")}</div>{/if}
@@ -273,11 +299,12 @@
         {#if preview.similar.length}
           <div class="hint small">คล้ายกับสกิลที่มีอยู่: {preview.similar.map((x) => `“${x.name}” (${x.score}%)`).join(", ")} — ติดตั้งได้ถ้าอยากได้อีกสูตร แล้วใส่ตระกูลเดียวกันเพื่อเทียบผล</div>
         {/if}
+        {#if preview.ss_available}<SkillCheck text={preview.text} bind:result={deep} />{/if}
         <div class="small faint">{preview.note}</div>
         <details open><summary class="small">เนื้อหาเต็ม (อ่านให้จบก่อนติดตั้ง)</summary><pre class="txt">{preview.text}</pre></details>
-        {#if preview.verdict === "warn"}<label class="small"><input type="checkbox" bind:checked={accept} /> ฉันอ่านเนื้อหาและคำเตือนทั้งหมดแล้ว และต้องการติดตั้ง</label>{/if}
+        {#if pv === "warn"}<label class="small"><input type="checkbox" bind:checked={accept} /> ฉันอ่านเนื้อหาและคำเตือนทั้งหมดแล้ว และต้องการติดตั้ง</label>{/if}
         <div class="row">
-          <button class="primary" disabled={installing || preview.verdict === "danger" || (preview.verdict === "warn" && !accept)} onclick={install}>{installing ? "กำลังติดตั้ง…" : "ติดตั้งสกิลนี้"}</button>
+          <button class="primary" disabled={installing || pvWait || pv === "danger" || (pv === "warn" && !accept)} onclick={install}>{installing ? "กำลังติดตั้ง…" : pvWait ? "รอผลตรวจก่อน…" : "ติดตั้งสกิลนี้"}</button>
           <button onclick={() => (preview = null)}>ปิด</button>
         </div>
       </div>
@@ -290,14 +317,15 @@
     <div class="row wrap">
       <button onclick={() => (text = TEMPLATE)}>ใส่แบบตัวอย่าง</button>
       <button onclick={check} disabled={!text.trim()}>ตรวจก่อน</button>
-      <button class="primary" onclick={addLocal} disabled={!text.trim() || (checked?.verdict === "danger") || (checked?.verdict === "warn" && !acceptLocal)}>เพิ่มสกิล</button>
+      <button class="primary" onclick={addLocal} disabled={!text.trim() || lwait || lv === "danger" || (lv === "warn" && !acceptLocal)}>{lwait ? "รอผลตรวจก่อน…" : "เพิ่มสกิล"}</button>
     </div>
     {#if checked}
       <div class="card">
-        <b>{checked.name}</b> — {checked.verdict === "clean" ? "ผ่านการสแกน" : checked.verdict === "warn" ? "มีคำเตือน" : "อันตราย ติดตั้งไม่ได้"}
+        <b>{checked.name}</b> — {lv === "clean" ? "ผ่านการสแกน" : lv === "warn" ? "มีคำเตือน" : "อันตราย ติดตั้งไม่ได้"}
         {#each checked.findings as f}<div class="finding {f.level}"><b>{f.level === "danger" ? "⛔" : "⚠️"} {f.what}</b><div class="small">{f.why}</div></div>{/each}
         {#if checked.similar.length}<div class="hint small">คล้ายกับ {checked.similar.map((x) => `“${x.name}”`).join(", ")}</div>{/if}
-        {#if checked.verdict === "warn"}<label class="small"><input type="checkbox" bind:checked={acceptLocal} /> ฉันอ่านคำเตือนแล้ว และต้องการเพิ่ม</label>{/if}
+        {#if checked.ss_available}<SkillCheck text={text} bind:result={deepLocal} />{/if}
+        {#if lv === "warn"}<label class="small"><input type="checkbox" bind:checked={acceptLocal} /> ฉันอ่านคำเตือนแล้ว และต้องการเพิ่ม</label>{/if}
       </div>
     {/if}
   {/if}
@@ -335,5 +363,7 @@
   .danger { color: var(--red); }
   textarea { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
   .chip.red { color: var(--red); }
+  .chip.teal { color: var(--teal); }
+  .chip.amber { color: var(--amber); }
   .chip.blue { color: var(--blue); }
 </style>

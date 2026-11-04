@@ -86,7 +86,7 @@ pub fn dispatch(app: &AppHandle, cmd: &str, a: Value) -> Result<Value, String> {
         }
         "ideas" => commands::list_ideas(st()),
         "idea" => commands::get_idea(st(), id(&a)?),
-        "add" => commands::add_idea(st(), text(&a, "text").ok_or("ต้องมีข้อความไอเดีย")?).map(|i| json!(i)),
+        "add" => commands::add_idea(st(), text(&a, "text").ok_or("ต้องมีข้อความไอเดีย")?, None, None).map(|i| json!(i)),
         "edit" => unit(commands::edit_idea(st(), id(&a)?, text(&a, "text").ok_or("ต้องมีข้อความไอเดีย")?)),
         "answer" => {
             let qid = id(&a)?;
@@ -100,7 +100,7 @@ pub fn dispatch(app: &AppHandle, cmd: &str, a: Value) -> Result<Value, String> {
             }
             unit(commands::answer_question(st(), qid, ans))
         }
-        "action" => unit(commands::idea_action(st(), id(&a)?, text(&a, "action").ok_or("ต้องมี action")?, text(&a, "text"))),
+        "action" => unit(commands::idea_action(st(), id(&a)?, text(&a, "action").ok_or("ต้องมี action")?, text(&a, "text"), None)),
         "pause" => unit(commands::set_paused(app.clone(), st(), true)),
         "resume" => unit(commands::set_paused(app.clone(), st(), false)),
         "turbo" => unit(commands::set_turbo(st(), a.get("hours").and_then(Value::as_f64).unwrap_or(2.0))),
@@ -127,9 +127,9 @@ pub fn dispatch(app: &AppHandle, cmd: &str, a: Value) -> Result<Value, String> {
             let on = a.get("on").and_then(Value::as_bool).unwrap_or(true);
             unit(commands::idea_remote(app.clone(), st(), id(&a)?, on))
         }
-        "handoff" => crate::commands::idea_handoff(app.clone(), st(), id(&a)?, text(&a, "agent").unwrap_or_default(), text(&a, "text").unwrap_or_default()).map(|m| json!(m)),
-        "agents" => Ok(crate::agents::list_json()),
-        "ask" => unit(commands::idea_ask(app.clone(), st(), id(&a)?, text(&a, "text").unwrap_or_default())),
+        "handoff" => crate::commands::idea_handoff(app.clone(), st(), id(&a)?, text(&a, "agent").unwrap_or_default(), text(&a, "text").unwrap_or_default(), None, None).map(|m| json!(m)),
+        "agents" => Ok(crate::agents::list_json(&st().db.lock())),
+        "ask" => unit(commands::idea_ask(app.clone(), st(), id(&a)?, text(&a, "text").unwrap_or_default(), None, None)),
         "hold" => {
             let on = a.get("on").and_then(Value::as_bool).unwrap_or(true);
             unit(commands::idea_hold(app.clone(), st(), id(&a)?, on))

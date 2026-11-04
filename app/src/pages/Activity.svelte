@@ -1,4 +1,6 @@
 <script>
+  import { locale } from "../lib/i18n.js";
+  import { ui } from "../lib/uilang.svelte.js";
   import { onMount } from "svelte";
   import { store, stageLabel } from "../lib/store.svelte.js";
   import { api, pct, isStep } from "../lib/api.js";
@@ -40,7 +42,7 @@
   const byDay = $derived.by(() => {
     const m = new Map();
     for (const r of runs) {
-      const k = new Date(r.started * 1000).toLocaleDateString("th-TH", { weekday: "short", day: "numeric", month: "short" });
+      const k = new Date(r.started * 1000).toLocaleDateString(locale(ui.lang), { weekday: "short", day: "numeric", month: "short" });
       if (!m.has(k)) m.set(k, []);
       m.get(k).push(r);
     }
@@ -50,8 +52,49 @@
   const ideasInLog = $derived([...new Map((data?.runs ?? []).map((r) => [r.idea_id, r.title])).entries()]);
   const events = $derived((data?.events ?? []).filter((e) => !ideaFilter || e.idea_id === ideaFilter));
 
-  const hm = (ts) => new Date(ts * 1000).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" });
+  const hm = (ts) => new Date(ts * 1000).toLocaleTimeString(locale(ui.lang), { hour: "2-digit", minute: "2-digit" });
   const dur = (s) => (s >= 3600 ? `${Math.floor(s / 3600)} ชม. ${Math.round((s % 3600) / 60)} น.` : `${Math.max(1, Math.round(s / 60))} นาที`);
+  // ---- daily timeline: zoom 1x (whole day) .. 48x (30 minutes across the width), scroll sideways, Ctrl+wheel zooms at the pointer
+  const ZMAX = 48;
+  let zoom = $state(1);
+  let scroller = $state();
+  let drag = null;
+  const clampZ = (z) => Math.min(ZMAX, Math.max(1, z));
+  function setZoom(z, anchor = 0.5) {
+    z = clampZ(z);
+    if (!scroller) return void (zoom = z);
+    // keep the minute under the anchor where it was
+    const frac = (scroller.scrollLeft + scroller.clientWidth * anchor) / scroller.scrollWidth;
+    zoom = z;
+    queueMicrotask(() => (scroller.scrollLeft = frac * scroller.scrollWidth - scroller.clientWidth * anchor));
+  }
+  function onWheel(e) {
+    if (!e.ctrlKey && !e.metaKey) return; // plain wheel scrolls the page as usual
+    e.preventDefault();
+    const r = scroller.getBoundingClientRect();
+    setZoom(zoom * (e.deltaY < 0 ? 1.25 : 0.8), (e.clientX - r.left) / r.width);
+  }
+  function down(e) {
+    if (zoom <= 1 || e.button !== 0) return;
+    drag = { x: e.clientX, left: scroller.scrollLeft };
+    scroller.setPointerCapture?.(e.pointerId);
+  }
+  const move = (e) => drag && (scroller.scrollLeft = drag.left - (e.clientX - drag.x));
+  const up = () => (drag = null);
+  // zoom to the hours that actually have work
+  function fit() {
+    const all = runs.map((r) => [minOfDay(r.started), Math.min(1440, minOfDay(r.started) + Math.round(r.secs / 60))]);
+    if (!all.length || !scroller) return setZoom(1);
+    const lo = Math.max(0, Math.min(...all.map((x) => x[0])) - 20);
+    const hi = Math.min(1440, Math.max(...all.map((x) => x[1])) + 20);
+    const z = clampZ(1440 / Math.max(30, hi - lo));
+    zoom = z;
+    queueMicrotask(() => (scroller.scrollLeft = (lo / 1440) * scroller.scrollWidth));
+  }
+  // tick spacing in minutes follows the zoom, so labels never crowd each other
+  const step = $derived(zoom < 1.7 ? 180 : zoom < 3.4 ? 60 : zoom < 7 ? 30 : zoom < 14 ? 15 : zoom < 28 ? 10 : 5);
+  const ticks = $derived(Array.from({ length: Math.floor(1440 / step) }, (_, i) => i * step));
+  const tickLabel = (m) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`;
   const minOfDay = (ts) => {
     const d = new Date(ts * 1000);
     return d.getHours() * 60 + d.getMinutes();
@@ -119,22 +162,39 @@
     </div>
 
     <div class="card">
-      <h3>ไทม์ไลน์รายวัน</h3>
-      <div class="axis"><span></span>{#each [0, 3, 6, 9, 12, 15, 18, 21] as h}<span style="left:{(h / 24) * 100}%">{h}:00</span>{/each}</div>
-      {#each byDay as [day, list]}
-        <div class="tl">
-          <span class="small faint dl">{day}</span>
-          <div class="track">
-            {#each list as r}
-              {@const a = minOfDay(r.started)}
-              {@const b = Math.max(a + 4, Math.min(1440, a + Math.round(r.secs / 60)))}
-              <i title="{hm(r.started)} #{r.idea_id} {r.title} · {stageLabel(r.stage)} · {STATUS[r.status] ?? r.status}"
-                class:bad={r.status !== "ok" && r.status !== "running"}
-                style="left:{(a / 1440) * 100}%;width:{((b - a) / 1440) * 100}%;background:{color(r.idea_id)}"></i>
-            {/each}
+      <div class="row wrap">
+        <h3 class="grow">ไทม์ไลน์รายวัน</h3>
+        <span class="faint small">{zoom < 1.05 ? "ทั้งวัน" : `ซูม ${zoom.toFixed(1)}x`}</span>
+        <button class="small" onclick={() => setZoom(zoom / 1.5)} disabled={zoom <= 1} title="ซูมออก" aria-label="ซูมออก">−</button>
+        <input type="range" class="zs" min="0" max="100" value={(Math.log(zoom) / Math.log(ZMAX)) * 100}
+          oninput={(e) => setZoom(Math.exp((e.currentTarget.value / 100) * Math.log(ZMAX)))} aria-label="ซูม" />
+        <button class="small" onclick={() => setZoom(zoom * 1.5)} disabled={zoom >= ZMAX} title="ซูมเข้า" aria-label="ซูมเข้า">＋</button>
+        <button class="small" onclick={fit} title="ซูมให้พอดีกับช่วงเวลาที่บอททำงาน">พอดีกับช่วงที่มีงาน</button>
+        <button class="small" onclick={() => setZoom(1)} disabled={zoom <= 1}>ทั้งวัน</button>
+      </div>
+      <p class="faint small tip">กด Ctrl + ล้อเมาส์เพื่อซูมตรงตำแหน่งเมาส์ · ลากซ้ายขวาเพื่อเลื่อนเมื่อซูมอยู่ · ชี้ที่แท่งเพื่อดูรายละเอียด</p>
+      <div class="tlgrid">
+        <div class="labels">
+          <span class="axl"></span>
+          {#each byDay as [day]}<span class="small faint dl">{day}</span>{/each}
+        </div>
+        <div class="scroller" class:pan={zoom > 1} bind:this={scroller} onwheel={onWheel} onpointerdown={down} onpointermove={move} onpointerup={up} onpointercancel={up}>
+          <div class="inner" style="width:{zoom * 100}%">
+            <div class="axis">{#each ticks as m}<span style="left:{(m / 1440) * 100}%">{tickLabel(m)}</span>{/each}</div>
+            {#each byDay as [day, list]}
+              <div class="track" style="background-size:{(step / 1440) * 100}% 100%">
+                {#each list as r}
+                  {@const a = minOfDay(r.started)}
+                  {@const b = Math.max(a + 4, Math.min(1440, a + Math.round(r.secs / 60)))}
+                  <i title="{hm(r.started)} #{r.idea_id} {r.title} · {stageLabel(r.stage)} · {STATUS[r.status] ?? r.status}"
+                    class:bad={r.status !== "ok" && r.status !== "running"}
+                    style="left:{(a / 1440) * 100}%;width:{((b - a) / 1440) * 100}%;background:{color(r.idea_id)}">{#if zoom >= 6}<em>#{r.idea_id}</em>{/if}</i>
+                {/each}
+              </div>
+            {:else}<div class="faint small">ยังไม่มีรอบงานในช่วงนี้</div>{/each}
           </div>
         </div>
-      {:else}<div class="faint small">ยังไม่มีรอบงานในช่วงนี้</div>{/each}
+      </div>
     </div>
 
     <div class="tabs">
@@ -151,7 +211,7 @@
               <span class="time">{hm(r.started)}<span class="faint">–{r.ended ? hm(r.ended) : "…"}</span></span>
               <span class="dot" style="background:{color(r.idea_id)}"></span>
               <span class="grow ellipsis"><b>#{r.idea_id} {r.title}</b> · {stageLabel(r.stage)}</span>
-              <span class="chip">{r.model}{r.effort ? ` · ${r.effort}` : ""}</span>
+              <span class="chip" title={r.reason ?? ""}>{r.power ? "🚀 " : ""}{r.model_label || r.model}{r.effort ? ` · ${r.effort}` : ""}</span>
               <span class="chip st-{r.status}">{STATUS[r.status] ?? r.status}</span>
               <span class="faint small w80">{dur(r.secs)}</span>
               <span class="faint small w80">{(r.tokens / 1000).toFixed(0)}k tok</span>
@@ -171,7 +231,7 @@
     {:else}
       {#each events as ev}
         <div class="ev row small">
-          <span class="time">{new Date(ev.ts * 1000).toLocaleString("th-TH", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
+          <span class="time">{new Date(ev.ts * 1000).toLocaleString(locale(ui.lang), { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
           <span class="chip">{ev.kind}</span>
           <span class="grow">{ev.text}</span>
           {#if ev.idea_id}<button class="ghost small" onclick={() => (store.openIdea = ev.idea_id)}>เปิด</button>{/if}
@@ -201,13 +261,23 @@
   .eta { display: flex; flex-direction: column; gap: 4px; width: 100%; text-align: left; padding: 8px 6px; border: none; border-radius: 8px; }
   .pbar { height: 6px; background: var(--bg-2); border-radius: 6px; overflow: hidden; }
   .pbar i { display: block; height: 100%; background: var(--teal); }
-  .axis { position: relative; height: 16px; margin-left: 110px; font-size: 10px; color: var(--text-3); }
-  .axis span { position: absolute; transform: translateX(-50%); }
-  .tl { display: flex; align-items: center; gap: 10px; margin: 6px 0; }
-  .dl { width: 100px; flex: none; }
-  .track { position: relative; flex: 1; height: 18px; background: var(--bg-2); border-radius: 5px; overflow: hidden;
-    background-image: repeating-linear-gradient(90deg, transparent 0, transparent calc(12.5% - 1px), var(--line) calc(12.5% - 1px), var(--line) 12.5%); }
-  .track i { position: absolute; top: 2px; bottom: 2px; border-radius: 3px; opacity: .9; }
+  .tip { margin: 0 0 8px; }
+  .zs { width: 120px; }
+  .tlgrid { display: flex; align-items: flex-start; gap: 8px; }
+  .labels { display: flex; flex-direction: column; gap: 8px; width: 100px; flex: none; }
+  .axl { height: 16px; }
+  .dl { height: 22px; line-height: 22px; white-space: nowrap; }
+  .scroller { flex: 1; min-width: 0; overflow-x: auto; overflow-y: hidden; }
+  .scroller.pan { cursor: grab; }
+  .scroller:active.pan { cursor: grabbing; }
+  .inner { display: flex; flex-direction: column; gap: 8px; }
+  .axis { position: relative; height: 16px; font-size: 10px; color: var(--text-3); user-select: none; }
+  .axis span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+  .axis span:first-child { transform: none; }
+  .track { position: relative; height: 22px; background: var(--bg-2); border-radius: 5px; overflow: hidden;
+    background-image: linear-gradient(90deg, var(--line) 1px, transparent 1px); }
+  .track i { position: absolute; top: 2px; bottom: 2px; border-radius: 3px; opacity: .9; min-width: 3px; overflow: hidden; }
+  .track i em { font-style: normal; font-size: 10px; color: rgba(0, 0, 0, .75); padding: 0 3px; line-height: 18px; white-space: nowrap; }
   .track i.bad { outline: 2px solid var(--red); }
   .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); }
   .tab { border: none; border-bottom: 2px solid transparent; border-radius: 0; padding: 8px 12px; color: var(--text-2); }

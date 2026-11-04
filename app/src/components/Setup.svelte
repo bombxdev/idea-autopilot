@@ -3,6 +3,7 @@
   // ทุกช่องมีค่าเริ่มต้นที่ใช้ได้เลย: กด "เริ่มใช้งาน" ได้ทันที แล้วปรับทีหลังในหน้าตั้งค่า
   import { onMount } from "svelte";
   import { api } from "../lib/api.js";
+  import { LANGS } from "../lib/i18n.js";
   import { refresh, toast } from "../lib/store.svelte.js";
 
   let prov = $state(null);
@@ -12,7 +13,7 @@
   let test = $state(null);
   let preset = $state("office9");
   let hours = $state(10);
-  let lang = $state("th");
+  let lang = $state("en");
   let autostart = $state(true);
   let saving = $state(false);
 
@@ -130,7 +131,7 @@
 
     <section class="row wrap">
       <label class="row small">ภาษารายงานของ AI
-        <select bind:value={lang}><option value="th">ไทย</option><option value="en">English</option></select></label>
+        <select bind:value={lang}>{#each LANGS as l}<option value={l.code}>{l.name}</option>{/each}</select></label>
       <label class="row small"><input type="checkbox" bind:checked={autostart} /> เปิดพร้อม Windows (ซ่อนอยู่ที่ tray)</label>
     </section>
 

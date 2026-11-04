@@ -1,12 +1,13 @@
 import { api, listen } from "./api.js";
 
 export const store = $state({
+  lang: "en", // interface language (setting `language`)
   state: null,
   ideas: [],
   questions: [],
   stages: [],
   openIdea: null, // id of the idea shown in the drawer
-  page: "morning",
+  page: (typeof location !== "undefined" && new URLSearchParams(location.search).get("page")) || "morning",
   toast: null,
   now: Math.floor(Date.now() / 1000), // ticks every few seconds so "x minutes ago" stays true
 });
@@ -58,6 +59,19 @@ export function stageLabel(key) {
 
 export function questionsFor(id) {
   return store.questions.filter((q) => q.idea_id === id);
+}
+
+/** The steps of a recipe with repeats folded into one: [research, verify, verify] shows "verify ×2", not two tags. */
+export function stepGroups(recipe, stageIdx, active) {
+  const out = [];
+  recipe.forEach((key, i) => {
+    const last = out[out.length - 1];
+    if (last && last.key === key) {
+      last.count += 1;
+      last.to = i;
+    } else out.push({ key, count: 1, from: i, to: i });
+  });
+  return out.map((g) => ({ ...g, done: g.to < stageIdx, now: active && stageIdx >= g.from && stageIdx <= g.to }));
 }
 
 /** Progress in % — finished stages over all stages; the running stage counts half. */

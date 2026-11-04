@@ -1,5 +1,9 @@
 # Idea Autopilot
 
+**Languages:** [ไทย](#ภาษาไทย) · English · [中文](docs/README.zh.md) · [日本語](docs/README.ja.md) · [한국어](docs/README.ko.md) · [Tiếng Việt](docs/README.vi.md) · [Bahasa Indonesia](docs/README.id.md) · [Español](docs/README.es.md) · [Français](docs/README.fr.md) · [Deutsch](docs/README.de.md) · [Português](docs/README.pt.md) · [Русский](docs/README.ru.md) · [العربية](docs/README.ar.md) · [हिन्दी](docs/README.hi.md) · [Italiano](docs/README.it.md) · [Türkçe](docs/README.tr.md)
+
+![Morning view](docs/img/morning.png)
+
 > Jot an idea down in one line; an AI agent of your choice researches it, judges it, or builds a first version while you are away — using the quota you would otherwise waste, and never the part you need for your own work.
 
 - **Any AI agent, not just one:** Claude Code, Codex CLI, Gemini CLI, OpenCode, or your own command. Model and effort are chosen per step by fixed rules (no tokens spent deciding), or pinned by you.
@@ -8,6 +12,16 @@
 - **Phone:** progress and "ready" notifications through your own Telegram bot; ideas can be typed in from there.
 - **Windows 10/11**, built with Tauri 2 (Rust + Svelte). The interface and the AI's reports are in Thai by default (English reports can be chosen in Settings); the UI is not translated yet — contributions welcome.
 - **License:** GPL-3.0-or-later, © 2026 bombxdev. See `LICENSE`, `CONTRIBUTING.md`, `CHANGELOG.md`, `docs/ISSUES.md`.
+
+## Screenshots
+
+(Demo data, not real ideas.)
+
+| Board | Quota plan |
+|---|---|
+| ![Board](docs/img/board.png) | ![Quota](docs/img/quota.png) |
+| **Skill library & safe free shop** | **Sessions** |
+| ![Skills](docs/img/skills.png) | ![Sessions](docs/img/sessions.png) |
 
 ## Install (easiest first)
 
@@ -27,6 +41,8 @@ Build: `cd app && npm install && npm run build`, then `cd src-tauri && cargo bui
 Code signing: free code signing is being requested from [SignPath Foundation](https://signpath.org) (SignPath.io); once approved, released installers will be signed with a certificate issued by SignPath Foundation. Policy: [docs/CODE_SIGNING_POLICY.md](docs/CODE_SIGNING_POLICY.md).
 
 ---
+
+<a id="ภาษาไทย"></a>
 
 (ภาษาไทย)
 
@@ -121,6 +137,7 @@ bin\ia.exe help
 สกิลคือไฟล์ `SKILL.md` (มาตรฐานเปิด ใช้กับ AI ทุกค่าย) ที่บอกวิธีทำงานแบบหนึ่ง เหมือนสูตรอาหาร: พาสต้าทำได้หลายสูตร อร่อยคนละแบบ จึงไม่มีสูตร “ถูก” ตัวเดียว
 - สูตรที่ทำงานเดียวกันใส่ใน **ตระกูล** เดียวกัน บอทเสนอทีละสูตร เก็บผลให้เทียบ คุณปักหมุดสูตรโปรดได้
 - **ช็อปสกิลฟรี** ค้นจาก GitHub แสดงที่มา ไลเซนส์ ดาว ผ่านตัวสแกนความปลอดภัย ดึงเฉพาะข้อความ ผูก commit/hash กับที่คุณเปิดดู และ AI ติดตั้งเองไม่ได้
+- **ตรวจลึกด้วย SkillSpector (NVIDIA, Apache-2.0):** โปรแกรมติดตั้งให้เองครั้งแรกเมื่อเครื่องมี [`uv`](https://docs.astral.sh/uv/) (ฟรี: `winget install --id astral-sh.uv`) ทำงานในเครื่อง ไม่รันสกิล ไม่ใช้ token ทุกสกิลถูกตรวจก่อนติดตั้งและหน้าสกิลมีป้าย 🛡 ผ่านการตรวจ / ควรระวัง / ไม่ผ่าน สกิลที่ไม่ผ่านจะไม่ถูกเสนอให้บอท โปรแกรมเช็กรุ่นใหม่จาก GitHub ให้ทุก 12 ชม. และกด “อัปเดต” ได้เอง ใช้คู่กับตัวสแกนในโปรแกรม (ตัวที่เข้มกว่าชนะ)
 - แผนที่ตั้งใจทำต่อ (Role, Persona, แชร์พร้อมดาว): `docs/ROADMAP.md`
 
 ## สั่งงานผ่าน Telegram

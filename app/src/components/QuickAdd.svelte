@@ -2,12 +2,19 @@
   import { onMount } from "svelte";
   import { api } from "../lib/api.js";
   import { refresh, toast } from "../lib/store.svelte.js";
+  import Attach from "./Attach.svelte";
+  import SkillMenu from "./SkillMenu.svelte";
+  import IdeaAi from "./IdeaAi.svelte";
 
   let { autofocus = false, onadded = null } = $props();
   let text = $state("");
   let err = $state("");
   let sendKey = $state("enter"); // enter = Enter sends · ctrl_enter = Ctrl+Enter sends, Enter is a new line
   let el;
+  let att;
+  let staged = $state([]);
+  let menu;
+  let ai = $state({ account: "", model: "", effort: "" });
 
   onMount(async () => {
     try { sendKey = (await api.settings()).send_key || "enter"; } catch {}
@@ -27,12 +34,19 @@
   });
 
   async function submit() {
-    if (!text.trim()) {
+    if (att?.pending()) {
+      err = "รอไฟล์แนบอัปโหลดก่อน";
+      return;
+    }
+    if (!text.trim() && !staged.length) {
       err = "พิมพ์ไอเดียก่อน";
       return;
     }
     try {
-      await api.addIdea(text);
+      // files only: the idea is named after them
+      await api.addIdea(text.trim() ? text : `ไอเดียจากไฟล์แนบ: ${staged.map((s) => s.name).join(", ")}`, staged.map((s) => s.token), ai);
+      att?.reset();
+      ai = { account: "", model: "", effort: "" };
       text = "";
       toast("จดแล้ว — ยังแก้ข้อความได้ในหน้าไอเดียก่อนบอทเริ่มทำ (ประมาณ 1–2 นาที)", "ok", 4500);
       refresh();
@@ -42,6 +56,7 @@
     }
   }
   function key(e) {
+    if (menu?.key(e)) return; // the skill list takes ↑ ↓ Enter Tab Esc while it is open
     if (e.key !== "Enter" || e.isComposing) return;
     const mod = e.ctrlKey || e.metaKey;
     // Enter mode: Enter sends, Shift+Enter = new line · Ctrl mode: Ctrl+Enter sends, Enter = new line
@@ -54,23 +69,31 @@
 
 <div class="qa">
   <span class="plus">＋</span>
+  <div class="tw">
+  <SkillMenu bind:text below bind:this={menu} />
   <textarea
     bind:this={el}
     bind:value={text}
     rows="1"
     oninput={() => (err = "")}
     onkeydown={key}
+    onpaste={(e) => att?.paste(e)}
     placeholder={sendKey === "enter"
       ? "จดไอเดีย — Enter ส่ง · Shift+Enter ขึ้นบรรทัดใหม่   ·   ! = ด่วน   ? = ขอแค่ research"
       : "จดไอเดีย — Ctrl+Enter ส่ง · Enter ขึ้นบรรทัดใหม่   ·   ! = ด่วน   ? = ขอแค่ research"}
   ></textarea>
+  </div>
+  <Attach bind:this={att} bind:staged fallback priority={1} />
+  <IdeaAi bind:value={ai} />
   {#if err}<span class="err">{err}</span>{/if}
 </div>
 
 <style>
-  .qa { flex: 1; display: flex; align-items: flex-start; gap: 8px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 0 12px; transition: border-color .15s; }
+  .qa { flex: 1; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 0 12px; transition: border-color .15s; }
   .qa:focus-within { border-color: var(--teal); }
+  .tw { position: relative; flex: 1; display: flex; min-width: 200px; }
+  .tw textarea { flex: 1; }
   .plus { color: var(--teal); font-size: 18px; padding-top: 8px; }
-  textarea { flex: 1; border: none; background: transparent; padding: 10px 0; font-size: 15px; resize: none; line-height: 1.4; max-height: 150px; font-family: inherit; }
+  textarea { flex: 1; min-width: 200px; border: none; background: transparent; padding: 10px 0; font-size: 15px; resize: none; line-height: 1.4; max-height: 150px; font-family: inherit; }
   .err { color: var(--red); font-size: 13px; white-space: nowrap; padding-top: 10px; }
 </style>

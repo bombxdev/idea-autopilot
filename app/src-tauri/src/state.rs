@@ -18,6 +18,8 @@ pub struct CurrentRun {
     pub title: String,
     pub started: i64,
     pub forced: bool,
+    /// running in full-power mode (power.rs)
+    pub power: bool,
     /// when the stage is stopped for taking too long (unix seconds)
     pub deadline: i64,
     /// position of this stage in the idea's recipe, e.g. 2 of 5
@@ -26,6 +28,8 @@ pub struct CurrentRun {
     /// last time the agent produced anything (a line, a tool call, a thought)
     pub last_activity: i64,
     pub last_line: String,
+    /// language of the live feed for this run (lang.rs code), so the panel speaks the idea's language
+    pub lang: String,
     pub provider: String,
     pub model: String,
 }
@@ -35,10 +39,21 @@ pub struct Runtime {
     pub paused: bool,
     pub turbo_until: i64,
     pub snap: Option<Snapshot>,
+    /// the account the bot works with right now (None = the single AI chosen in settings, as before)
+    pub account: Option<crate::accounts::Account>,
+    /// latest quota of every usable account, when it was read, and any problem reading it
+    pub acct_snaps: std::collections::HashMap<String, Snapshot>,
+    pub acct_fetch: std::collections::HashMap<String, i64>,
+    pub acct_notes: std::collections::HashMap<String, String>,
+    pub acct_allowed: std::collections::HashMap<String, (bool, String)>,
+    /// the full governor decision of every usable account (the quota page draws a plan per account)
+    pub acct_decisions: std::collections::HashMap<String, Decision>,
     pub snap_note: Option<String>,
     pub last_fetch: i64,
     pub user_active: bool,
     pub decision: Decision,
+    /// what the governor would say with the thrift rules lifted — decides whether a full-power idea may run now
+    pub power_decision: Decision,
     pub current: Option<CurrentRun>,
     pub cancel: Option<Arc<Notify>>,
     pub live_log: VecDeque<String>,
@@ -83,5 +98,31 @@ impl AppState {
         while rt.live_log.len() > 400 {
             rt.live_log.pop_front();
         }
+    }
+}
+
+#[cfg(test)]
+mod lock_rules {
+    /// `a.lock().x() && a.lock().y()` keeps the first guard alive while the second asks for the same
+    /// (non-reentrant) lock: the app freezes for good. Take the lock once and ask both questions of it.
+    #[test]
+    fn no_expression_takes_the_same_lock_twice() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut bad = Vec::new();
+        for f in std::fs::read_dir(dir).unwrap().flatten() {
+            let p = f.path();
+            if p.extension().and_then(|e| e.to_str()) != Some("rs") {
+                continue;
+            }
+            for (i, l) in std::fs::read_to_string(&p).unwrap().lines().enumerate() {
+                let code = l.split("//").next().unwrap_or("");
+                for key in ["rt.lock()", "db.lock()"] {
+                    if code.matches(key).count() >= 2 && (code.contains("&&") || code.contains("||")) {
+                        bad.push(format!("{}:{}: {}", p.file_name().unwrap().to_string_lossy(), i + 1, l.trim()));
+                    }
+                }
+            }
+        }
+        assert!(bad.is_empty(), "same lock twice in one expression:\n{}", bad.join("\n"));
     }
 }

@@ -1,11 +1,20 @@
+mod accounts;
 mod activity;
 mod agents;
 mod api;
+mod attach;
 mod calendar;
+mod cli_install;
+mod catalog;
 mod chat;
 mod commands;
 mod db;
 mod governor;
+mod idea_ai;
+mod lang;
+mod modelname;
+mod economics;
+mod power;
 mod narrate;
 mod prompts;
 mod providers;
@@ -16,11 +25,14 @@ mod runner;
 mod scheduler;
 mod tuner;
 mod skill;
+mod skillspector;
 mod skills;
 mod state;
 mod sync;
 mod brain;
 mod tray;
+mod update;
+mod ui_translate;
 mod usage;
 mod workspace;
 
@@ -114,25 +126,54 @@ pub fn show_main(app: &AppHandle, idea: Option<i64>) {
     }
 }
 
+const CAPTURE_W: f64 = 680.0;
+const CAPTURE_H: f64 = 168.0;
+
+/// Top-left (physical px) that centers the capture box on the monitor under the mouse pointer.
+fn capture_origin(app: &AppHandle) -> Option<tauri::PhysicalPosition<i32>> {
+    let cur = app.cursor_position().ok()?;
+    let mon = app.monitor_from_point(cur.x, cur.y).ok().flatten()?;
+    let (p, s, k) = (mon.position(), mon.size(), mon.scale_factor());
+    let x = p.x as f64 + (s.width as f64 - CAPTURE_W * k) / 2.0;
+    let y = p.y as f64 + (s.height as f64 - CAPTURE_H * k) / 2.0;
+    Some(tauri::PhysicalPosition::new(x as i32, y as i32))
+}
+
 pub fn show_capture(app: &AppHandle) {
+    let origin = capture_origin(app);
     if let Some(w) = app.get_webview_window("capture") {
-        let _ = w.center();
+        match origin {
+            Some(o) => {
+                let _ = w.set_position(o);
+            }
+            None => {
+                let _ = w.center();
+            }
+        }
         let _ = w.show();
         let _ = w.set_focus();
         let _ = app.emit_to("capture", "capture-shown", ());
         return;
     }
-    let _ = WebviewWindowBuilder::new(app, "capture", WebviewUrl::App("capture.html".into()))
+    let b = WebviewWindowBuilder::new(app, "capture", WebviewUrl::App("capture.html".into()))
         .title("จดไอเดีย")
-        .inner_size(680.0, 168.0)
+        .inner_size(CAPTURE_W, CAPTURE_H)
         .resizable(false)
         .decorations(false)
         .transparent(true)
         .always_on_top(true)
         .skip_taskbar(true)
-        .center()
-        .focused(true)
-        .build();
+        .focused(true);
+    if let Ok(w) = b.build() {
+        match origin {
+            Some(o) => {
+                let _ = w.set_position(o);
+            }
+            None => {
+                let _ = w.center();
+            }
+        }
+    }
 }
 
 /// Start with Windows via HKCU\…\Run (hidden to tray with --minimized).
@@ -231,6 +272,7 @@ pub fn run() {
             }
             register_toast_identity();
             workspace::set_language(&db::get_setting(&conn, "language").unwrap_or_default());
+            lang::set_ui(&db::get_setting(&conn, "language").unwrap_or_default());
             let ws = workspace::ensure(&root)?;
             let paused = db::get_setting(&conn, "paused").as_deref() == Some("1");
             // Start with Windows only once the owner agreed (setup screen, or an existing install);
@@ -279,6 +321,8 @@ pub fn run() {
                 let _ = db::set_setting(&handle.state::<AppState>().db.lock(), "hotkey", &bound);
             }
 
+            skillspector::start(handle.clone());
+            update::start(handle.clone());
             tray::build(&handle)?;
             {
                 // learn the model policy before the UI asks for it
@@ -370,6 +414,41 @@ pub fn run() {
             skills::skills_shop_resolve,
             skills::skills_shop_preview,
             skills::skills_shop_install,
+            commands::model_economics,
+            update::update_status,
+            update::update_apply,
+            ui_translate::ui_dict,
+            ui_translate::ui_translate_start,
+            commands::session_close,
+            commands::session_close_all,
+            commands::sessions_overview,
+            commands::accounts_list,
+            commands::account_add,
+            commands::account_update,
+            commands::account_remove,
+            commands::idea_ai_set,
+            cli_install::cli_install_start,
+            cli_install::cli_install_status,
+            cli_install::cli_install_command,
+            commands::account_set_key,
+            commands::account_clear_key,
+            commands::account_models,
+            commands::account_test,
+            commands::account_login,
+            commands::accounts_series,
+            commands::attach_stage,
+            commands::attach_stage_path,
+            commands::attach_unstage,
+            commands::attach_info,
+            commands::attach_list,
+            commands::attach_preview,
+            commands::attach_delete,
+            commands::power_set_idea,
+            skills::skills_deep_check,
+            skills::skills_slash_list,
+            skillspector::skillspector_status,
+            skillspector::skillspector_install,
+            skillspector::skillspector_rescan,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Idea Autopilot")

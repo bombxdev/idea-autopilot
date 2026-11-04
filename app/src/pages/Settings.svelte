@@ -1,8 +1,12 @@
 <script>
   import { onMount } from "svelte";
   import { api } from "../lib/api.js";
+  import LanguagePicker from "../components/LanguagePicker.svelte";
   import { toast, refresh } from "../lib/store.svelte.js";
+  import { ask } from "../lib/dialog.svelte.js";
   import Markdown from "../components/Markdown.svelte";
+  import Accounts from "../components/Accounts.svelte";
+  import UpdateCard from "../components/UpdateCard.svelte";
 
   let s = $state({});
   let cal = $state([]);
@@ -86,7 +90,7 @@
     }
   }
   async function takeover() {
-    if (!confirm(`ย้ายเครื่องหลักมาที่ ${sync.machine}?\nเครื่องเดิม (${sync.leader ?? "-"}) จะหยุดรันบอทและเป็นเครื่องรอง`)) return;
+    if (!(await ask(`เครื่องเดิม (${sync.leader ?? "-"}) จะหยุดรันบอทและเป็นเครื่องรอง`, { title: `ย้ายเครื่องหลักมาที่ ${sync.machine}?`, ok: "ย้ายมาที่นี่" }))) return;
     busy = "takeover";
     try {
       await api.takeover();
@@ -174,12 +178,15 @@
   {#if prov}
     <div class="card">
       <h2>AI ที่ใช้ทำงาน</h2>
+      <h3 style="margin:8px 0 4px">บัญชี AI (หลายบัญชี หลายค่าย)</h3>
+      <Accounts />
+      <h3 style="margin:16px 0 4px">ตัวเลือกเดิม: AI หลักเมื่อไม่ได้ตั้งบัญชี</h3>
       <p class="muted small">เครื่องนี้ไม่จำเป็นต้องมีครบทุกตัว — เลือกตัวที่คุณมีได้เลย ผลงานทั้งหมดเป็นไฟล์ในโฟลเดอร์ไอเดีย จึงเปลี่ยน AI ได้ทุกเมื่อโดยงานเดิมไม่หาย</p>
       <div class="row field"><span class="grow">ตอนนี้ใช้: <b>{prov.active_label}</b>
         <span class="faint small">· วัดโควต้า: {prov.meter === "real" ? "อ่านจากบริการจริง" : "งบชั่วโมงของแอป"}</span></span>
         <select value={prov.setting} onchange={(e) => save("provider", e.target.value)}>
           <option value="auto">เลือกให้อัตโนมัติ (ตัวแรกที่พบ)</option>
-          {#each prov.list as p}<option value={p.id} disabled={!p.installed}>{p.label}{p.installed ? "" : " — ยังไม่ได้ติดตั้ง"}</option>{/each}
+          {#each prov.list.filter((p) => p.active || p.id === prov.setting) as p}<option value={p.id} disabled={!p.installed}>{p.label}{p.installed ? "" : " — ยังไม่ได้ติดตั้ง"}</option>{/each}
           <option value="custom">คำสั่งของฉันเอง</option>
         </select></div>
       {#if prov.setting === "custom" || prov.active === "custom"}
@@ -203,10 +210,13 @@
           {#each test.lines ?? [] as l}<div class="faint">{l}</div>{/each}
         </div>
       {/if}
-      <div class="row field"><span class="grow">ภาษารายงานของ AI</span>
-        <select value={s.language ?? "th"} onchange={(e) => save("language", e.target.value)}><option value="th">ไทย</option><option value="en">English</option></select></div>
     </div>
   {/if}
+
+  <div class="card">
+    <h2>🌐 Language / ภาษา</h2>
+    <LanguagePicker value={s.language || "en"} follow={s.lang_follow ?? "1"} />
+  </div>
 
   {#if sched}
     <div class="card">
@@ -268,6 +278,24 @@
   </div>
 
   <div class="card">
+    <h2>🚀 โหมดเต็มที่</h2>
+    <p class="muted small">
+      ใช้เมื่ออยากได้คำตอบที่ดีที่สุดตอนนี้ เช่น ให้บอทช่วยคิดงานในเวลางาน ไอเดียที่อยู่ในโหมดนี้จะใช้<b>โมเดลแรงสุดและ effort สูงสุด</b>
+      ไม่ถูกลดระดับเพื่อประหยัด และทำงานได้แม้ในเวลางานหรือตอนคุณใช้ Claude อยู่ (ใช้โควต้าที่กันไว้ให้งานคุณด้วย)
+      ยังหยุดเมื่อกด Pause หรือโควต้ารวมใกล้ 100% / โควต้า 5 ชม. ใกล้หมด
+    </p>
+    <div class="row field"><span class="grow">ขอบเขต</span>
+      <select value={s.power_mode ?? "off"} onchange={(e) => save("power_mode", e.target.value)}>
+        <option value="off">ปิด</option>
+        <option value="ideas">เฉพาะไอเดียที่กดปุ่ม 🚀 (ในหน้าไอเดีย){(s.power_ideas || "").split(",").filter(Boolean).length ? ` · ตอนนี้ ${(s.power_ideas || "").split(",").filter(Boolean).length} ไอเดีย` : ""}</option>
+        <option value="all">ทุกไอเดีย</option>
+      </select></div>
+    {#if s.power_mode === "all"}
+      <div class="warnbox small">เปิดสำหรับทุกไอเดีย: บอทจะใช้โควต้าเต็มสูบแม้ในเวลางานของคุณ จนถึงเพดานความปลอดภัย — อย่าลืมปิดเมื่อไม่ต้องการ</div>
+    {/if}
+  </div>
+
+  <div class="card">
     <h2>โมเดลและ effort</h2>
     <p class="muted small">โหมดอัตโนมัติเลือกด้วยกฎ + สถิติจริง จึงไม่เสีย token ในการตัดสินใจ และ Claude เรียกรุ่นล่าสุดของแต่ละตระกูลเสมอ: งานปริมาณมาก (ค้นเว็บ เขียนโค้ด) ใช้ระดับกลาง, งานตัดสินใจ (ตัดสิน วางแผน) ใช้ระดับแรง, งานจัดคิวใช้ระดับเร็ว (แต่ละ AI จับคู่ระดับกับโมเดลของตัวเองตามที่ตั้งไว้ด้านบน · Claude = Haiku / Sonnet / Opus) · ถ้าเคยติดขัดจะขยับขึ้น · ถ้าโควต้าเหลือและกำลังจะหมดอายุจะอัปเกรดคุณภาพ · ถ้าโควต้าใกล้หมดจะลด effort · ทุก 5 รอบจะลองรุ่นที่ถูกกว่า 1 ครั้ง ถ้าดีพอๆ กัน 5 รอบขึ้นไปจะเปลี่ยนไปใช้ถาวร และเริ่มนับใหม่เมื่อมีโมเดลเวอร์ชันใหม่</p>
     {#if policy && Object.keys(policy.stages).length}
@@ -286,6 +314,13 @@
         </table>
       </div>
     {/if}
+    <p class="muted small">
+      <b>เลือกตามความคุ้มค่า:</b> บอทเทียบโมเดลที่เคยใช้งานจริงด้วย <b>ค่าใช้จ่ายต่อรอบที่สำเร็จ</b> (รวมรอบที่ต้องแก้/ทำซ้ำ) ไม่ใช่ราคาต่อรอบหรือชื่อรุ่น
+      จึงรู้ได้ว่ารุ่นใหม่ถูกกว่ารุ่นเก่าไหม หรือรุ่นแรงที่จบในครั้งเดียวคุ้มกว่ารุ่นถูกที่ต้องทำซ้ำ — จะเปลี่ยนรุ่นก็ต่อเมื่อมีสถิติ 5 รอบขึ้นไป คุณภาพไม่ด้อยกว่า และถูกกว่าอย่างน้อย 10%
+      ดูตารางได้ที่หน้าโควต้า · ถ้าอยากให้เทียบรุ่นที่ยังไม่เคยใช้ (เช่นรุ่นก่อนหน้า) ใส่ชื่อโมเดลจริงคั่นด้วยคอมมา บอทจะลองเป็นครั้งคราวเพื่อเก็บสถิติ
+    </p>
+    <div class="row field"><span class="grow">โมเดลที่ให้ทดลองเทียบราคา</span>
+      <input style="width:330px" placeholder="เช่น claude-opus-4-8, claude-sonnet-4-8" value={s.extra_models ?? ""} onchange={(e) => save("extra_models", e.target.value.trim())} /></div>
     <p class="faint small">ช่องโมเดลเว้นว่างหรือ “auto” = ให้โปรแกรมเลือกตามกฎด้านบน · พิมพ์ระดับ (fast / standard / strong) หรือชื่อโมเดลจริงของ AI ที่ใช้ เพื่อบังคับ · effort ก็เหมือนกัน เลือก auto เพื่อให้โปรแกรมเลือก{prov && !prov.list.find((p) => p.id === prov.active)?.effort ? " (AI ตัวนี้ปรับ effort ไม่ได้ ค่านี้จะถูกข้าม)" : ""}</p>
     <datalist id="model-opts">
       <option value="auto"></option><option value="strong"></option><option value="standard"></option><option value="fast"></option>
@@ -375,8 +410,8 @@
 
   <div class="card">
     <h2>เกี่ยวกับ · ประวัติเวอร์ชัน</h2>
-    <div class="row field"><span class="grow">เวอร์ชันที่ใช้อยู่ <b>v{about?.version ?? ""}</b>
-      <span class="faint small">· อัปเดตด้วยไฟล์ติดตั้งใหม่ได้เลย ไอเดียและข้อมูลเดิมไม่หาย</span></span>
+    <UpdateCard />
+    <div class="row field"><span class="grow faint small">อัปเดตแล้วไอเดียและข้อมูลเดิมไม่หาย</span>
       <button onclick={() => (showLog = !showLog)}>{showLog ? "ซ่อน" : "ดู"}ประวัติทุกเวอร์ชัน</button></div>
     <div class="faint small">© 2026 bombxdev · เป็นโอเพนซอร์สภายใต้ GPL-3.0-or-later — ใช้ แก้ไข และแจกต่อได้ แต่งานที่ดัดแปลงต้องเปิดซอร์สภายใต้สัญญาเดียวกัน</div>
     {#if showLog && about}<div class="logbox"><Markdown text={about.changelog} /></div>{/if}

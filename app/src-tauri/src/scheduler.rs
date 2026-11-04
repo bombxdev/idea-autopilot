@@ -68,17 +68,50 @@ async fn tick(app: &AppHandle) -> anyhow::Result<()> {
     import_inbox(app);
     crate::remote::tick(app);
 
-    // which AI does the work, and how its quota is measured (providers.rs)
-    let (provider, meter) = {
-        let c = st.db.lock();
-        let p = crate::providers::chosen(&c);
-        let m = crate::providers::meter(&c, &p);
-        (p, m)
+    let cal = calendar(&st);
+    let bot_used_today: f64 = {
+        let day_start = cal.bot_day_start(now).timestamp();
+        let snaps = db::snapshots_since(&st.db.lock(), day_start).unwrap_or_default();
+        db::deltas(&snaps).iter().map(|d| d.bot).sum()
+    };
+
+    // which account does the work: the first one switched on whose own quota lets the bot run (accounts.rs);
+    // with none configured, the single AI chosen in settings (providers.rs), as before
+    let accts = crate::accounts::usable(&st.db.lock());
+    let owner_active = activity::user_active(&st.ws);
+    let (_provider, meter, user_active, account_shared) = if accts.is_empty() {
+        st.rt.lock().account = None;
+        let (p, m) = {
+            let c = st.db.lock();
+            let p = crate::providers::chosen(&c);
+            let m = crate::providers::meter(&c, &p);
+            (p, m)
+        };
+        let shared = p == "claude";
+        (p.clone(), m, shared && owner_active, shared)
+    } else {
+        for a in &accts {
+            refresh_account(&st, a, now, ts).await;
+        }
+        let sel = select_account(&st, &accts, now, &cal, bot_used_today, owner_active);
+        let m = if account_real(&sel) { crate::providers::Meter::Real } else { crate::providers::Meter::Budget };
+        let shared = sel.shared_with_owner();
+        {
+            let mut rt = st.rt.lock();
+            rt.account = Some(sel.clone());
+            if let Some(s) = rt.acct_snaps.get(&sel.id).cloned() {
+                // only the machine's own login feeds the owner-usage history the reserve is learned from
+                if sel.home.is_empty() && rt.snap.as_ref().map(|o| o.ts != s.ts).unwrap_or(true) {
+                    rt.snap_pending = true;
+                }
+                rt.snap = Some(s);
+            }
+            rt.snap_note = rt.acct_notes.get(&sel.id).cloned();
+        }
+        (sel.kind.clone(), m, shared && owner_active, shared)
     };
     let budget_mode = meter == crate::providers::Meter::Budget;
-    // Claude and the user share one plan quota, so their own use matters; other agents don't
-    let user_active = provider == "claude" && activity::user_active(&st.ws);
-    let need_fetch = {
+    let need_fetch = accts.is_empty() && {
         let rt = st.rt.lock();
         budget_mode || ts - rt.last_fetch >= FETCH_EVERY || rt.snap.is_none()
     };
@@ -104,7 +137,6 @@ async fn tick(app: &AppHandle) -> anyhow::Result<()> {
         }
     }
 
-    let cal = calendar(&st);
     // learn the user's per-work-hour usage once an hour
     if ts - st.rt.lock().last_learn > 3600 {
         let snaps = db::snapshots_since(&st.db.lock(), ts - 28 * 86400).unwrap_or_default();
@@ -121,12 +153,6 @@ async fn tick(app: &AppHandle) -> anyhow::Result<()> {
         rt.reserve_per_hour = if budget_mode { 0.0 } else { learned.unwrap_or(fallback) };
     }
 
-    let day_start = cal.bot_day_start(now).timestamp();
-    let bot_used_today: f64 = {
-        let snaps = db::snapshots_since(&st.db.lock(), day_start).unwrap_or_default();
-        db::deltas(&snaps).iter().map(|d| d.bot).sum()
-    };
-
     let pending = next_idea(&st).is_some();
     let decision = {
         // read what the governor needs under a SHORT rt lock, then release it so
@@ -138,10 +164,10 @@ async fn tick(app: &AppHandle) -> anyhow::Result<()> {
             if rt.turbo_until != 0 && rt.turbo_until < ts {
                 rt.turbo_until = 0;
             }
-            (rt.snap.clone(), rt.paused, rt.turbo_until > ts, rt.reserve_per_hour, rt.current.is_some(), std::mem::take(&mut rt.snap_pending))
+            (rt.snap.clone(), rt.paused, rt.turbo_until > ts, if account_shared { rt.reserve_per_hour } else { 0.0 }, rt.current.is_some(), std::mem::take(&mut rt.snap_pending))
         };
         // recalc with NO lock held
-        let d = governor::decide(&Inputs {
+        let inp = Inputs {
             now,
             snap: snap.as_ref(),
             user_active,
@@ -150,7 +176,11 @@ async fn tick(app: &AppHandle) -> anyhow::Result<()> {
             reserve_per_hour,
             bot_used_today,
             cal: &cal,
-        });
+        };
+        let d = governor::decide(&inp);
+        // same inputs with the thrift rules lifted: may a full-power idea run right now? (a paused bot still says no)
+        let pd = governor::decide(&Inputs { turbo: true, ..inp.clone() });
+        st.rt.lock().power_decision = pd;
         // persist the snapshot with only the db lock (never nested inside rt)
         if snap_pending {
             if let Some(s) = &snap {
@@ -169,12 +199,14 @@ async fn tick(app: &AppHandle) -> anyhow::Result<()> {
     crate::tray::refresh(app);
 
     // stop a running stage only in clear-cut cases
-    let (running, forced, cancel) = {
+    let (running, forced, cancel, power_run) = {
         let rt = st.rt.lock();
-        (rt.current.is_some(), rt.current.as_ref().map(|c| c.forced).unwrap_or(false), rt.cancel.clone())
+        (rt.current.is_some(), rt.current.as_ref().map(|c| c.forced).unwrap_or(false), rt.cancel.clone(), rt.current.as_ref().map(|c| c.power).unwrap_or(false))
     };
     if running {
-        if let Some(why) = governor::should_kill(&decision) {
+        // a full-power run is judged by the thrift-free decision: it only stops for the hard limits
+        let kd = if power_run { st.rt.lock().power_decision.clone() } else { decision.clone() };
+        if let Some(why) = governor::should_kill(&kd) {
             if !forced || decision.paused {
                 st.push_log(format!("■ หยุดงานที่รันอยู่: {why}"));
                 if let Some(c) = cancel {
@@ -187,14 +219,22 @@ async fn tick(app: &AppHandle) -> anyhow::Result<()> {
     } else {
         let forced_id = st.rt.lock().force.take();
         let cooldown = st.rt.lock().cooldown_until > ts;
+        let power_ok = st.rt.lock().power_decision.allow;
+        // (idea, forced by "do it now", full power)
         let pick = match forced_id {
-            Some(id) => db::get_idea(&st.db.lock(), id).ok().map(|i| (i, true)),
-            None if decision.allow && !cooldown => next_idea(&st).map(|i| (i, false)),
+            Some(id) => db::get_idea(&st.db.lock(), id).ok().map(|i| {
+                let p = crate::power::is_on(&st.db.lock(), i.id);
+                (i, true, p)
+            }),
+            // ideas the owner wants at full power go first, and may run in work hours
+            None if power_ok && !cooldown && next_power_idea(&st).is_some() => next_power_idea(&st).map(|i| (i, false, true)),
+            None if !cooldown && next_pinned_idea(&st).is_some() => next_pinned_idea(&st).map(|i| (i, false, false)),
+            None if decision.allow && !cooldown => next_idea(&st).map(|i| (i, false, false)),
             None => None,
         };
-        if let Some((idea, forced)) = pick {
+        if let Some((idea, forced, power)) = pick {
             if let Some(stage) = idea.current_stage() {
-                launch(app.clone(), idea, stage, forced)?;
+                launch(app.clone(), idea, stage, forced, power)?;
             }
         }
     }
@@ -220,8 +260,136 @@ async fn tick(app: &AppHandle) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Does this account have a real, readable quota (a Claude login) rather than the app's own hours budget?
+fn account_real(a: &crate::accounts::Account) -> bool {
+    match a.kind.as_str() {
+        "claude" => claude_login_dir(a).join(".credentials.json").is_file() && !budget_forced(),
+        // Codex writes its real limits into its session logs (usage.rs); until it has run once there is nothing to read
+        "codex" => usage::codex_snapshot(&usage::codex_home(&a.home), db::now()).is_some(),
+        _ => false,
+    }
+}
+
+fn budget_forced() -> bool {
+    false
+}
+
+fn claude_login_dir(a: &crate::accounts::Account) -> std::path::PathBuf {
+    if a.home.is_empty() { usage::claude_dir() } else { std::path::PathBuf::from(&a.home) }
+}
+
+/// Read one account's quota (real for a Claude login, the app's own budget for the rest) and keep its history for the charts.
+async fn refresh_account(st: &AppState, a: &crate::accounts::Account, now: chrono::DateTime<Local>, ts: i64) {
+    let real = account_real(a);
+    let due = {
+        let rt = st.rt.lock();
+        !real || !rt.acct_snaps.contains_key(&a.id) || ts - rt.acct_fetch.get(&a.id).copied().unwrap_or(0) >= FETCH_EVERY
+    };
+    if !due {
+        return;
+    }
+    let (snap, note) = if real && a.kind == "codex" {
+        (usage::codex_snapshot(&usage::codex_home(&a.home), ts), None)
+    } else if real {
+        usage::fetch_in(&claude_login_dir(a)).await
+    } else {
+        let c = st.db.lock();
+        let cfg = usage::BudgetCfg::load(&c);
+        let since = usage::week_start(now, cfg.reset_day).timestamp().min(ts - 5 * 3600);
+        let spans = db::run_spans_since_account(&c, since, &a.id, a.id == a.kind).unwrap_or_default();
+        (Some(usage::budget_snapshot(&spans, now, cfg)), None)
+    };
+    let mut log_it = false;
+    {
+        let mut rt = st.rt.lock();
+        let last = rt.acct_fetch.get(&a.id).copied().unwrap_or(0);
+        rt.acct_fetch.insert(a.id.clone(), ts);
+        match note {
+            Some(n) => rt.acct_notes.insert(a.id.clone(), n),
+            None => rt.acct_notes.remove(&a.id),
+        };
+        if let Some(s) = snap.clone() {
+            rt.acct_snaps.insert(a.id.clone(), s);
+            log_it = real || ts - last >= FETCH_EVERY;
+        }
+    }
+    if let (true, Some(s)) = (log_it, snap) {
+        db::insert_account_usage(&st.db.lock(), &a.id, &s);
+    }
+}
+
+/// The first account the governor lets work right now; when none can, the first one (so the reason shows).
+fn select_account(st: &AppState, accts: &[crate::accounts::Account], now: chrono::DateTime<Local>, cal: &crate::calendar::Calendar, bot_used_today: f64, owner_active: bool) -> crate::accounts::Account {
+    let (paused, turbo, reserve) = {
+        let rt = st.rt.lock();
+        (rt.paused, rt.turbo_until > now.timestamp(), rt.reserve_per_hour)
+    };
+    let mut first_blocked: Option<crate::accounts::Account> = None;
+    for a in accts {
+        let snap = st.rt.lock().acct_snaps.get(&a.id).cloned();
+        let shared = a.shared_with_owner();
+        let d = governor::decide(&Inputs {
+            now,
+            snap: snap.as_ref(),
+            user_active: shared && owner_active,
+            paused,
+            turbo,
+            reserve_per_hour: if shared { reserve } else { 0.0 },
+            bot_used_today,
+            cal,
+        });
+        {
+            let mut rt = st.rt.lock();
+            rt.acct_allowed.insert(a.id.clone(), (d.allow, d.reason.clone()));
+            rt.acct_decisions.insert(a.id.clone(), d.clone());
+        }
+        if d.allow {
+            return a.clone();
+        }
+        first_blocked.get_or_insert_with(|| a.clone());
+    }
+    first_blocked.unwrap_or_else(|| accts[0].clone())
+}
+
+/// The first waiting idea that is covered by full-power mode.
+fn next_power_idea(st: &AppState) -> Option<Idea> {
+    let ideas = db::list_ideas(&st.db.lock()).ok()?;
+    let on = {
+        let c = st.db.lock();
+        ideas.iter().filter(|i| crate::power::is_on(&c, i.id)).map(|i| i.id).collect::<std::collections::BTreeSet<i64>>()
+    };
+    let now = db::now();
+    let grace = db::get_setting(&st.db.lock(), "grace_secs").and_then(|v| v.trim().parse::<i64>().ok()).filter(|v| *v >= 0).unwrap_or(90);
+    ideas.into_iter().find(|i| {
+        on.contains(&i.id)
+            && (i.status == "inbox" || i.status == "active")
+            && i.current_stage().is_some()
+            && !crate::remote::held(st, i.id)
+            && !(i.status == "inbox" && now - i.updated < grace)
+    })
+}
+
+/// A waiting idea that the owner pinned to an account, when that account may work right now (its own quota decides).
+fn next_pinned_idea(st: &AppState) -> Option<Idea> {
+    let (ideas, allowed) = {
+        let ideas = db::list_ideas(&st.db.lock()).ok()?;
+        let rt = st.rt.lock();
+        (ideas, rt.acct_allowed.iter().filter(|(_, v)| v.0).map(|(k, _)| k.clone()).collect::<std::collections::BTreeSet<String>>())
+    };
+    let now = db::now();
+    let grace = db::get_setting(&st.db.lock(), "grace_secs").and_then(|v| v.trim().parse::<i64>().ok()).filter(|v| *v >= 0).unwrap_or(90);
+    ideas.into_iter().find(|i| {
+        (i.status == "inbox" || i.status == "active")
+            && i.current_stage().is_some()
+            && !crate::remote::held(st, i.id)
+            && !(i.status == "inbox" && now - i.updated < grace)
+            && crate::idea_ai::pinned_account(&st.db.lock(), i.id).is_some_and(|a| allowed.contains(&a))
+    })
+}
+
 fn next_idea(st: &AppState) -> Option<Idea> {
     let ideas = db::list_ideas(&st.db.lock()).ok()?;
+    let current = st.rt.lock().account.as_ref().map(|a| a.id.clone());
     let now = db::now();
     let grace = db::get_setting(&st.db.lock(), "grace_secs").and_then(|v| v.trim().parse::<i64>().ok()).filter(|v| *v >= 0).unwrap_or(90);
     ideas
@@ -233,6 +401,8 @@ fn next_idea(st: &AppState) -> Option<Idea> {
                 && !crate::remote::held(st, i.id)
                 // a just-typed (or just-edited) idea waits a little: time to notice a slip and fix the text
                 && !(i.status == "inbox" && now - i.updated < grace)
+                // an idea pinned to another account waits for that account (next_pinned_idea)
+                && crate::idea_ai::pinned_account(&st.db.lock(), i.id).map(|a| Some(&a) == current.as_ref()).unwrap_or(true)
         })
 }
 
@@ -302,24 +472,46 @@ pub fn add_idea(st: &AppState, text: &str) -> anyhow::Result<i64> {
     Ok(id)
 }
 
+/// Language to talk to the owner in for this idea: what they typed when that is clear (unless
+/// "follow my input" is switched off), otherwise the main language from settings. Rules only.
+pub fn idea_lang(st: &AppState, idea: &Idea) -> String {
+    let (main, follow) = {
+        let c = st.db.lock();
+        (db::get_setting(&c, "language").unwrap_or_default(), db::get_setting(&c, "lang_follow").as_deref() != Some("0"))
+    };
+    crate::lang::resolve(&main, follow, &format!("{}\n{}", idea.title, idea.body))
+}
+
 /// A tier forced in settings (per stage first, then global); "auto" or unset = router decides.
 /// Claude family names from older settings (haiku/sonnet/opus) still work.
-fn forced_model(st: &AppState, stage: &str) -> Option<String> {
+fn forced_model(st: &AppState, stage: &str, idea_id: i64, acct: Option<&crate::accounts::Account>) -> Option<String> {
     let c = st.db.lock();
-    db::get_setting(&c, &format!("model_{stage}"))
-        .filter(|v| !v.is_empty() && v != "auto")
+    let mine = crate::idea_ai::get(&c, idea_id).and_then(|a| a.model_forced().map(String::from));
+    mine.or_else(|| db::get_setting(&c, &format!("model_{stage}")).filter(|v| !v.is_empty() && v != "auto"))
+        // the account's own choice: set to a model name = manual, "auto" = the router decides
+        .or_else(|| acct.filter(|a| !a.is_auto_model()).map(|a| a.model.trim().to_string()))
         .or_else(|| db::get_setting(&c, "model_default").filter(|v| !v.is_empty() && v != "auto"))
 }
 
 /// An effort forced in settings (per stage first, then global); unset or "auto" = the router decides.
-fn forced_effort(st: &AppState, stage: &str) -> Option<String> {
+fn forced_effort(st: &AppState, stage: &str, idea_id: i64, acct: Option<&crate::accounts::Account>) -> Option<String> {
     let c = st.db.lock();
     let ok = |v: &String| ["low", "medium", "high", "xhigh"].contains(&v.as_str());
-    db::get_setting(&c, &format!("effort_{stage}")).filter(ok).or_else(|| db::get_setting(&c, "effort_default").filter(ok))
+    let mine = crate::idea_ai::get(&c, idea_id).and_then(|a| a.effort_forced().map(String::from));
+    mine.or_else(|| db::get_setting(&c, &format!("effort_{stage}")).filter(ok))
+        .or_else(|| acct.and_then(|a| a.forced_effort().map(String::from)))
+        .or_else(|| db::get_setting(&c, "effort_default").filter(ok))
 }
 
-fn launch(app: AppHandle, idea: Idea, stage: String, forced: bool) -> anyhow::Result<()> {
+fn launch(app: AppHandle, idea: Idea, stage: String, forced: bool, power: bool) -> anyhow::Result<()> {
     let st = app.state::<AppState>();
+    // the account that works on this idea: the one the owner pinned it to, else the one the bot is using
+    let idea_cfg = crate::idea_ai::get(&st.db.lock(), idea.id);
+    let account = {
+        let pinned = idea_cfg.as_ref().map(|a| a.account.clone()).filter(|a| !a.is_empty());
+        let found = pinned.and_then(|id| crate::accounts::usable(&st.db.lock()).into_iter().find(|a| a.id == id));
+        found.or_else(|| st.rt.lock().account.clone())
+    };
     let dir = workspace::idea_dir(&st.ws, &idea.slug);
     workspace::create_idea_folder(&st.ws, &idea.slug, &idea.title, &idea.body)?;
     if let Err(e) = workspace::ensure_repo(&dir, &idea, &crate::remote::ia_path()) {
@@ -329,25 +521,30 @@ fn launch(app: AppHandle, idea: Idea, stage: String, forced: bool) -> anyhow::Re
         let c = st.db.lock();
         let all = db::list_ideas(&c)?;
         let others: Vec<Idea> = all.into_iter().filter(|i| i.id != idea.id).collect();
-        workspace::write_inputs(&dir, &db::directives(&c, idea.id)?, &db::questions(&c, Some(idea.id), false)?)?;
+        workspace::write_inputs(&dir, &db::directives(&c, idea.id)?, &db::questions(&c, Some(idea.id), false)?, &crate::providers::chosen(&c))?;
         workspace::ideas_summary_for_context(&others)
     };
     let _ = std::fs::remove_file(dir.join("STATUS.json"));
-    let prompt = prompts::build_prompt(&idea, &stage, &others);
-    let decision = st.rt.lock().decision.clone();
+    let lang = idea_lang(&st, &idea);
+    let prompt = prompts::build_prompt(&idea, &stage, &others, &lang);
+    let decision = if power { st.rt.lock().power_decision.clone() } else { st.rt.lock().decision.clone() };
     let learned = crate::router::Learned {
         offset: st.rt.lock().policy.offset(&stage),
         probe: crate::tuner::should_probe(&st.db.lock(), &stage),
     };
-    let mut choice = crate::router::choose(&stage, &idea, &decision, forced_model(&st, &stage).as_deref(), learned);
-    if let Some(e) = forced_effort(&st, &stage) {
+    let mut choice = if power {
+        crate::router::choose_power(&stage, forced_model(&st, &stage, idea.id, account.as_ref()).as_deref())
+    } else {
+        crate::router::choose(&stage, &idea, &decision, forced_model(&st, &stage, idea.id, account.as_ref()).as_deref(), learned)
+    };
+    if let Some(e) = forced_effort(&st, &stage, idea.id, account.as_ref()) {
         choice.effort = e;
         choice.reason.push_str(" · ตั้ง effort ไว้เอง");
     }
     let minutes = prompts::stage(&stage).map(|s| s.minutes).unwrap_or(30);
     let (provider, model_name, custom_cmd) = {
         let c = st.db.lock();
-        let p = crate::providers::chosen(&c);
+        let p = account.as_ref().map(|a| a.kind.clone()).unwrap_or_else(|| crate::providers::chosen(&c));
         // a tier name goes through the agent's tier map; anything else is an exact model the user typed
         let m = match crate::router::tier_of(&choice.model) {
             Some(t) => crate::providers::tier_model(&c, &p, t),
@@ -355,13 +552,35 @@ fn launch(app: AppHandle, idea: Idea, stage: String, forced: bool) -> anyhow::Re
         };
         (p, m, db::get_setting(&c, "custom_cmd").unwrap_or_default())
     };
+    // cost-aware pick: the model that has been cheapest per good run for this stage, or a listed model that still needs evidence.
+    // Not for full power, a forced model, or an idea that is already in trouble.
+    let mut model_name = model_name;
+    if !power && forced_model(&st, &stage, idea.id, account.as_ref()).is_none() && !crate::router::in_trouble(&idea, &stage) {
+        let usual = match crate::router::tier_of(&choice.model) {
+            Some(t) => st.rt.lock().policy.versions.get(crate::tuner::TIERS[t]).cloned(),
+            None => Some(model_name.clone()),
+        };
+        let found = {
+            let c = st.db.lock();
+            usual.and_then(|u| crate::economics::pick(&c, &provider, &stage, &u)).map(|p| (p.model, p.note)).or_else(|| {
+                crate::economics::probe_extra(&c, &stage, &crate::economics::extras(&c)).map(|m| (m, "ลองโมเดลในรายการเทียบราคา เพื่อเก็บสถิติ".to_string()))
+            })
+        };
+        if let Some((m, note)) = found {
+            choice.reason.push_str(&format!(" · {note}"));
+            choice.model = m.clone();
+            model_name = m;
+        }
+    }
     let (week, five) = {
         let rt = st.rt.lock();
-        (rt.snap.as_ref().map(|s| s.week_pct), rt.snap.as_ref().map(|s| s.five_pct))
+        // the quota of the account that really runs it
+        let snap = account.as_ref().and_then(|a| rt.acct_snaps.get(&a.id)).or(rt.snap.as_ref());
+        (snap.map(|s| s.week_pct), snap.map(|s| s.five_pct))
     };
     let run_id = {
         let c = st.db.lock();
-        let id = db::start_run(&c, idea.id, &stage, &choice, week, five)?;
+        let id = db::start_run(&c, idea.id, &stage, &choice, week, five, &provider, &model_name, power, account.as_ref().map(|a| a.id.as_str()).unwrap_or(""))?;
         let label = prompts::stage(&stage).map(|s| s.label).unwrap_or("");
         db::log_event(&c, "run", Some(idea.id), &format!("เริ่ม{label}: {}", idea.title));
         id
@@ -369,7 +588,14 @@ fn launch(app: AppHandle, idea: Idea, stage: String, forced: bool) -> anyhow::Re
     // recipes for this run: one variant per family, copied into the idea folder (the agent may only work there)
     {
         let c = st.db.lock();
-        let offers = crate::skills::select(&c);
+        let mut offers = crate::skills::select(&c);
+        // skills the owner named when adding the idea come first and are always offered
+        if let Some(cfg) = &idea_cfg {
+            let mut pinned = crate::skills::pinned_offers(&c, &cfg.skills);
+            offers.retain(|o| !pinned.iter().any(|p| p.slug == o.slug));
+            pinned.extend(offers);
+            offers = pinned;
+        }
         crate::skills::record_offered(&c, run_id, &offers);
         crate::skills::materialize(&st.root, &dir, &offers);
         if !offers.is_empty() {
@@ -388,13 +614,15 @@ fn launch(app: AppHandle, idea: Idea, stage: String, forced: bool) -> anyhow::Re
             title: idea.title.clone(),
             started: db::now(),
             forced,
+            power,
             deadline: db::now() + ((minutes + 5) * 60) as i64,
             stage_no: idea.stage_idx + 1,
             stage_total: idea.recipe.len() as i64,
             last_activity: db::now(),
             last_line: String::new(),
+            lang: lang.clone(),
             provider: crate::providers::label(&provider),
-            model: if model_name.is_empty() { choice.model.clone() } else { model_name.clone() },
+            model: crate::modelname::label(&provider, None, if model_name.is_empty() { &choice.model } else { &model_name }),
         });
         rt.cancel = Some(cancel.clone());
         rt.live_log.clear();
@@ -426,6 +654,8 @@ fn launch(app: AppHandle, idea: Idea, stage: String, forced: bool) -> anyhow::Re
                 custom_cmd,
                 timeout_mins: minutes + 5,
                 log_path: &log_path,
+                lang: &lang,
+                env: account.as_ref().map(|a| crate::accounts::env_with_secret(a, &st.root)).unwrap_or_default(),
             },
             cancel,
             move |line| {
@@ -761,7 +991,11 @@ pub fn edit_idea(st: &AppState, id: i64, text: &str) -> anyhow::Result<()> {
     if let Some(r) = research_only {
         idea.research_only = r;
     }
-    let busy = st.rt.lock().sessions.contains_key(&id) || st.rt.lock().current.as_ref().map(|c| c.idea_id) == Some(id);
+    // one lock for both questions: a second `rt.lock()` in the same expression waits for the first forever
+    let busy = {
+        let rt = st.rt.lock();
+        rt.sessions.contains_key(&id) || rt.current.as_ref().map(|c| c.idea_id) == Some(id)
+    };
     if early && !busy {
         idea.recipe.clear();
         idea.intents.clear();
@@ -817,12 +1051,19 @@ pub fn state_json(st: &AppState) -> serde_json::Value {
     let providers = crate::providers::summary(&st.db.lock());
     let onboarded = db::get_setting(&st.db.lock(), "onboarded").as_deref() == Some("1");
     let seen_version = db::get_setting(&st.db.lock(), "seen_version");
+    let (power_mode, power_ideas, agents, idea_ai, usable) = {
+        let c = st.db.lock();
+        (crate::power::mode(&c), crate::power::ideas(&c), crate::agents::list(&c), crate::idea_ai::all_json(&c), crate::accounts::usable(&c))
+    };
     let rt = st.rt.lock();
     json!({
         "decision": rt.decision,
         "snap": rt.snap,
         "snap_note": rt.snap_note,
         "current": rt.current,
+        "force": rt.force,
+        "account": rt.account.as_ref().map(|a| serde_json::json!({ "id": a.id, "label": a.title(), "kind": a.kind })),
+        "power": { "allow": rt.power_decision.allow, "reason": rt.power_decision.reason, "mode": power_mode, "ideas": power_ideas },
         "paused": rt.paused,
         "turbo_until": rt.turbo_until,
         "user_active": rt.user_active,
@@ -831,7 +1072,15 @@ pub fn state_json(st: &AppState) -> serde_json::Value {
         "cooldown_until": rt.cooldown_until,
         "role": rt.role,
         "sessions": rt.sessions.values().collect::<Vec<_>>(),
-        "agents": crate::agents::list(),
+        "agents": agents,
+        "idea_ai": idea_ai,
+        // each usable account's plan: its governor decision and the quota it reads
+        "accounts": usable.iter().map(|a| serde_json::json!({
+            "id": a.id, "label": a.title(), "kind": a.kind, "shared": a.shared_with_owner(),
+            "decision": rt.acct_decisions.get(&a.id),
+            "snap": rt.acct_snaps.get(&a.id),
+            "active": rt.account.as_ref().map(|x| x.id == a.id).unwrap_or(false),
+        })).collect::<Vec<_>>(),
         "version": env!("CARGO_PKG_VERSION"),
         "seen_version": seen_version,
         "providers": providers,

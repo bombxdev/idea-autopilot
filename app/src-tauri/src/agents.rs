@@ -26,6 +26,7 @@ const KNOWN: &[(&str, &str, &str)] = &[
     ("claude", "Claude", "หลัก · เห็นความคืบหน้าในแอป · ใช้โควต้า Claude"),
     ("codex", "Codex (OpenAI)", "งานโค้ด/ขัดเกลาหน้าตา · ใช้โควต้า OpenAI"),
     ("gemini", "Gemini (Google)", "อ่านเอกสารยาว/ค้นคว้า · ใช้โควต้า Google"),
+    ("mistral", "Mistral Vibe", "โมเดลของ Mistral (Devstral) · ใช้โควต้า Mistral"),
     ("opencode", "OpenCode", "เลือกโมเดลได้หลายค่าย"),
 ];
 
@@ -57,16 +58,20 @@ fn orca_cached() -> bool {
     *HAS.get_or_init(|| orca_exe().is_some())
 }
 
-/// Agents installed on this machine (providers.rs re-checks PATH every 30 s).
-pub fn list() -> Vec<AgentInfo> {
+/// Agents the owner can hand work to: installed on this machine and switched on. Once accounts have been set up
+/// (settings → AI accounts), an AI whose accounts are all off or removed is not offered; before that, every
+/// installed AI is (providers.rs re-checks PATH every 30 s).
+pub fn list(c: &rusqlite::Connection) -> Vec<AgentInfo> {
     let orca = orca_cached();
+    let configured = db::get_setting(c, "ai_accounts").is_some();
+    let on: Vec<String> = crate::accounts::list(c).into_iter().filter(|a| a.enabled).map(|a| a.kind).collect();
     KNOWN
         .iter()
-        .filter(|(id, ..)| crate::providers::installed(id))
+        .filter(|(id, ..)| crate::providers::installed(id) && (!configured || on.iter().any(|k| k == id)))
         .map(|(id, label, hint)| AgentInfo {
             id: id.to_string(),
             label: label.to_string(),
-            via: if *id == "claude" { "app" } else if orca { "orca" } else { "terminal" }.into(),
+            via: if *id == "claude" { "app" } else if orca && *id != "mistral" { "orca" } else { "terminal" }.into(),
             hint: hint.to_string(),
         })
         .collect()
@@ -91,7 +96,7 @@ fn orca(args: &[&str]) -> Result<Value, String> {
 }
 
 /// Send work on idea `id` to `agent`. Claude → the idea's live session in the app; others → Orca.
-pub fn handoff(app: &AppHandle, id: i64, agent: &str, text: &str) -> Result<String, String> {
+pub fn handoff(app: &AppHandle, id: i64, agent: &str, text: &str, ai: &crate::remote::ChatAi) -> Result<String, String> {
     let text = text.trim();
     if text.is_empty() {
         return Err("พิมพ์สิ่งที่อยากให้ AI ทำก่อน".into());
@@ -101,11 +106,12 @@ pub fn handoff(app: &AppHandle, id: i64, agent: &str, text: &str) -> Result<Stri
         if !crate::providers::installed("claude") {
             return Err("ไม่พบ Claude Code ในเครื่องนี้ — เลือก AI ตัวอื่นที่ติดตั้งไว้".into());
         }
-        crate::remote::ask(app, id, text)?;
+        crate::remote::ask_with(app, id, text, ai)?;
         return Ok("ส่งให้ Claude แล้ว".into());
     }
-    let info = list().into_iter().find(|a| a.id == agent).ok_or(format!("ไม่พบ {agent} ในเครื่องนี้"))?;
     let st = app.state::<AppState>();
+    let known = list(&st.db.lock());
+    let info = known.into_iter().find(|a| a.id == agent).ok_or(format!("ไม่พบ {agent} ในเครื่องนี้ หรือบัญชีของ AI นี้ปิดอยู่"))?;
     let idea = db::get_idea(&st.db.lock(), id).map_err(|e| e.to_string())?;
     let dir = workspace::idea_dir(&st.ws, &idea.slug);
     if !dir.is_dir() {
@@ -115,7 +121,8 @@ pub fn handoff(app: &AppHandle, id: i64, agent: &str, text: &str) -> Result<Stri
     workspace::ensure_repo(&dir, &idea, &ia).map_err(|e| format!("{e:#}"))?;
     // a snapshot first, so whatever the other agent does can be compared or rolled back
     workspace::commit(&dir, &format!("ก่อนส่งให้ {}: {}", info.label, text.chars().take(60).collect::<String>()));
-    if !orca_cached() {
+    // Orca does not know Mistral Vibe: it always opens in a terminal window
+    if !orca_cached() || agent == "mistral" {
         return terminal_handoff(app, id, &info, &dir, text, &idea.title);
     }
     let path = dir.to_string_lossy().replace('\\', "/");
@@ -149,6 +156,7 @@ fn terminal_handoff(app: &AppHandle, id: i64, info: &AgentInfo, dir: &std::path:
     let launch = match info.id.as_str() {
         "gemini" => format!("gemini -i \"{msg}\""),
         "opencode" => format!("opencode --prompt \"{msg}\""),
+        "mistral" => format!("vibe \"{msg}\""),
         other => format!("{other} \"{msg}\""),
     };
     #[cfg(windows)]
@@ -170,6 +178,6 @@ fn terminal_handoff(app: &AppHandle, id: i64, info: &AgentInfo, dir: &std::path:
     Ok(format!("เปิด {} ในหน้าต่างใหม่แล้ว — บอทจะเว้นไอเดียนี้ 3 ชม.", info.label))
 }
 
-pub fn list_json() -> Value {
-    json!(list())
+pub fn list_json(c: &rusqlite::Connection) -> Value {
+    json!(list(c))
 }

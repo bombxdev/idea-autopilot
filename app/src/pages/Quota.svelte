@@ -2,13 +2,18 @@
   import { onMount } from "svelte";
   import { store, refresh, toast, stageLabel } from "../lib/store.svelte.js";
   import { api, pct, clock } from "../lib/api.js";
+  import AccountCharts from "../components/AccountCharts.svelte";
+  import QuotaPick from "../components/QuotaPick.svelte";
+  import PlanCard from "../components/PlanCard.svelte";
+  import { qv, isShown } from "../lib/quotaview.svelte.js";
 
   let rep = $state(null);
+  let eco = $state(null);
   let days = $state(28);
   let cal = $state([]);
 
   async function load() {
-    [rep, cal] = await Promise.all([api.reports(days), api.calendar(8)]);
+    [rep, cal, eco] = await Promise.all([api.reports(days), api.calendar(8), api.modelEconomics()]);
   }
   onMount(load);
 
@@ -24,6 +29,27 @@
     // scale to the real weekly % (history may not cover the whole week yet)
     const t = user + bot;
     return t > 0 ? { user: (used * user) / t, bot: (used * bot) / t } : { user: used, bot: 0 };
+  });
+
+  // ---- the plan per account (split) or for the accounts together (combined)
+  const accts = $derived(s?.accounts ?? []);
+  const shownAccts = $derived(accts.filter((a) => a.decision && isShown(a.id)));
+  // the share of the used quota that is yours, from the history of your own use (Claude, which you also use yourself)
+  const userShare = $derived(split.user + split.bot > 0 ? split.user / (split.user + split.bot) : 0);
+  const avg = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+  const cards = $derived.by(() => {
+    if (!accts.length) return [{ key: "main", title: "", d, snap: s?.snap, shared: true, userShare, lines: [] }];
+    if (qv.mode === "combined" && shownAccts.length > 1) {
+      const ds = shownAccts.map((a) => a.decision);
+      const merged = {
+        allow: ds.some((x) => x.allow), reason: shownAccts.map((a) => `${a.label}: ${a.decision.allow ? "ทำงานได้" : a.decision.reason}`).join(" · "),
+        slot: ds[0].slot, week_pct: avg(ds.map((x) => x.week_pct)), five_pct: avg(ds.map((x) => x.five_pct)), five_cap: avg(ds.map((x) => x.five_cap)),
+        reserve: avg(ds.map((x) => x.reserve)), bot_used_today: ds.reduce((a, x) => a + x.bot_used_today, 0), today_allowance: ds.reduce((a, x) => a + x.today_allowance, 0),
+        sprint: ds.some((x) => x.sprint), turbo: ds.some((x) => x.turbo), hours_to_reset: Math.min(...ds.map((x) => x.hours_to_reset)),
+      };
+      return [{ key: "all", title: `รวม ${shownAccts.length} บัญชี (ค่าเฉลี่ยของแต่ละบัญชี)`, d: merged, snap: shownAccts[0].snap, shared: shownAccts.some((a) => a.shared), userShare, lines: shownAccts.map((a) => `${a.label}: ${Math.round(a.decision.week_pct)}% ของสัปดาห์ · ${a.decision.allow ? "ทำงานได้" : "รอ"}`) }];
+    }
+    return shownAccts.map((a) => ({ key: a.id, title: shownAccts.length > 1 || accts.length > 1 ? a.label : "", d: a.decision, snap: a.snap, shared: a.shared, userShare: a.shared ? userShare : 0, lines: [] }));
   });
 
   // ring segments: user, bot, reserve, available
@@ -65,47 +91,22 @@
 
   {#if s?.snap_note}<div class="warn small">⚠ {s.snap_note}</div>{/if}
 
-  <div class="top">
-    <div class="card ringcard">
-      <svg viewBox="0 0 180 180" width="190" height="190">
-        <circle cx="90" cy="90" r={R} fill="none" stroke="var(--bg-2)" stroke-width="20" />
-        {#each segs as g}
-          {#if g.v > 0}
-            <circle cx="90" cy="90" r={R} fill="none" stroke={g.c} stroke-width="20"
-              stroke-dasharray="{(g.v / 100) * C} {C}" stroke-dashoffset={-(g.off / 100) * C}
-              transform="rotate(-90 90 90)" opacity={g.dash ? 0.55 : 1} />
-          {/if}
-        {/each}
-        <text x="90" y="86" text-anchor="middle" class="big">{pct(d?.week_pct)}</text>
-        <text x="90" y="108" text-anchor="middle" class="sub">ของสัปดาห์</text>
-      </svg>
-      <div class="legend">
-        {#each segs as g}<div class="row small"><i style="background:{g.c};opacity:{g.dash ? 0.55 : 1}"></i><span class="grow">{g.label}</span><b>{pct(g.v, 1)}</b></div>{/each}
-        <div class="faint small">รีเซ็ต {clock(s?.snap?.week_reset)} (อีก {hours(d?.hours_to_reset ?? 0)})</div>
-      </div>
-    </div>
-
-    <div class="card decide">
-      <div class="row"><span class="dot" class:ok={d?.allow}></span><b class="grow">{d?.allow ? "บอททำงานได้" : "บอทรออยู่"}</b>
-        {#if d?.sprint}<span class="chip sprint">🔥 โค้งสุดท้าย</span>{/if}
-        {#if d?.turbo}<span class="chip sprint">⚡ Turbo</span>{/if}</div>
-      <div class="muted">{d?.reason}</div>
-      <div class="kv">
-        <span>ช่วงเวลา</span><b>{{ work: "เวลางาน", lunch: "พักเที่ยง", off: "นอกเวลางาน" }[d?.slot] ?? "—"}</b>
-        <span>5 ชม. ตอนนี้</span><b>{pct(d?.five_pct)} / เพดาน {pct(d?.five_cap)}</b>
-        <span>รีเซ็ต 5 ชม.</span><b>{clock(s?.snap?.five_reset)}</b>
-        <span>บอทใช้วันนี้</span><b>{pct(d?.bot_used_today, 1)} / {pct(d?.today_allowance, 1)}</b>
-        <span>กันให้งาน/ชม.</span><b>{(s?.reserve_per_hour ?? 0).toFixed(2)}% {s?.reserve_learned ? "(เรียนรู้จากสถิติ)" : "(ค่าเริ่มต้น)"}</b>
-        <span>คุณกำลังใช้ Claude</span><b>{s?.user_active ? "ใช่" : "ไม่"}</b>
-      </div>
-      <div class="row wrap">
-        <button class:primary={!s?.paused} onclick={async () => { await api.setPaused(!s?.paused); refresh(); }}>{s?.paused ? "▶ ให้บอททำต่อ" : "⏸ พักบอท"}</button>
-        {#if s?.turbo_until}<button onclick={() => turbo(0)}>ปิด Turbo</button>{:else}
-          <button onclick={() => turbo(2)}>⚡ Turbo 2 ชม.</button>
-          <button onclick={() => turbo(8)}>⚡ Turbo ทั้งคืน</button>{/if}
-      </div>
-    </div>
+  <QuotaPick accounts={accts} />
+  <div class="row wrap small ctrl">
+    <button class:primary={!s?.paused} onclick={async () => { await api.setPaused(!s?.paused); refresh(); }}>{s?.paused ? "▶ ให้บอททำต่อ" : "⏸ พักบอท"}</button>
+    {#if s?.turbo_until}<button onclick={() => turbo(0)}>ปิด Turbo</button>{:else}
+      <button onclick={() => turbo(2)}>⚡ Turbo 2 ชม.</button>
+      <button onclick={() => turbo(8)}>⚡ Turbo ทั้งคืน</button>{/if}
+    <span class="faint">กันให้งาน/ชม. {(s?.reserve_per_hour ?? 0).toFixed(2)}% {s?.reserve_learned ? "(เรียนรู้จากสถิติ)" : "(ค่าเริ่มต้น)"} · คุณกำลังใช้ Claude: {s?.user_active ? "ใช่" : "ไม่"}</span>
   </div>
+  <div class="plans" class:single={cards.length === 1}>
+    {#each cards as c (c.key)}<PlanCard title={c.title} d={c.d} snap={c.snap} shared={c.shared} userShare={c.userShare} lines={c.lines} />{/each}
+  </div>
+
+  <section>
+    <h2>โควต้าแยกตามบัญชี</h2>
+    <AccountCharts />
+  </section>
 
   <section>
     <h2>8 วันข้างหน้า</h2>
@@ -171,6 +172,25 @@
               <div class="row small"><span class="grow">{m.model}</span><span class="faint">{m.runs} รอบ · สำเร็จ {m.ok} · {(m.tokens / 1e6).toFixed(1)}M tok</span><b style="width:56px;text-align:right">{pct(m.pct, 1)}</b></div>
             {/each}
           {/if}
+          {#if eco?.overall?.length}
+            <h3 style="margin-top:16px">ความคุ้มค่าของแต่ละโมเดล</h3>
+            <p class="faint small">“ต่อรอบที่สำเร็จ” = ค่าใช้จ่ายทั้งหมดของโมเดลนั้น ÷ จำนวนรอบที่ออกมาดี (รอบที่ต้องแก้หรือทำซ้ำก็นับเป็นค่าใช้จ่าย) ยิ่งต่ำยิ่งคุ้ม · เครื่องหมาย ~ คือประมาณจากจำนวน token เพราะ AI ตัวนั้นไม่รายงานราคา · ไม่นับรอบโหมดเต็มที่</p>
+            <table class="eco">
+              <thead><tr><th>โมเดล</th><th>รอบ</th><th>สำเร็จ</th><th>เฉลี่ย/รอบ</th><th>ต่อรอบที่สำเร็จ</th><th>turns</th><th>นาที</th></tr></thead>
+              <tbody>
+                {#each eco.overall as m}
+                  {@const best = Math.min(...eco.overall.filter((x) => x.runs >= eco.min_evidence && x.per_good != null).map((x) => x.per_good))}
+                  <tr class:best={m.runs >= eco.min_evidence && m.per_good != null && m.per_good === best}>
+                    <td>{m.label}</td><td>{m.runs}</td><td>{m.ok_pct}%</td>
+                    <td>{m.estimated ? "~" : ""}${m.avg_cost.toFixed(2)}</td>
+                    <td><b>{m.per_good == null ? "—" : `${m.estimated ? "~" : ""}$${m.per_good.toFixed(2)}`}</b></td>
+                    <td>{m.avg_turns.toFixed(0)}</td><td>{m.avg_min.toFixed(0)}</td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+            {#if eco.overall.every((m) => m.runs < eco.min_evidence)}<div class="faint small">ยังมีสถิติน้อย (ต้องอย่างน้อย {eco.min_evidence} รอบต่อโมเดลจึงใช้ตัดสิน)</div>{/if}
+          {/if}
           {#if rep.stages.length}
             <h3 style="margin-top:16px">แยกตามขั้นงาน</h3>
             {#each rep.stages as st}
@@ -187,6 +207,9 @@
   .wrapx { max-width: 1100px; display: flex; flex-direction: column; gap: 24px; }
   .head p { margin: 4px 0 0; }
   .warn { background: var(--amber-bg); color: var(--amber); padding: 8px 12px; border-radius: 8px; }
+  .plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 14px; }
+  .plans.single { grid-template-columns: 1fr; }
+  .ctrl { gap: 10px; align-items: center; }
   .top { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
   .ringcard { display: flex; align-items: center; gap: 18px; }
   .big { font-size: 28px; font-weight: 600; fill: var(--text); }
@@ -223,4 +246,7 @@
   .wk { margin: 4px 0; }
   .lb { width: 120px; height: 6px; background: var(--bg-2); border-radius: 6px; overflow: hidden; }
   .lb i { display: block; height: 100%; background: var(--amber); }
+  .eco { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .eco th, .eco td { text-align: left; padding: 4px 6px; border-bottom: 1px solid rgba(128,128,128,.2); }
+  .eco tr.best td { color: var(--teal); }
 </style>

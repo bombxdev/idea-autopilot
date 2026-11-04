@@ -138,7 +138,7 @@ pub fn reports(st: &AppState, days: i64) -> Result<Value> {
 
     let mut by_model: BTreeMap<String, (i64, i64, f64, i64)> = BTreeMap::new();
     for r in &runs {
-        let key = format!("{} · {}", r.model, r.effort.clone().unwrap_or_else(|| "-".into()));
+        let key = crate::modelname::with_effort(&r.model_label, r.effort.as_deref());
         let e = by_model.entry(key).or_default();
         e.0 += 1;
         e.1 += r.input_tokens + r.output_tokens + r.cache_write;
@@ -174,7 +174,7 @@ pub fn activity(st: &AppState, days: i64) -> Result<Value> {
             json!({
                 "id": r.id, "idea_id": r.idea_id,
                 "title": ideas.get(&r.idea_id).map(|x| x.0.clone()).unwrap_or_default(),
-                "stage": r.stage, "model": r.model, "effort": r.effort, "reason": r.reason,
+                "stage": r.stage, "model": r.model, "model_label": r.model_label, "effort": r.effort, "reason": r.reason, "power": r.power,
                 "started": r.started, "ended": r.ended, "secs": end - r.started,
                 "status": r.status, "summary": r.summary, "error": r.error,
                 "tokens": r.input_tokens + r.output_tokens + r.cache_write, "cache_read": r.cache_read,
@@ -238,12 +238,13 @@ pub fn run_log(st: &AppState, run_id: i64) -> Result<Vec<String>> {
     let (idea_id, stage): (i64, String) = c.query_row("SELECT idea_id, stage FROM runs WHERE id=?1", [run_id], |r| Ok((r.get(0)?, r.get(1)?)))?;
     let idea = db::get_idea(&c, idea_id)?;
     drop(c);
+    let lang = crate::scheduler::idea_lang(st, &idea);
     let path = crate::workspace::idea_dir(&st.ws, &idea.slug).join("logs").join(format!("run-{run_id:05}-{stage}.jsonl"));
     let text = std::fs::read_to_string(&path).unwrap_or_default();
     Ok(text
         .lines()
         .filter_map(|l| serde_json::from_str::<Value>(l).ok())
-        .filter_map(|v| crate::runner::describe(&v))
+        .filter_map(|v| crate::runner::describe(&v, &lang))
         .collect())
 }
 

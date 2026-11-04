@@ -1,9 +1,13 @@
 <script>
-  import { store, stageLabel, dur } from "../lib/store.svelte.js";
+  import { store, stageLabel } from "../lib/store.svelte.js";
   import { api, isStep, clock } from "../lib/api.js";
+  import { t, durIn } from "../lib/i18n.js";
 
   let box;
   const cur = $derived(store.state?.current);
+  // the panel speaks the language of the idea being worked on (what the owner typed, or the main setting)
+  const L = $derived(store.lang);
+  const d = (sec) => durIn(sec, L);
   const lines = $derived(store.state?.live_log ?? []);
   $effect(() => {
     lines.length;
@@ -22,26 +26,30 @@
       <span class="dot {mood}"></span>
       <button class="ghost t" onclick={() => (store.openIdea = cur.idea_id)}><b>{cur.title}</b></button>
       <span class="chip">{stageLabel(cur.stage)}</span>
-      {#if cur.stage_total}<span class="chip">ขั้น {cur.stage_no}/{cur.stage_total}</span>{/if}
+      {#if cur.power}<span class="chip" title="โหมดเต็มที่: โมเดลแรงสุด effort สูงสุด">🚀 เต็มที่</span>{/if}
+      {#if cur.stage_total}<span class="chip">{t("step", L, { a: cur.stage_no, b: cur.stage_total })}</span>{/if}
       <span class="grow"></span>
-      <button class="small" onclick={() => api.stopCurrent()}>■ หยุด</button>
+      <button class="small" onclick={() => api.stopCurrent()}>■ {t("stop", L)}</button>
+    </div>
+    <div class="now {mood}" aria-live="polite">
+      <span class="faint small">{t("now", L)}</span>
+      <div class="nowtext">{cur.last_line || "…"}</div>
     </div>
     <div class="row wrap small">
       <span class="mood {mood}">
-        {#if mood === "ok"}● ทำงานอยู่{:else if mood === "think"}◐ กำลังคิด (เงียบมา {dur(idle)}){:else}⚠ เงียบมานาน {dur(idle)} — อาจค้าง{/if}
+        {#if mood === "ok"}● {t("working", L)}{:else if mood === "think"}◐ {t("thinking", L, { t: d(idle) })}{:else}⚠ {t("silent", L, { t: d(idle) })}{/if}
       </span>
-      <span class="faint">ทำมาแล้ว {dur(store.now - cur.started)}</span>
+      <span class="faint">{t("elapsed", L, { t: d(store.now - cur.started) })}</span>
       {#if cur.provider}<span class="faint">· {cur.provider}{cur.model ? ` · ${cur.model}` : ""}</span>{/if}
     </div>
     <div class="row small"><div class="pb grow"><i style="width:{used}%"></i></div>
-      <span class="faint">ใช้เวลาของขั้นนี้ {used}% · หยุดเองเมื่อครบ {clock(cur.deadline)}</span></div>
-    {#if cur.last_line}<div class="last small"><span class="faint">ล่าสุด ({dur(idle)}ที่แล้ว):</span> {cur.last_line}</div>{/if}
+      <span class="faint">{t("used", L, { p: used, c: clock(cur.deadline) })}</span></div>
     {#if mood === "warn"}
-      <div class="hint small">เงียบเกิน 7 นาที: ถ้าเป็นงานคิดนานก็ปล่อยได้ ระบบจะหยุดเองเมื่อครบเวลา แล้วทำต่อรอบหน้า — หรือกด ■ หยุด เพื่อให้ลองใหม่เลย</div>
+      <div class="hint small">{t("hint", L)}</div>
     {/if}
   {/if}
   <div class="log" bind:this={box}>
-    {#each lines as l}<div class:tool={isStep(l)}>{l}</div>{:else}<div class="faint">ยังไม่มี log</div>{/each}
+    {#each lines as l}<div class:tool={isStep(l)}>{l}</div>{:else}<div class="faint">{t("nolog", L)}</div>{/each}
   </div>
 </div>
 
@@ -55,7 +63,10 @@
   .mood.warn { color: var(--red); }
   .pb { height: 6px; background: var(--bg-2); border-radius: 6px; overflow: hidden; }
   .pb i { display: block; height: 100%; background: var(--teal); transition: width 1s; }
-  .last { background: var(--bg-2); border-radius: 8px; padding: 6px 10px; }
+  .now { background: var(--teal-bg); border-left: 3px solid var(--teal); border-radius: 8px; padding: 8px 12px; }
+  .now.think { background: var(--amber-bg); border-color: var(--amber); }
+  .now.warn { background: var(--red-bg); border-color: var(--red); }
+  .nowtext { font-size: 15px; font-weight: 500; line-height: 1.5; overflow-wrap: anywhere; }
   .hint { color: var(--amber); }
   .t { border: none; padding: 0; }
   .log { max-height: 220px; overflow: auto; font-size: 13px; line-height: 1.55; background: var(--bg-2); border-radius: 8px; padding: 10px 12px; white-space: pre-wrap; }

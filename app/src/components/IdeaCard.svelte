@@ -1,5 +1,5 @@
 <script>
-  import { store, questionsFor, stageLabel, progress } from "../lib/store.svelte.js";
+  import { store, questionsFor, stageLabel, progress, stepGroups } from "../lib/store.svelte.js";
   import { ago, STATUS } from "../lib/api.js";
   import Intents from "./Intents.svelte";
   import Question from "./Question.svelte";
@@ -8,6 +8,8 @@
   let { idea, showQuestions = true, showActions = true, compact = false } = $props();
   const qs = $derived(questionsFor(idea.id));
   const running = $derived(store.state?.current?.idea_id === idea.id);
+  const pinned = $derived(store.state?.idea_ai?.[idea.id]);
+  const queuedNow = $derived(!running && store.state?.force === idea.id);
   const stage = $derived(idea.status === "inbox" ? "clarify" : idea.recipe[idea.stage_idx]);
   const st = $derived(STATUS[idea.status] ?? { label: idea.status, color: "blue" });
 </script>
@@ -20,28 +22,29 @@
     {#if idea.verdict}
       <span class="chip v-{idea.verdict.toLowerCase()}">{idea.verdict === "GO" ? "✓ GO" : idea.verdict === "NO-GO" ? "✕ NO-GO" : "≈ MAYBE"}</span>
     {/if}
-    <span class="chip s-{st.color}">{running ? "● กำลังทำ" : st.label}</span>
+    <span class="chip s-{st.color}">{running ? "● กำลังทำ" : queuedNow ? "⚡ คิวถัดไป" : st.label}</span>
   </div>
 
   <div class="row wrap meta">
     <Intents intents={idea.intents} />
     {#if idea.research_only}<span class="chip">research อย่างเดียว</span>{/if}
+    {#if pinned && (pinned.account || pinned.model || pinned.effort)}<span class="chip" title="AI ที่เลือกไว้สำหรับไอเดียนี้">🤖 {[pinned.account, pinned.model, pinned.effort].filter(Boolean).join(" · ")}</span>{/if}
     {#if idea.knowledge}<span class="chip">📚 มีในคลัง</span>{/if}
   </div>
 
   {#if idea.summary}
     <p class="summary">{idea.summary}</p>
   {:else if idea.status === "inbox"}
-    <p class="summary faint">รอ AI ตีความ…</p>
+    <p class="summary faint">{queuedNow ? "สั่งทำเลยแล้ว — รอรอบงานที่รันอยู่จบก่อน แล้วจะเริ่มทันที" : "รอ AI ตีความ… (พักสั้นๆ ให้แก้ข้อความก่อน แล้วรอโควต้าว่าง)"}</p>
   {/if}
 
   <div class="prog"><div class="pbar"><i style="width:{progress(idea)}%"></i></div><span class="small faint">{progress(idea)}%</span></div>
 
   {#if idea.recipe.length && !compact}
     <div class="steps">
-      {#each idea.recipe as s, i}
-        <span class="step" class:done={i < idea.stage_idx} class:now={i === idea.stage_idx && ["active"].includes(idea.status)}>
-          {stageLabel(s)}{#if i === idea.stage_idx && idea.repeat_count > 0} ×{idea.repeat_count + 1}{/if}
+      {#each stepGroups(idea.recipe, idea.stage_idx, idea.status === "active") as g}
+        <span class="step" class:done={g.done} class:now={g.now}>
+          {stageLabel(g.key)}{#if g.count > 1} ×{g.count}{:else if g.now && idea.repeat_count > 0} ×{idea.repeat_count + 1}{/if}
         </span>
       {/each}
     </div>
@@ -61,7 +64,7 @@
   {#if showActions}
     <Actions {idea} compact={compact} />
   {/if}
-  <div class="faint small foot">{running ? `ขั้น: ${stageLabel(stage)}` : `อัปเดต ${ago(idea.updated)}`}</div>
+  <div class="faint small foot">{running && (compact || !idea.recipe.length) ? `ขั้น: ${stageLabel(stage)}` : `อัปเดต ${ago(idea.updated)}`}</div>
 </article>
 
 <style>

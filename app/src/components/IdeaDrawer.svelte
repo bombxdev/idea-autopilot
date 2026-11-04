@@ -1,17 +1,34 @@
 <script>
-  import { store, stageLabel, refresh, toast, progress } from "../lib/store.svelte.js";
+  import { store, stageLabel, refresh, toast, progress, stepGroups } from "../lib/store.svelte.js";
   import { api, ago, clock, STATUS } from "../lib/api.js";
   import Markdown from "./Markdown.svelte";
   import Intents from "./Intents.svelte";
   import Question from "./Question.svelte";
   import Actions from "./Actions.svelte";
   import AskAI from "./AskAI.svelte";
+  import AttachList from "./AttachList.svelte";
+  import IdeaAi from "./IdeaAi.svelte";
 
   let { id } = $props();
   let data = $state(null);
   let tab = $state("report");
   let editing = $state(false);
   let draft = $state("");
+  // the AI chosen for this idea (account, model, effort); saved as soon as it is changed
+  let aiVal = $state({ account: "", model: "", effort: "" });
+  $effect(() => {
+    const v = store.state?.idea_ai?.[id];
+    aiVal = { account: v?.account ?? "", model: v?.model ?? "", effort: v?.effort ?? "" };
+  });
+  async function saveAi(v) {
+    try {
+      await api.ideaAiSet(id, v.account, v.model, v.effort);
+      toast("บันทึกการเลือก AI ของไอเดียนี้แล้ว", "ok", 1800);
+      refresh();
+    } catch (e) {
+      toast(String(e), "err");
+    }
+  }
   async function saveEdit() {
     try {
       await api.editIdea(id, draft);
@@ -58,6 +75,12 @@
     if (tabs.length && !tabs.find((t) => t.key === tab) && tab !== "history") tab = tabs[0].key;
   });
   const running = $derived(store.state?.current?.idea_id === id);
+  const powerOn = $derived(store.state?.power?.mode === "all" || (store.state?.power?.ideas ?? []).includes(id));
+  async function togglePower() {
+    await api.powerSetIdea(id, !powerOn);
+    toast(!powerOn ? "ไอเดียนี้ใช้โหมดเต็มที่แล้ว" : "ปิดโหมดเต็มที่ของไอเดียนี้");
+    refresh();
+  }
   const openQs = $derived((data?.questions ?? []).filter((q) => !q.answer));
   const answered = $derived((data?.questions ?? []).filter((q) => q.answer));
 
@@ -77,11 +100,14 @@
       <div class="row">
         <span class="idn big" title="เลขไอเดีย ใช้อ้างอิงเวลาสั่งงาน เช่น ia ask {id} …">Idea #{id}</span>
         <span class="chip">{STATUS[idea.status]?.label ?? idea.status}</span>
-        {#if running}<span class="chip run">● กำลังทำ: {stageLabel(store.state.current.stage)}</span>{/if}
+        {#if running}<span class="chip run">● กำลังทำ</span>
+        {:else if store.state?.force === id}<span class="chip run">⚡ คิวถัดไป — รองานที่รันอยู่จบ</span>{/if}
         <span class="grow"></span>
         <button class="ghost small" onclick={startEdit} title="แก้ข้อความไอเดีย (เช่น กด Enter เร็วไป)">✏️ แก้ข้อความ</button>
         <button class="ghost small" onclick={() => api.openFolder(id)} title="เปิดโฟลเดอร์งาน">📁</button>
-        <button class="ghost small" onclick={() => act("urgent")} title="สลับด่วน">{idea.priority > 0 ? "⬇ ไม่ด่วน" : "⚡ ด่วน"}</button>
+        <button class="ghost small" class:on-power={powerOn} disabled={store.state?.power?.mode === "all"} onclick={togglePower}
+          title="โหมดเต็มที่: ใช้โมเดลแรงสุด + effort สูงสุด และทำได้แม้ในเวลางาน (ใช้โควต้าที่กันไว้ให้งานคุณด้วย)">{store.state?.power?.mode === "all" ? "🚀 เต็มที่ (ทั้งหมด)" : powerOn ? "🚀 เต็มที่: เปิด" : "🚀 เต็มที่"}</button>
+        <button class="ghost small" onclick={() => act("urgent")} title="ด่วน = ขึ้นหัวคิว (ยังรอโควต้า/เวลาว่างตามปกติ) ถ้าอยากเริ่มทันทีให้กด ⚡ ทำเลยตอนนี้ ใต้การ์ด">{idea.priority > 0 ? "⬇ ไม่ด่วน" : "⚡ ด่วน"}</button>
         {#if idea.status === "archived"}
           <button class="ghost small" onclick={() => act("restore")}>กู้คืน</button>
         {:else}
@@ -107,14 +133,16 @@
       <div class="row small"><div class="pb grow"><i style="width:{progress(idea)}%"></i></div><b>{progress(idea)}%</b></div>
       {#if idea.recipe.length}
         <div class="stepper">
-          {#each idea.recipe as s, i}
-            <div class="st" class:done={i < idea.stage_idx} class:now={i === idea.stage_idx && idea.status === "active"}>
-              <span class="n">{i < idea.stage_idx ? "✓" : i + 1}</span>{stageLabel(s)}
+          {#each stepGroups(idea.recipe, idea.stage_idx, idea.status === "active") as g, gi}
+            <div class="st" class:done={g.done} class:now={g.now}>
+              <span class="n">{g.done ? "✓" : gi + 1}</span>{stageLabel(g.key)}{#if g.count > 1} ×{g.count}{/if}
             </div>
           {/each}
         </div>
       {/if}
+      <IdeaAi bind:value={aiVal} onchange={saveAi} />
       <Actions {idea} />
+      <AttachList {id} />
       <AskAI {id} />
       {#if openQs.length}<div class="qs">{#each openQs as q (q.id)}<Question {q} />{/each}</div>{/if}
       {#if idea.needs.length}
@@ -136,7 +164,7 @@
             {#each data.runs as r}
               <tr title={r.error ?? ""}>
                 <td>{clock(r.started)}</td><td>{stageLabel(r.stage)}</td>
-                <td title={r.reason ?? ""}>{r.model}{r.effort ? ` · ${r.effort}` : ""}</td>
+                <td title={r.reason ?? ""}>{r.power ? "🚀 " : ""}{r.model_label || r.model}{r.effort ? ` · ${r.effort}` : ""}</td>
                 <td class="st-{r.status}">{r.status}</td>
                 <td>{(tokens(r) / 1000).toFixed(0)}k</td>
                 <td>{r.week_after != null && r.week_before != null ? `+${(r.week_after - r.week_before).toFixed(1)}` : "—"}</td>
@@ -165,6 +193,7 @@
 </aside>
 
 <style>
+  .on-power { border-color: var(--amber); color: var(--amber); }
   .edit { width: 100%; box-sizing: border-box; font: inherit; line-height: 1.5; padding: 8px 10px; border-radius: 8px; }
   .scrim { position: fixed; inset: 0; background: rgba(0, 0, 0, .35); z-index: 20; animation: rise .15s; }
   .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(860px, 92vw); background: var(--bg); border-left: 1px solid var(--line); z-index: 21; display: flex; flex-direction: column; animation: slide .2s ease-out; }

@@ -61,8 +61,17 @@ const state = {
     today_allowance: 6.5, bot_used_today: 3.2, five_cap: 95, sprint: false, turbo: false, paused: false, hours_to_reset: 98, next_work_start: now + 12 * H,
   },
   snap: { ts: now - 120, five_pct: 22, five_reset: now + 3 * H, week_pct: 58, week_reset: now + 98 * H, source: "cache" },
+  idea_ai: { 1: { account: "codex01", model: "gpt-6.1-sol", effort: "high", skills: [] } },
+  accounts: [
+    { id: "claude01", label: "claude01", kind: "claude", shared: true, active: true,
+      decision: { allow: true, reason: "นอกเวลางาน — บอททำงานได้", slot: "off", week_pct: 58, five_pct: 22, reserve: 30, bot_budget: 9, today_allowance: 6.5, bot_used_today: 3.2, five_cap: 95, sprint: false, turbo: false, paused: false, hours_to_reset: 98 },
+      snap: { week_reset: now + 98 * H, five_reset: now + 3 * H } },
+    { id: "codex01", label: "Codex งาน", kind: "codex", shared: false, active: false,
+      decision: { allow: true, reason: "นอกเวลางาน — บอททำงานได้", slot: "off", week_pct: 42, five_pct: 16, reserve: 0, bot_budget: 55, today_allowance: 9.1, bot_used_today: 0, five_cap: 95, sprint: false, turbo: false, paused: false, hours_to_reset: 120 },
+      snap: { week_reset: now + 120 * H, five_reset: now + 4 * H } },
+  ],
   snap_note: null,
-  current: { run_id: 9, idea_id: 1, stage: "verdict", title: "เกมการ์ดเล่นสั้นบนเว็บ", started: now - 640, forced: false, deadline: now + 1400, stage_no: 2, stage_total: 5, last_activity: now - 25, last_line: "🌐 ค้นเว็บ: ตลาดเกมการ์ดสั้นบนเว็บ", provider: "Claude Code", model: "opus" },
+  current: { run_id: 9, idea_id: 1, stage: "verdict", title: "เกมการ์ดเล่นสั้นบนเว็บ", started: now - 640, forced: false, deadline: now + 1400, stage_no: 2, stage_total: 5, last_activity: now - 25, last_line: "🌐 ค้นเว็บ: ตลาดเกมการ์ดสั้นบนเว็บ", lang: "th", provider: "Claude Code", model: "opus" },
   paused: false, turbo_until: 0, user_active: false, reserve_per_hour: 1.5, reserve_learned: false, cooldown_until: 0,
   agents: [{ id: "claude", label: "Claude", via: "app", hint: "หลัก" }, { id: "codex", label: "Codex (OpenAI)", via: "orca", hint: "งานโค้ด/ขัดเกลาหน้าตา · ใช้โควต้า OpenAI · เปิดใน Orca" }],
   sessions: [{ idea_id: 5, name: "Idea#5 : กาแฟเย็นทำให้ง่วงจริงไหม", status: "working", started: now - 300, pid: 1, note: "", sid: "x", feed: [
@@ -126,6 +135,49 @@ const handlers = {
   skills_shop_install: () => ({ slug: "pdf", name: "pdf", verdict: "warn" }),
   skills_check_text: () => ({ name: "my-skill", description: "d", verdict: "clean", findings: [], domains: [], similar: [] }),
   test_provider: () => ({ ok: true, status: "ok", seconds: 7, error: null, lines: ["💬 OK"], provider: "claude" }),
+  get_activity: () => {
+    const day = (d) => { const t = new Date(); t.setHours(0, 0, 0, 0); return Math.floor(t.getTime() / 1000) - d * 86400; };
+    const runs = [];
+    let id = 1;
+    for (let d = 0; d < 3; d++) {
+      for (const [h, m, mins, idea] of [[1, 10, 42, 1], [2, 5, 25, 2], [2, 40, 18, 1], [3, 5, 55, 3], [5, 30, 12, 2]]) {
+        runs.push({ id: id++, idea_id: idea, title: "idea " + idea, stage: "research", model: "standard", model_label: "Sonnet 5.5", effort: "medium", started: day(d) + h * 3600 + m * 60, ended: day(d) + h * 3600 + (m + mins) * 60, secs: mins * 60, status: "ok", tokens: 120000, turns: 20, pct: 0.8 });
+      }
+    }
+    return { runs: runs.reverse(), events: [], waits: { running: 120, off: 300 }, eta: [], timeline: [], stats: { runs: runs.length, ok: runs.length, failed: 0, tokens: 1800000, hours: 6.5, pct: 4.2, bot_pct: 4.2, errors: 0, ideas: 3, avg_secs: 1900, busy_secs: 23400 } };
+  },
+  cli_install_command: ({ kind }) => "npm install -g @google/gemini-cli",
+  cli_install_start: () => null,
+  cli_install_status: () => ({ kind: "gemini", state: "error", lines: ["$ npm install -g @google/gemini-cli", "npm error code ENOTFOUND"], message: "ติดตั้งไม่สำเร็จ — ดูข้อความด้านล่าง หรือรันคำสั่งเองใน terminal" }),
+  accounts_list: () => ({
+    accounts: [
+      { id: "claude01", kind: "claude", kind_label: "Claude Code", label: "", enabled: true, vendor: "anthropic", vendor_label: "Anthropic — Claude", auth: "login", key_set: false, base_url: "", needs_model: false, isolated: false, model: "auto", effort: "auto", installed: true, logged_in: true, real_quota: true, quota: { five: 22, week: 58, source: "api" }, active: true, effort_supported: true },
+      { id: "codex01", kind: "codex", kind_label: "Codex CLI", label: "Codex งาน", enabled: true, vendor: "openai", vendor_label: "OpenAI — Codex (GPT)", auth: "login", key_set: false, base_url: "", needs_model: false, isolated: false, model: "auto", effort: "auto", installed: true, logged_in: true, real_quota: true, quota: { five: 16, week: 42, source: "codex" }, effort_supported: true },
+      { id: "gemini01", kind: "gemini", kind_label: "Gemini CLI", label: "", enabled: true, vendor: "google", vendor_label: "Google — Gemini", auth: "login", key_set: false, base_url: "", needs_model: false, isolated: false, model: "auto", effort: "auto", installed: false, logged_in: null, real_quota: false, effort_supported: false },
+      { id: "deepseek01", kind: "claude", kind_label: "Claude Code", label: "", enabled: false, vendor: "deepseek", vendor_label: "DeepSeek", auth: "key", key_set: true, base_url: "", needs_model: true, isolated: true, model: "deepseek-chat", effort: "auto", installed: true, logged_in: true, real_quota: false, quota: { five: 3, week: 8, source: "budget" }, effort_supported: true },
+    ],
+    vendors: [
+      { id: "anthropic", label: "Anthropic — Claude", runner: "claude", auth: ["login", "key"], note: "Claude Code: sign in or API key", base_url: "", models: ["opus", "sonnet", "haiku"], installed: true, install: "npm install -g @anthropic-ai/claude-code", needs_model: false },
+      { id: "mistral", label: "Mistral — Vibe (Devstral)", runner: "mistral", auth: ["key"], note: "Mistral Vibe: API key", base_url: "", models: ["devstral-medium-latest"], installed: false, install: "uv tool install mistral-vibe", needs_model: false },
+      { id: "deepseek", label: "DeepSeek", runner: "claude", auth: ["key"], note: "via Claude Code", base_url: "https://api.deepseek.com/anthropic", models: ["deepseek-chat", "deepseek-reasoner"], installed: true, install: "", needs_model: true },
+    ],
+    kinds: [
+      { id: "claude", label: "Claude Code", installed: true, install: "" }, { id: "codex", label: "Codex CLI", installed: true, install: "" },
+      { id: "mistral", label: "Mistral Vibe", installed: false, install: "uv tool install mistral-vibe" },
+    ],
+  }),
+  account_models: ({ id }) => ({ source: id === "codex01" ? "account" : "known", runner: "x", efforts: ["low", "medium", "high", "xhigh"], models: id === "codex01" ? [{ id: "gpt-6.1-sol", label: "gpt-6.1-sol", efforts: ["low", "medium", "high", "xhigh"] }, { id: "gpt-6-luna", label: "gpt-6-luna", efforts: ["low", "medium"] }] : [{ id: "deepseek-chat", label: "deepseek-chat", efforts: [] }, { id: "openrouter/meta-llama/llama-3.3-70b-instruct:free", label: "openrouter/meta-llama/llama-3.3-70b-instruct:free", efforts: [], free: true }, { id: "openrouter/anthropic/claude-sonnet-4", label: "openrouter/anthropic/claude-sonnet-4", efforts: [] }] }),
+  accounts_series: () => {
+    const n = Math.floor(Date.now() / 1000); const mk = (f, w) => Array.from({ length: 30 }, (_, i) => [n - (30 - i) * 4 * 3600, Math.min(100, f + ((i * 7) % 30)), Math.min(100, w + i)]);
+    return { claude01: mk(10, 30), codex01: mk(5, 20), deepseek01: mk(1, 2) };
+  },
+  update_status: () => ({ current: "0.3.0", latest: "0.4.0", available: location.search.includes("update"), notes: "- new things", page: "https://example.test", mode: "installer", can_apply: true, no_digest: false, auto: false, checked: Math.floor(Date.now() / 1000), error: "" }),
+  skills_slash_list: () => [
+    { slug: "web-research", name: "Web research", description: "Research the web with sources" },
+    { slug: "report-writer", name: "Report writer", description: "Write a short report" },
+    { slug: "rust-review", name: "Rust review", description: "Review Rust code" },
+    { slug: "summarize", name: "Summarize", description: "Summarize a document" },
+  ],
   idea_handoff: ({ agent }) => `เปิด ${agent} ใน Orca แล้ว (mock)`,
   idea_ask: ({ id, text }) => { const x = state.sessions.find((s) => s.idea_id === id); if (x) x.feed.push({ ts: Math.floor(Date.now() / 1000), text: `🙋 คุณ: ${text}` }); return null; },
   list_ideas: () => ({ ideas, questions, stages }),

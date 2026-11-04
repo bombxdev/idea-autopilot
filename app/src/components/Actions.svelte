@@ -1,17 +1,29 @@
 <script>
   import { api } from "../lib/api.js";
-  import { refresh, toast } from "../lib/store.svelte.js";
+  import { store, refresh, toast } from "../lib/store.svelte.js";
+  import Attach from "./Attach.svelte";
 
   let { idea, compact = false } = $props();
   let sayOpen = $state(false);
   let text = $state("");
   let err = $state("");
+  let staged = $state([]);
+  let att;
+  let sayEl = $state();
 
+  function send() {
+    if (att?.pending()) {
+      err = "รอไฟล์แนบอัปโหลดก่อน";
+      return;
+    }
+    if (text.trim() || staged.length) act("say", text);
+    else err = "พิมพ์คำสั่งหรือแนบไฟล์ก่อน";
+  }
   const finished = $derived(["done", "ready", "failed"].includes(idea.status));
 
   async function act(action, t) {
     try {
-      await api.action(idea.id, action, t);
+      await api.action(idea.id, action, t, action === "say" ? staged.map((s) => s.token) : []);
       const msg = {
         go: "รับทราบ — ไปต่อ",
         deeper: "จะขุดลึกให้รอบหน้า",
@@ -21,8 +33,11 @@
         run_now: "เริ่มทำทันที",
         retry: "ลองใหม่อีกครั้ง",
       }[action];
-      if (msg) toast(msg);
+      const busy = store.state?.current;
+      if (action === "run_now" && busy && busy.idea_id !== idea.id) toast(`ต่อคิวแล้ว — รอ “${busy.title}” จบก่อน แล้วเริ่มทันที`);
+      else if (msg) toast(msg);
       sayOpen = false;
+      att?.reset();
       text = "";
       refresh();
     } catch (e) {
@@ -39,20 +54,22 @@
     {#if idea.status === "failed"}
       <button onclick={() => act("retry")}>↻ ลองใหม่</button>
     {/if}
-    <button onclick={() => act("go")} title="ทำขั้นถัดไป">👍 ไปต่อ</button>
-    <button onclick={() => act("deeper")}>🔍 ขุดลึก</button>
-    <button onclick={() => act("alt")}>🔀 ลองอีกแนว</button>
+    <button onclick={() => act("go")} title="เห็นด้วย ทำขั้นถัดไปต่อ (ถ้าน่าทำก็วางแผนและสร้างเลย) — เข้าคิวรอโควต้าว่าง">👍 ไปต่อ</button>
+    <button onclick={() => act("deeper")} title="ให้หาข้อมูลจริงเพิ่มในประเด็นที่ยังไม่ชัด — เข้าคิวรอโควต้าว่าง">🔍 ขุดลึก</button>
+    <button onclick={() => act("alt")} title="ลองอีกแนวทางที่ต่างจากเดิมแล้วเทียบกัน — เข้าคิวรอโควต้าว่าง">🔀 ลองอีกแนว</button>
     {#if !compact}
-      {#if !finished}<button onclick={() => act("stop")}>✂️ พอแค่นี้</button>{/if}
-      <button onclick={() => act("run_now")} title="ไม่รอโควต้าว่าง เริ่มเลย">⚡ ทำเลยตอนนี้</button>
+      {#if !finished}<button onclick={() => act("stop")} title="หยุดไอเดียนี้ ไม่ทำต่อ (งานที่ได้แล้วยังอยู่)">✂️ พอแค่นี้</button>{/if}
+      <button onclick={() => act("run_now")} title="ข้ามการรอโควต้า/ช่วงพัก เริ่มทันที ถ้ามีงานอื่นรันอยู่จะเป็นคิวถัดไป (การ์ดจะขึ้น ⚡ คิวถัดไป / ● กำลังทำ)">⚡ ทำเลยตอนนี้</button>
     {/if}
-    <button class="ghost" onclick={() => (sayOpen = !sayOpen)}>💬 สั่งสั้นๆ</button>
+    <button class="ghost" onclick={() => (sayOpen = !sayOpen)} title="พิมพ์คำสั่งเพิ่มเอง เช่น เน้นตลาดไทย — บอทอ่านตอนรอบงานถัดไป">💬 สั่งสั้นๆ</button>
   </div>
   {#if sayOpen}
-    <div class="row say">
-      <input class="grow" bind:value={text} oninput={() => (err = "")} placeholder="เช่น เน้นตลาดไทย / ใช้ Python แทน / ไม่เอาแบบต้องมีเซิร์ฟเวอร์"
-        onkeydown={(e) => e.key === "Enter" && !e.isComposing && (text.trim() ? act("say", text) : (err = "พิมพ์คำสั่งก่อน"))} />
-      <button class="primary" onclick={() => (text.trim() ? act("say", text) : (err = "พิมพ์คำสั่งก่อน"))}>ส่ง</button>
+    <div class="row say wrap" bind:this={sayEl}>
+      <input class="grow" bind:value={text} oninput={() => (err = "")} placeholder="เช่น เน้นตลาดไทย / ใช้ Python แทน / ดูรูปที่แนบ (วางภาพด้วย Ctrl+V ได้)"
+        onpaste={(e) => att?.paste(e)}
+        onkeydown={(e) => e.key === "Enter" && !e.isComposing && send()} />
+      <Attach bind:this={att} bind:staged priority={2} zone={() => sayEl?.closest(".drawer") ?? sayEl} />
+      <button class="primary" onclick={send}>ส่ง</button>
     </div>
   {/if}
   {#if err}<div class="small" style="color:var(--red)">{err}</div>{/if}

@@ -46,7 +46,7 @@ pub const DEFS: &[Def] = &[
         bin: "codex",
         tiers: ["", "", ""],
         effort: true,
-        hint: "ไม่มีตัวอ่านโควต้า → ใช้งบชั่วโมงที่ตั้งไว้",
+        hint: "อ่านโควต้าจริงจาก log ของ Codex (หลังรันอย่างน้อยหนึ่งครั้ง) · ก่อนหน้านั้นใช้งบชั่วโมงที่ตั้งไว้",
     },
     Def {
         id: "gemini",
@@ -55,6 +55,14 @@ pub const DEFS: &[Def] = &[
         tiers: ["", "", ""],
         effort: false,
         hint: "ไม่มีตัวอ่านโควต้า → ใช้งบชั่วโมงที่ตั้งไว้",
+    },
+    Def {
+        id: "mistral",
+        label: "Mistral Vibe",
+        bin: "vibe",
+        tiers: ["", "", ""],
+        effort: false,
+        hint: "เลือกโมเดลใน config.toml ของ Vibe · ไม่มีตัวอ่านโควต้า → ใช้งบชั่วโมงที่ตั้งไว้",
     },
     Def {
         id: "opencode",
@@ -88,6 +96,8 @@ pub struct Status {
     /// what the app picks by itself per tier (shown as the hint in Settings)
     pub auto: [String; 3],
     pub effort: bool,
+    /// switched on: some account of this AI is enabled (before accounts are set up, every installed AI counts)
+    pub active: bool,
 }
 
 fn hidden(c: &mut std::process::Command) {
@@ -167,6 +177,11 @@ fn resolve_on_path(bin: &str) -> Option<PathBuf> {
     } else {
         paths.into_iter().next()
     }
+}
+
+/// Look for the agents again at the next question (after one was just installed).
+pub fn forget_found() {
+    *CACHE.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
 static CACHE: Mutex<Option<(Instant, Vec<(&'static str, Option<PathBuf>)>)>> = Mutex::new(None);
@@ -249,8 +264,14 @@ pub fn meter(c: &Connection, provider: &str) -> Meter {
     }
 }
 
+fn path_is_some_marker(f: &[(&'static str, Option<PathBuf>)], id: &str) -> bool {
+    f.iter().any(|(i, p)| *i == id && p.is_some())
+}
+
 pub fn statuses(c: &Connection) -> Vec<Status> {
     let f = found();
+    let configured = db::get_setting(c, "ai_accounts").is_some();
+    let on: Vec<String> = crate::accounts::list(c).into_iter().filter(|a| a.enabled).map(|a| a.kind).collect();
     DEFS.iter()
         .map(|d| {
             let path = f.iter().find(|(i, _)| *i == d.id).and_then(|(_, p)| p.clone());
@@ -264,6 +285,7 @@ pub fn statuses(c: &Connection) -> Vec<Status> {
                 defaults: d.tiers.map(String::from),
                 auto: if d.id == "claude" { d.tiers.map(String::from) } else { discovered(d.id) },
                 effort: d.effort,
+                active: path_is_some_marker(&f, d.id) && (!configured || on.iter().any(|k| k == d.id)),
             }
         })
         .collect()
@@ -350,6 +372,11 @@ pub fn build(provider: &str, model: &str, effort: &str, tools: &str, custom: &st
             args.push(s(READ_FILE_MSG));
             Ok(Invocation { program: bin("opencode")?, args, shell_line: None, stdin_prompt: false, claude_stream: false })
         }
+        "mistral" => {
+            // programmatic mode: the prompt is the argument of -p (Vibe picks its model from its own config)
+            let args: Vec<String> = vec![s("-p"), s(READ_FILE_MSG)];
+            Ok(Invocation { program: bin("vibe")?, args, shell_line: None, stdin_prompt: false, claude_stream: false })
+        }
         "custom" => {
             let tpl = custom.trim();
             if tpl.is_empty() {
@@ -385,6 +412,13 @@ pub struct ModelInfo {
     /// lower = preferred/newer, as the agent ranks its own models (999 = unknown)
     pub priority: i64,
     pub efforts: Vec<String>,
+}
+
+/// Codex's own model list for the login in `home` (empty = the machine's normal Codex login).
+pub fn codex_models_in(home: &str) -> Vec<ModelInfo> {
+    let dir = if home.is_empty() { std::env::var("CODEX_HOME").map(PathBuf::from).ok().or_else(|| dirs::home_dir().map(|h| h.join(".codex"))) } else { Some(PathBuf::from(home)) };
+    let Some(raw) = dir.and_then(|h| std::fs::read_to_string(h.join("models_cache.json")).ok()) else { return vec![] };
+    parse_codex_cache(&raw)
 }
 
 fn codex_models() -> Vec<ModelInfo> {

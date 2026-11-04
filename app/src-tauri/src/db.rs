@@ -129,7 +129,24 @@ pub fn open(path: &Path) -> Result<Connection> {
     let _ = conn.execute("ALTER TABLE runs ADD COLUMN reason TEXT", []);
     let _ = conn.execute("ALTER TABLE runs ADD COLUMN summary TEXT", []);
     let _ = conn.execute("ALTER TABLE runs ADD COLUMN model_id TEXT", []);
+    // which agent ran it and the exact model name that was requested ("" = the agent's own default)
+    let _ = conn.execute("ALTER TABLE runs ADD COLUMN provider TEXT NOT NULL DEFAULT ''", []);
+    let _ = conn.execute("ALTER TABLE runs ADD COLUMN model_used TEXT NOT NULL DEFAULT ''", []);
+    // the account (claude01, ...) that ran it, and the quota history of every account for the charts
+    let _ = conn.execute("ALTER TABLE runs ADD COLUMN account TEXT NOT NULL DEFAULT ''", []);
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS account_usage (ts INTEGER NOT NULL, account TEXT NOT NULL, five_pct REAL NOT NULL, week_pct REAL NOT NULL, source TEXT NOT NULL DEFAULT '')",
+        [],
+    );
+    let _ = conn.execute("CREATE INDEX IF NOT EXISTS ix_acct_usage ON account_usage(account, ts)", []);
+    // 1 = ran in full-power mode
+    let _ = conn.execute("ALTER TABLE runs ADD COLUMN power INTEGER NOT NULL DEFAULT 0", []);
     let _ = conn.execute("ALTER TABLE usage_snapshots ADD COLUMN code TEXT", []);
+    // SkillSpector deep check of each skill: status pass|caution|fail, score, engine version, when, which file version, top findings (json)
+    for (col, ty) in [("ss_status", "TEXT NOT NULL DEFAULT ''"), ("ss_score", "INTEGER NOT NULL DEFAULT 0"), ("ss_version", "TEXT NOT NULL DEFAULT ''"),
+                      ("ss_at", "INTEGER NOT NULL DEFAULT 0"), ("ss_sha", "TEXT NOT NULL DEFAULT ''"), ("ss_issues", "TEXT NOT NULL DEFAULT '[]'")] {
+        let _ = conn.execute(&format!("ALTER TABLE skills ADD COLUMN {col} {ty}"), []);
+    }
     Ok(conn)
 }
 
@@ -426,6 +443,12 @@ pub struct Run {
     pub reason: Option<String>,
     pub summary: Option<String>,
     pub model_id: Option<String>,
+    pub provider: String,
+    pub model_used: String,
+    pub account: String,
+    pub power: bool,
+    /// readable name of the model that really ran, e.g. "Opus 5.5" (see modelname.rs)
+    pub model_label: String,
     pub started: i64,
     pub ended: Option<i64>,
     pub status: String,
@@ -443,10 +466,10 @@ pub struct Run {
     pub error: Option<String>,
 }
 
-pub fn start_run(c: &Connection, idea_id: i64, stage: &str, choice: &crate::router::Choice, week: Option<f64>, five: Option<f64>) -> Result<i64> {
+pub fn start_run(c: &Connection, idea_id: i64, stage: &str, choice: &crate::router::Choice, week: Option<f64>, five: Option<f64>, provider: &str, model_used: &str, power: bool, account: &str) -> Result<i64> {
     c.execute(
-        "INSERT INTO runs(idea_id,stage,model,effort,reason,started,week_before,five_before) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
-        params![idea_id, stage, choice.model, choice.effort, choice.reason, now(), week, five],
+        "INSERT INTO runs(idea_id,stage,model,effort,reason,started,week_before,five_before,provider,model_used,power,account) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+        params![idea_id, stage, choice.model, choice.effort, choice.reason, now(), week, five, provider, model_used, power as i64, account],
     )?;
     Ok(c.last_insert_rowid())
 }
@@ -478,16 +501,23 @@ pub fn finish_run(c: &Connection, r: &Run) -> Result<()> {
 pub fn runs(c: &Connection, idea_id: Option<i64>, since: i64, limit: i64) -> Result<Vec<Run>> {
     let mut st = c.prepare(
         "SELECT id,idea_id,stage,model,started,ended,status,input_tokens,output_tokens,cache_read,cache_write,cost_usd,
-         num_turns,session_id,week_before,week_after,five_before,five_after,error,effort,reason,summary,model_id
+         num_turns,session_id,week_before,week_after,five_before,five_after,error,effort,reason,summary,model_id,provider,model_used,power,account
          FROM runs WHERE (?1 IS NULL OR idea_id=?1) AND started>=?2 ORDER BY id DESC LIMIT ?3",
     )?;
     let v = st
         .query_map(params![idea_id, since, limit], |r| {
+            let (model, model_id, provider, model_used): (String, Option<String>, String, String) = (r.get(3)?, r.get(22)?, r.get(23)?, r.get(24)?);
+            let asked = if model_used.is_empty() { model.clone() } else { model_used.clone() };
             Ok(Run {
                 id: r.get(0)?,
                 idea_id: r.get(1)?,
                 stage: r.get(2)?,
-                model: r.get(3)?,
+                model_label: crate::modelname::label(&provider, model_id.as_deref(), &asked),
+                model,
+                provider,
+                model_used,
+                power: r.get::<_, i64>(25)? != 0,
+                account: r.get(26)?,
                 started: r.get(4)?,
                 ended: r.get(5)?,
                 status: r.get(6)?,
@@ -506,11 +536,38 @@ pub fn runs(c: &Connection, idea_id: Option<i64>, since: i64, limit: i64) -> Res
                 effort: r.get(19)?,
                 reason: r.get(20)?,
                 summary: r.get(21)?,
-                model_id: r.get(22)?,
+                model_id,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(v)
+}
+
+/// Bot run spans of one account (runs recorded before accounts existed count for the account named after its AI).
+pub fn run_spans_since_account(c: &Connection, since: i64, account: &str, legacy: bool) -> Result<Vec<(i64, Option<i64>)>> {
+    let mut st = c.prepare("SELECT started, ended FROM runs WHERE COALESCE(ended, ?2) >= ?1 AND (account=?3 OR (account='' AND ?4=1))")?;
+    let rows = st.query_map(params![since, now(), account, legacy as i64], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Option<i64>>(1)?)))?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+pub fn insert_account_usage(c: &Connection, account: &str, s: &crate::usage::Snapshot) {
+    let _ = c.execute(
+        "INSERT INTO account_usage(ts,account,five_pct,week_pct,source) VALUES(?1,?2,?3,?4,?5)",
+        params![s.ts, account, s.five_pct, s.week_pct, s.source],
+    );
+}
+
+/// Quota history per account for the charts: account -> [(ts, five%, week%)], oldest first.
+pub fn account_series(c: &Connection, since: i64) -> std::collections::BTreeMap<String, Vec<(i64, f64, f64)>> {
+    let mut out: std::collections::BTreeMap<String, Vec<(i64, f64, f64)>> = Default::default();
+    if let Ok(mut st) = c.prepare("SELECT account, ts, five_pct, week_pct FROM account_usage WHERE ts>=?1 ORDER BY ts") {
+        if let Ok(rows) = st.query_map([since], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, f64>(2)?, r.get::<_, f64>(3)?))) {
+            for (a, ts, f, w) in rows.flatten() {
+                out.entry(a).or_default().push((ts, f, w));
+            }
+        }
+    }
+    out
 }
 
 /// Mark runs left "running" by a previous crash as interrupted.

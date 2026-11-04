@@ -275,6 +275,22 @@ fn on_text(app: &AppHandle, text: &str, reply_to: Option<i64>) -> (String, Optio
         }
         "digest" => dispatch(app, "digest", Value::Null).map(|v| (fmt_digest(&v), None, None)),
         "log" => dispatch(app, "activity", json!({ "days": num.unwrap_or(1) })).map(|v| (fmt_log(&v), None, None)),
+        "skills" => {
+            let v = crate::skills::slash_list(&app.state::<AppState>().db.lock());
+            Ok((
+                if v.is_empty() { "ยังไม่มีสกิลที่เปิดใช้".to_string() } else { format!("สกิลที่เรียกได้: /ชื่อสกิล <เลขไอเดีย> <สิ่งที่อยากให้ทำ>
+{}", v.iter().map(|x| format!("• /{} — {}", s(&x["slug"]), s(&x["name"]))).collect::<Vec<_>>().join("
+")) },
+                None,
+                None,
+            ))
+        }
+        // "/web-research 14 compare the top 5 competitors": a skill from the library, run on idea #14 by the AI in the app
+        other if crate::skills::slash_list(&app.state::<AppState>().db.lock()).iter().any(|x| s(&x["slug"]) == other) => {
+            let id = need_id()?;
+            let req = a2.clone().unwrap_or_default();
+            done(dispatch(app, "ask", json!({ "id": id, "text": format!("/{other} {req}") })), &format!("ให้ AI ใช้สกิล {other} กับ #{id} แล้ว ✓")).map(|m| (m, None, Some(id)))
+        }
         _ => Err(format!("ไม่รู้จักคำสั่ง /{cmd} — พิมพ์ /help")),
     })();
     r.unwrap_or_else(|e| (format!("ผิดพลาด: {e}"), None, None))

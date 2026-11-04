@@ -31,7 +31,7 @@ pub struct Snapshot {
     pub source: String,
 }
 
-fn claude_dir() -> PathBuf {
+pub fn claude_dir() -> PathBuf {
     dirs::home_dir().unwrap_or_default().join(".claude")
 }
 
@@ -57,14 +57,14 @@ pub fn parse(v: &Value, fetched_at: i64, source: &str) -> Result<Snapshot> {
     })
 }
 
-fn read_cache() -> Result<Snapshot> {
-    let raw = std::fs::read_to_string(claude_dir().join("usage-cache.json")).context("read usage-cache.json")?;
+fn read_cache(dir: &std::path::Path) -> Result<Snapshot> {
+    let raw = std::fs::read_to_string(dir.join("usage-cache.json")).context("read usage-cache.json")?;
     let v: Value = serde_json::from_str(&raw)?;
     let fetched = v
         .get("_fetched_at")
         .and_then(ts)
         .or_else(|| {
-            std::fs::metadata(claude_dir().join("usage-cache.json"))
+            std::fs::metadata(dir.join("usage-cache.json"))
                 .and_then(|m| m.modified())
                 .ok()
                 .map(|t| chrono::DateTime::<chrono::Utc>::from(t).timestamp())
@@ -73,8 +73,8 @@ fn read_cache() -> Result<Snapshot> {
     parse(&v, fetched, "cache")
 }
 
-fn access_token() -> Result<String> {
-    let raw = std::fs::read_to_string(claude_dir().join(".credentials.json"))?;
+fn access_token(dir: &std::path::Path) -> Result<String> {
+    let raw = std::fs::read_to_string(dir.join(".credentials.json"))?;
     let v: Value = serde_json::from_str(&raw)?;
     let o = v.get("claudeAiOauth").unwrap_or(&v);
     let exp = o.get("expiresAt").and_then(Value::as_i64).unwrap_or(0);
@@ -87,8 +87,8 @@ fn access_token() -> Result<String> {
         .ok_or_else(|| anyhow!("no access token"))
 }
 
-async fn fetch_api() -> Result<Snapshot> {
-    let token = access_token()?;
+async fn fetch_api(dir: &std::path::Path) -> Result<Snapshot> {
+    let token = access_token(dir)?;
     let resp = reqwest::Client::new()
         .get(USAGE_URL)
         .bearer_auth(token)
@@ -107,19 +107,82 @@ async fn fetch_api() -> Result<Snapshot> {
 
 /// Best available snapshot plus a note when something went wrong.
 pub async fn fetch() -> (Option<Snapshot>, Option<String>) {
-    let cache = read_cache();
+    fetch_in(&claude_dir()).await
+}
+
+/// Same for a Claude login kept in its own folder (an account with its own `home`).
+pub async fn fetch_in(dir: &std::path::Path) -> (Option<Snapshot>, Option<String>) {
+    let cache = read_cache(dir);
     if let Ok(s) = &cache {
         if crate::db::now() - s.ts < FRESH_SECS {
             return (Some(s.clone()), None);
         }
     }
-    match fetch_api().await {
+    match fetch_api(dir).await {
         Ok(s) => (Some(s), None),
         Err(e) => match cache {
             Ok(s) => (Some(s), Some(format!("ใช้ค่าเก่าจาก cache ({e})"))),
             Err(c) => (None, Some(format!("อ่านโควต้าไม่ได้: {e}; cache: {c}"))),
         },
     }
+}
+
+// ---------- Codex: the real quota, read from its own session logs ----------
+
+/// Where a Codex login lives: the account's own folder, else `CODEX_HOME`, else `~/.codex`.
+pub fn codex_home(account_home: &str) -> PathBuf {
+    if !account_home.is_empty() {
+        return PathBuf::from(account_home);
+    }
+    std::env::var_os("CODEX_HOME").map(PathBuf::from).unwrap_or_else(|| dirs::home_dir().unwrap_or_default().join(".codex"))
+}
+
+fn rollout_files(dir: &std::path::Path, out: &mut Vec<(std::time::SystemTime, PathBuf)>, depth: u8) {
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.is_dir() && depth < 5 {
+            rollout_files(&p, out, depth + 1);
+        } else if p.extension().is_some_and(|x| x == "jsonl") {
+            if let Ok(t) = e.metadata().and_then(|m| m.modified()) {
+                out.push((t, p));
+            }
+        }
+    }
+}
+
+/// Codex writes its plan limits into every session log (`token_count` events carry `rate_limits`: the 5-hour window
+/// as `primary`, the weekly one as `secondary`). The newest such event is what `/status` in Codex would show, so
+/// the real quota is read from there. A window whose reset time has passed counts as empty again.
+pub fn codex_snapshot(home: &std::path::Path, now: i64) -> Option<Snapshot> {
+    let mut files = Vec::new();
+    rollout_files(&home.join("sessions"), &mut files, 0);
+    files.sort_by_key(|f| std::cmp::Reverse(f.0));
+    for (_, path) in files.into_iter().take(8) {
+        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        for line in text.lines().rev() {
+            if !line.contains("rate_limits") {
+                continue;
+            }
+            let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
+            let Some(rl) = v.pointer("/payload/rate_limits") else { continue };
+            let win = |k: &str| {
+                let w = rl.get(k)?;
+                Some((w.get("used_percent").and_then(Value::as_f64)?, w.get("window_minutes").and_then(Value::as_i64).unwrap_or(0), w.get("resets_at").and_then(Value::as_i64)))
+            };
+            let (Some(a), Some(b)) = (win("primary"), win("secondary")) else { continue };
+            // the shorter window is the 5-hour one
+            let (five, week) = if a.1 <= b.1 { (a, b) } else { (b, a) };
+            let live = |w: (f64, i64, Option<i64>)| match w.2 {
+                Some(r) if r <= now => (0.0, None),
+                r => (w.0, r),
+            };
+            let (five_pct, five_reset) = live(five);
+            let (week_pct, week_reset) = live(week);
+            return Some(Snapshot { ts: now, five_pct, five_reset, week_pct, week_reset, source: "codex".into() });
+        }
+    }
+    None
 }
 
 /// The user's self-metered budget (settings `budget_hours_week`, `budget_hours_5h`, `budget_reset_day`).
@@ -216,5 +279,27 @@ mod tests {
         assert_eq!(s.week_pct, 34.0);
         assert_eq!(s.five_pct, 3.0);
         assert!(s.week_reset.unwrap() > s.five_reset.unwrap());
+    }
+
+    #[test]
+    fn codex_quota_comes_from_the_newest_session_log() {
+        let dir = std::env::temp_dir().join(format!("ia-codex-{}", std::process::id()));
+        let day = dir.join("sessions").join("2026").join("11").join("04");
+        std::fs::create_dir_all(&day).unwrap();
+        let ev = |five: f64, week: f64| format!(
+            r#"{{"timestamp":"t","payload":{{"type":"token_count","rate_limits":{{"primary":{{"used_percent":{five},"window_minutes":300,"resets_at":2000}},"secondary":{{"used_percent":{week},"window_minutes":10080,"resets_at":9000}}}}}}}}"#
+        );
+        std::fs::write(day.join("rollout-a.jsonl"), format!("{}
+{}
+{{\"x\":1}}
+", ev(10.0, 20.0), ev(16.0, 42.0))).unwrap();
+        let s = codex_snapshot(&dir, 1000).unwrap();
+        assert_eq!((s.five_pct, s.week_pct, s.source.as_str()), (16.0, 42.0, "codex"));
+        assert_eq!((s.five_reset, s.week_reset), (Some(2000), Some(9000)));
+        // the 5-hour window has reset since: empty again, the weekly one still counts
+        let s = codex_snapshot(&dir, 3000).unwrap();
+        assert_eq!((s.five_pct, s.five_reset, s.week_pct), (0.0, None, 42.0));
+        assert!(codex_snapshot(&dir.join("nothing"), 1000).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

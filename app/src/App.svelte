@@ -1,7 +1,10 @@
 <script>
   import { onMount } from "svelte";
+  import ConfirmHost from "./components/ConfirmHost.svelte";
   import { store, start, refresh, toast } from "./lib/store.svelte.js";
   import { api, pct, listen } from "./lib/api.js";
+  import { t, isRtl } from "./lib/i18n.js";
+  import { setUiLang } from "./lib/uitrans.svelte.js";
   import Morning from "./pages/Morning.svelte";
   import Board from "./pages/Board.svelte";
   import Quota from "./pages/Quota.svelte";
@@ -9,23 +12,28 @@
   import Skills from "./pages/Skills.svelte";
   import Settings from "./pages/Settings.svelte";
   import Activity from "./pages/Activity.svelte";
+  import Sessions from "./pages/Sessions.svelte";
   import IdeaDrawer from "./components/IdeaDrawer.svelte";
   import Palette from "./components/Palette.svelte";
   import QuickAdd from "./components/QuickAdd.svelte";
   import Setup from "./components/Setup.svelte";
+  import UpdateCard from "./components/UpdateCard.svelte";
   import WhatsNew from "./components/WhatsNew.svelte";
 
   const NAV = [
-    { key: "morning", icon: "☀️", label: "เช้านี้" },
-    { key: "board", icon: "🗂", label: "บอร์ด" },
-    { key: "quota", icon: "⛽", label: "โควต้า" },
-    { key: "library", icon: "📚", label: "คลังความรู้" },
-    { key: "skills", icon: "🧰", label: "สกิล" },
-    { key: "activity", icon: "📜", label: "บันทึก" },
-    { key: "settings", icon: "⚙️", label: "ตั้งค่า" },
+    { key: "morning", icon: "☀️" },
+    { key: "board", icon: "🗂" },
+    { key: "quota", icon: "⛽" },
+    { key: "library", icon: "📚" },
+    { key: "skills", icon: "🧰" },
+    { key: "sessions", icon: "🔗" },
+    { key: "activity", icon: "📜" },
+    { key: "settings", icon: "⚙️" },
   ];
 
   let paletteOpen = $state(false);
+  let upd = $state(null); // a newer version is out
+  let updHidden = $state(false);
   let other = $state(null); // another copy of the program was opened from a different folder
   async function switchCopy() {
     try { await api.switchCopy(); } catch (e) { toast(String(e), "err"); }
@@ -33,7 +41,17 @@
 
   onMount(() => {
     start();
+    // interface language (English until the owner chooses)
+    api.settings().then((x) => {
+      store.lang = x.language || "en";
+      document.documentElement.dir = isRtl(store.lang) ? "rtl" : "ltr";
+      setUiLang(store.lang);
+    }).catch(() => {});
     listen("other-copy", (e) => (other = e.payload));
+    const checkUpdate = () => api.updateStatus(false).then((u) => (upd = u?.available ? u : null)).catch(() => {});
+    setTimeout(checkUpdate, 4000);
+    listen("update-available", () => checkUpdate());
+    const updTimer = setInterval(checkUpdate, 3 * 3600 * 1000);
     // an idea became ready / finished / got stuck: also shown here when the window is open
     listen("idea-notify", (e) => {
       toast(`${e.payload.title} — ${e.payload.body}`, "ok", 9000);
@@ -59,7 +77,7 @@
     if (!s) return { cls: "idle", text: "กำลังโหลด…" };
     if (s.role === "follower") return { cls: "idle", text: "เครื่องรอง · บอทรันที่เครื่องหลัก" };
     if (s.paused) return { cls: "paused", text: "พักบอทอยู่" };
-    if (s.current) return { cls: "run", text: `กำลังทำ · ${s.current.title}${s.current.stage_total ? ` (ขั้น ${s.current.stage_no}/${s.current.stage_total})` : ""}` };
+    if (s.current) return { cls: "run", text: `${s.current.power ? "🚀 " : ""}กำลังทำ · ${s.current.title}`, step: s.current.stage_total ? `(ขั้น ${s.current.stage_no}/${s.current.stage_total})` : "" };
     if (d?.allow) return { cls: "ready", text: "พร้อมทำงาน · คิวว่าง" };
     return { cls: "idle", text: d?.reason ?? "รอ" };
   });
@@ -71,6 +89,13 @@
   }
 </script>
 
+{#if upd && !updHidden && !other}
+  <div class="other upd">
+    <b>มีเวอร์ชันใหม่ v{upd.latest}</b>
+    <UpdateCard compact />
+    <button class="small ghost" onclick={() => (updHidden = true)} aria-label="ซ่อน">✕</button>
+  </div>
+{/if}
 {#if other}
   <div class="other">
     <b>คุณเพิ่งเปิดโปรแกรมจากอีกโฟลเดอร์</b> — ตัวที่รันอยู่ตอนนี้ใช้ข้อมูลที่ <code>{other.my_root}</code> (path เดิมยังอยู่ที่ตัวนี้)
@@ -91,7 +116,7 @@
     <nav>
       {#each NAV as n}
         <button class="nav" class:on={store.page === n.key} onclick={() => (store.page = n.key)}>
-          <span class="ico">{n.icon}</span>{n.label}
+          <span class="ico">{n.icon}</span>{t("nav_" + n.key, store.lang)}
           {#if n.key === "morning" && openQ > 0}<span class="badge">{openQ}</span>{/if}
         </button>
       {/each}
@@ -106,7 +131,7 @@
         </div>
       {/if}
       <button class="ghost small kbd" onclick={() => (paletteOpen = true)}>ค้นหา / สั่งงาน <kbd>Ctrl K</kbd></button>
-      <button class="ghost small ver" onclick={() => (store.page = "settings")} title="ดูประวัติเวอร์ชัน">v{s?.version ?? ""}</button>
+      <button class="ghost small ver" onclick={() => (store.page = "settings")} title="ดูประวัติเวอร์ชัน / อัปเดต">v{s?.version ?? ""}{#if upd} <span class="newdot" title="มีเวอร์ชันใหม่ v{upd.latest}">● ใหม่ v{upd.latest}</span>{/if}</button>
     </div>
   </aside>
 
@@ -114,13 +139,14 @@
     <header>
       <QuickAdd />
       <button class="status {botState.cls}" onclick={togglePause} title="คลิกเพื่อ พัก / ทำต่อ">
-        <span class="dot"></span><span class="ellipsis">{botState.text}</span>
+        <span class="dot"></span><span class="ellipsis">{botState.text}{#if botState.step} <span>{botState.step}</span>{/if}</span>
       </button>
     </header>
     <section class="page">
       {#if store.page === "morning"}<Morning />
       {:else if store.page === "board"}<Board />
       {:else if store.page === "quota"}<Quota />
+      {:else if store.page === "sessions"}<Sessions />
       {:else if store.page === "library"}<Library />
       {:else if store.page === "skills"}<Skills />
       {:else if store.page === "activity"}<Activity />
@@ -133,12 +159,15 @@
 {#if s && s.onboarded === false}<Setup />{/if}
 {#if s && s.onboarded && s.version && s.seen_version !== s.version}<WhatsNew />{/if}
 {#if paletteOpen}<Palette close={() => (paletteOpen = false)} />{/if}
+<ConfirmHost />
 {#if store.toast}
   {#key store.toast.id}<div class="toast {store.toast.kind}">{store.toast.text}</div>{/key}
 {/if}
 
 <style>
   .ver { color: var(--text-3); text-align: left; }
+  .newdot { color: var(--amber); }
+  .other.upd { background: var(--card-2); border-bottom-color: var(--teal); }
   .other { position: fixed; top: 0; left: 0; right: 0; z-index: 60; background: var(--amber-bg); color: var(--text); padding: 10px 16px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 13px; border-bottom: 1px solid var(--amber); }
   .shell { display: grid; grid-template-columns: 220px 1fr; height: 100vh; }
   aside { background: var(--bg-2); border-right: 1px solid var(--line); display: flex; flex-direction: column; padding: 18px 12px; gap: 18px; }

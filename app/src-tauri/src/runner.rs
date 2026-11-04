@@ -37,19 +37,20 @@ pub struct RunSpec<'a> {
     pub custom_cmd: String,
     pub timeout_mins: u64,
     pub log_path: &'a Path,
+    /// language of the live feed (lang.rs code)
+    pub lang: &'a str,
+    /// extra environment (an account's own login folder)
+    pub env: Vec<(String, String)>,
 }
 
 /// One readable line for the live log, if this event is worth showing.
-pub fn describe(v: &Value) -> Option<String> {
+pub fn describe(v: &Value, lang: &str) -> Option<String> {
     match v.get("type")?.as_str()? {
         "assistant" => {
-            let out = crate::narrate::assistant(v.pointer("/message/content")?.as_array()?);
+            let out = crate::narrate::assistant(v.pointer("/message/content")?.as_array()?, lang);
             if out.is_empty() { None } else { Some(out.join("\n")) }
         }
-        "result" => Some(format!(
-            "✓ จบขั้น ({} turns)",
-            v.get("num_turns").and_then(Value::as_i64).unwrap_or(0)
-        )),
+        "result" => Some(crate::narrate::tr(lang, "stage_done", &v.get("num_turns").and_then(Value::as_i64).unwrap_or(0).to_string())),
         _ => None,
     }
 }
@@ -144,6 +145,7 @@ pub async fn run(
         c.args(&inv.args);
         c
     };
+    cmd.envs(spec.env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
     cmd.current_dir(spec.cwd)
         .env("IDEA_AUTOPILOT", "1")
         .stdin(Stdio::piped())
@@ -219,7 +221,7 @@ pub async fn run(
                         }
                         if let Ok(v) = serde_json::from_str::<Value>(&l) {
                             // an empty line is a heartbeat: the agent is alive even when it says nothing
-                            match describe(&v) { Some(d) => on_line(d), None => on_line(String::new()) }
+                            match describe(&v, spec.lang) { Some(d) => on_line(d), None => on_line(String::new()) }
                             if let Some(q) = quota_from_event(&v) { on_quota(q); }
                             if v.get("type").and_then(Value::as_str) == Some("system") && v.get("subtype").and_then(Value::as_str) == Some("init") {
                                 out.model_id = v.get("model").and_then(Value::as_str).map(String::from);
@@ -318,6 +320,8 @@ mod tests {
                 custom_cmd: cmd.into(),
                 timeout_mins: 1,
                 log_path: &dir.join("run.log"),
+                lang: "en",
+                env: vec![],
             },
             Arc::new(Notify::new()),
             move |l| sink.lock().push(l),
@@ -363,6 +367,8 @@ mod tests {
                 custom_cmd: String::new(),
                 timeout_mins: 2,
                 log_path: &dir.join("run.log"),
+                lang: "en",
+                env: vec![],
             },
             Arc::new(Notify::new()),
             move |l| sink.lock().push(l),
@@ -391,6 +397,8 @@ mod tests {
                 custom_cmd: String::new(),
                 timeout_mins: 1,
                 log_path: &dir.join("run.log"),
+                lang: "en",
+                env: vec![],
             },
             Arc::new(Notify::new()),
             |_| {},
