@@ -27,3 +27,7 @@ scripts/privacy-words.txt
 workspace/AGENTS.md
 workspace/CLAUDE.md
 workspace/REMOTE_BRIEF.md
+
+# promo material for Facebook: kept locally, never published
+docs/PROMO-facebook.md
+docs/img/facebook-post*.png
