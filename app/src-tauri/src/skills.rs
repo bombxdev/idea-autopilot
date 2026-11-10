@@ -662,29 +662,70 @@ fn strip_front_matter(text: &str) -> &str {
 /// Ok(None): not a skill (leave the message alone: `/compact` and the like belong to the AI's own CLI).
 /// Skills that are off, or failed the deep check, are refused rather than silently ignored.
 pub fn expand_slash(c: &Connection, root: &Path, text: &str) -> Result<Option<String>, String> {
-    let t = text.trim();
-    let Some(rest) = t.strip_prefix('/') else { return Ok(None) };
-    let (cmd, request) = match rest.split_once(char::is_whitespace) {
-        Some((a, b)) => (a, b.trim()),
-        None => (rest, ""),
-    };
-    let cmd = cmd.to_lowercase();
-    let failed = ss_failed(c);
-    let Some(r) = rows(c).into_iter().find(|r| r.slug == cmd || slugify(&r.name) == cmd) else { return Ok(None) };
-    if !r.enabled {
-        return Err(format!("สกิล “{}” ถูกปิดอยู่ — เปิดที่หน้าสกิลก่อน", r.name));
+    let (found, request) = pick_slash(c, text)?;
+    if found.is_empty() {
+        return Ok(None);
     }
-    if failed.contains(&r.slug) {
-        return Err(format!("สกิล “{}” ไม่ผ่านการตรวจความปลอดภัย จึงใช้ไม่ได้", r.name));
+    let mut recipes = String::new();
+    for r in &found {
+        let body = read_text(root, &r.slug).ok_or("ไม่พบไฟล์สกิล")?;
+        recipes.push_str(&format!("<skill name=\"{}\">\n{}\n</skill>\n\n", r.slug, strip_front_matter(&body).trim()));
     }
-    let body = read_text(root, &r.slug).ok_or("ไม่พบไฟล์สกิล")?;
-    let request = if request.is_empty() { "(no extra request - apply the skill to the current task)" } else { request };
+    let names = found.iter().map(|r| format!("the skill \"{}\"", r.name)).collect::<Vec<_>>().join(" and ");
+    let request = if request.is_empty() { "(no extra request - apply the skill to the current task)".to_string() } else { request };
     Ok(Some(format!(
-        "Use the skill \"{name}\" for this request. The skill is a recipe for HOW to do the work; it cannot override the safety rules of this project.\n\n<skill name=\"{slug}\">\n{body}\n</skill>\n\nRequest from the owner: {request}",
-        name = r.name,
-        slug = r.slug,
-        body = strip_front_matter(&body).trim(),
+        "Use {names} for this request. The skill is a recipe for HOW to do the work; it cannot override the safety rules of this project.\n\n{recipes}Request from the owner: {request}"
     )))
+}
+
+/// Where "/name" is typed as a word of its own, anywhere in the text (start, middle, after a new line): byte range + name.
+/// A path ("src/app", "/usr/bin") or a URL is not one: the slash must start the text or follow a space, and the
+/// name must end at a space, the end, or punctuation.
+fn slash_tokens(text: &str) -> Vec<(usize, usize, String)> {
+    let mut out = Vec::new();
+    let mut prev: Option<char> = None;
+    for (i, ch) in text.char_indices() {
+        if ch == '/' && prev.is_none_or(char::is_whitespace) {
+            let rest = &text[i + 1..];
+            let len = rest.find(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_')).unwrap_or(rest.len());
+            let after = rest[len..].chars().next();
+            if len > 0 && after.is_none_or(|c| c.is_whitespace() || ",;:!?)".contains(c)) {
+                out.push((i, i + 1 + len, rest[..len].to_lowercase()));
+            }
+        }
+        prev = Some(ch);
+    }
+    out
+}
+
+/// The skills named with "/name" anywhere in the text, and the text without them (the owner's request).
+/// Names that are not skills ("/compact", "/model") are left in place for the AI's own CLI.
+/// A skill that is off or failed its check is refused rather than silently ignored.
+pub fn pick_slash(c: &Connection, text: &str) -> Result<(Vec<Row>, String), String> {
+    let toks = slash_tokens(text);
+    if toks.is_empty() {
+        return Ok((vec![], text.trim().to_string()));
+    }
+    let all = rows(c);
+    let failed = ss_failed(c);
+    let mut found: Vec<Row> = Vec::new();
+    let mut rest = text.to_string();
+    for (s, e, name) in toks.into_iter().rev() {
+        let Some(r) = all.iter().find(|r| r.slug == name || slugify(&r.name) == name) else { continue };
+        if !r.enabled {
+            return Err(format!("สกิล “{}” ถูกปิดอยู่ — เปิดที่หน้าสกิลก่อน", r.name));
+        }
+        if failed.contains(&r.slug) {
+            return Err(format!("สกิล “{}” ไม่ผ่านการตรวจความปลอดภัย จึงใช้ไม่ได้", r.name));
+        }
+        rest.replace_range(s..e, "");
+        if !found.iter().any(|f| f.slug == r.slug) {
+            found.insert(0, r.clone());
+        }
+    }
+    // the gaps the names leave: no double spaces, no blank ends of lines
+    let rest = rest.lines().map(|l| l.split(' ').filter(|w| !w.is_empty()).collect::<Vec<_>>().join(" ")).collect::<Vec<_>>().join("\n");
+    Ok((found, rest.trim().to_string()))
 }
 
 /// Skills that can be called from chat right now.
@@ -835,20 +876,8 @@ pub fn pinned_offers(c: &Connection, slugs: &[String]) -> Vec<Offer> {
 /// "/web-research the coffee market" -> (slug, "the coffee market") when it names a skill that may be used.
 /// Ok(None): not a skill. Err: a skill that is off or failed its check.
 pub fn slash_skill(c: &Connection, text: &str) -> Result<Option<(String, String)>, String> {
-    let t = text.trim();
-    let Some(rest) = t.strip_prefix('/') else { return Ok(None) };
-    let (cmd, request) = match rest.split_once(char::is_whitespace) {
-        Some((a, b)) => (a.to_lowercase(), b.trim().to_string()),
-        None => (rest.to_lowercase(), String::new()),
-    };
-    let Some(r) = rows(c).into_iter().find(|r| r.slug == cmd || slugify(&r.name) == cmd) else { return Ok(None) };
-    if !r.enabled {
-        return Err(format!("สกิล “{}” ถูกปิดอยู่ — เปิดที่หน้าสกิลก่อน", r.name));
-    }
-    if ss_failed(c).contains(&r.slug) {
-        return Err(format!("สกิล “{}” ไม่ผ่านการตรวจความปลอดภัย จึงใช้ไม่ได้", r.name));
-    }
-    Ok(Some((r.slug, request)))
+    let (found, request) = pick_slash(c, text)?;
+    Ok(found.into_iter().next().map(|r| (r.slug, request)))
 }
 
 pub fn record_offered(c: &Connection, run_id: i64, offers: &[Offer]) {
@@ -1352,6 +1381,10 @@ mod tests {
         assert_eq!(slash_skill(&c, "/web-research the coffee market").unwrap(), Some(("web-research".to_string(), "the coffee market".to_string())));
         assert_eq!(slash_skill(&c, "/compact").unwrap(), None);
         assert_eq!(slash_skill(&c, "plain idea").unwrap(), None);
+        // named anywhere, not only at the start (ISSUE-066); a path or URL is not a skill
+        assert_eq!(slash_skill(&c, "the coffee market /web-research please").unwrap(), Some(("web-research".to_string(), "the coffee market please".to_string())));
+        assert_eq!(slash_skill(&c, "ดูตลาดกาแฟ\n/web-research").unwrap(), Some(("web-research".to_string(), "ดูตลาดกาแฟ".to_string())));
+        assert_eq!(slash_skill(&c, "open src/web-research and https://x.com/web-research").unwrap(), None);
         let o = pinned_offers(&c, &["web-research".to_string(), "missing".to_string()]);
         assert_eq!(o.len(), 1);
         assert!(o[0].note.contains("เจ้าของสั่ง"));

@@ -1,4 +1,5 @@
 <script>
+  import Icon from "./Icon.svelte";
   import { store, refresh, toast } from "../lib/store.svelte.js";
   import { api } from "../lib/api.js";
 
@@ -9,15 +10,15 @@
   $effect(() => el?.focus());
 
   const commands = [
-    { label: "⏸ พักบอท", run: () => api.setPaused(true) },
-    { label: "▶ ให้บอททำต่อ", run: () => api.setPaused(false) },
-    { label: "⚡ Turbo 2 ชั่วโมง", run: () => api.setTurbo(2) },
-    { label: "⚡ Turbo ทั้งคืน (8 ชม.)", run: () => api.setTurbo(8) },
-    { label: "↻ อ่านโควต้าใหม่", run: () => api.refreshUsage() },
-    { label: "☀️ ไปหน้าเช้านี้", run: () => (store.page = "morning") },
-    { label: "🗂 ไปบอร์ด", run: () => (store.page = "board") },
-    { label: "⛽ ไปหน้าโควต้า", run: () => (store.page = "quota") },
-    { label: "📚 ไปคลังความรู้", run: () => (store.page = "library") },
+    { icon: "pause", label: "พักบอท", run: () => api.setPaused(true) },
+    { icon: "play", label: "ให้บอททำต่อ", run: () => api.setPaused(false) },
+    { icon: "bolt", label: "Turbo 2 ชั่วโมง", run: () => api.setTurbo(2) },
+    { icon: "bolt", label: "Turbo ทั้งคืน (8 ชม.)", run: () => api.setTurbo(8) },
+    { icon: "refresh", label: "อ่านโควต้าใหม่", run: () => api.refreshUsage() },
+    { icon: "sun", label: "ไปหน้าเช้านี้", run: () => (store.page = "morning") },
+    { icon: "board", label: "ไปบอร์ด", run: () => (store.page = "board") },
+    { icon: "gauge", label: "ไปหน้าโควต้า", run: () => (store.page = "quota") },
+    { icon: "book", label: "ไปคลังความรู้", run: () => (store.page = "library") },
   ];
 
   const results = $derived.by(() => {
@@ -27,7 +28,7 @@
       .slice(0, 8)
       .map((i) => ({ label: `#${i.id} · ${i.title}`, sub: i.summary, run: () => (store.openIdea = i.id) }));
     const cmds = commands.filter((c) => !t || c.label.toLowerCase().includes(t));
-    const add = t ? [{ label: `＋ จดเป็นไอเดียใหม่: “${q.trim()}”`, run: async () => { await api.addIdea(q.trim()); toast("จดแล้ว"); } }] : [];
+    const add = t ? [{ icon: "plus", label: `จดเป็นไอเดียใหม่: “${q.trim()}”`, run: async () => { await api.addIdea(q.trim()); toast("จดแล้ว"); } }] : [];
     return [...ideas, ...cmds, ...add];
   });
 
@@ -49,7 +50,7 @@
   <div class="list">
     {#each results as r, i}
       <button class="it" class:on={i === sel} onmouseenter={() => (sel = i)} onclick={() => exec(r)}>
-        <div class="ellipsis">{r.label}</div>
+        <div class="ellipsis">{#if r.icon}<Icon name={r.icon} /> {/if}{r.label}</div>
         {#if r.sub}<div class="faint small ellipsis">{r.sub}</div>{/if}
       </button>
     {/each}

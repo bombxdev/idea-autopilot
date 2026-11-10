@@ -162,11 +162,37 @@ pub fn user(v: &Value, lang: &str) -> Option<String> {
             .join(" "),
         _ => return None,
     };
-    let t = text.trim();
+    let words = owner_words(&text);
+    let t = words.trim();
     if t.is_empty() || t.starts_with('<') || t.starts_with("[Request interrupted") {
         return None;
     }
     Some(tr(lang, "you", &short(t, 300)))
+}
+
+/// What the owner actually wrote: Claude Code wraps a long message in <pasted_content>, and a /skill message carries
+/// the whole recipe in front of the request. Both hid the owner's line from the feed (it began with "<"), so the phone
+/// never showed it and the "sent" line showed the recipe instead of their words (ISSUE-064).
+pub fn owner_words(text: &str) -> String {
+    const MARK: &str = "Request from the owner:";
+    const SKILL: &str = "Use the skill \"";
+    let mut s = text.replace("</pasted_content>", "");
+    while let Some(i) = s.find("<pasted_content") {
+        let Some(j) = s[i..].find('>') else { break };
+        s.replace_range(i..i + j + 1, "");
+    }
+    while let Some(i) = s.find(SKILL) {
+        let Some(j) = s[i..].find(MARK) else { break };
+        // one or more skills: Use the skill "a" and the skill "b" for this request.
+        let head = s[i..].lines().next().unwrap_or("");
+        let name = head.split("the skill \"").skip(1).filter_map(|p| p.split('"').next()).collect::<Vec<_>>().join(", ");
+        let mut end = i + j + MARK.len();
+        while s[end..].starts_with(' ') {
+            end += 1;
+        }
+        s.replace_range(i..end, &format!("[skill {name}] "));
+    }
+    s.trim().to_string()
 }
 
 /// A failed tool call shows up as a tool_result with is_error.
@@ -179,6 +205,31 @@ pub fn had_error(v: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_skill_message_from_the_phone_shows_the_owners_own_words() {
+        let sent = "
+
+<pasted_content id=\"92f6\">
+Use the skill \"impeccable\" for this request. The skill is a recipe.
+
+<skill name=\"impeccable\">
+long recipe
+</skill>
+
+Request from the owner: ทำจอลอยให้เล็กลง
+</pasted_content>
+แล้ว build ลงมือถือ";
+        assert_eq!(owner_words(sent), "[skill impeccable] ทำจอลอยให้เล็กลง
+
+แล้ว build ลงมือถือ");
+        // two skills named in one message (ISSUE-066)
+        let two = "Use the skill \"impeccable\" and the skill \"web-research\" for this request. The skill is a recipe.\n\n<skill name=\"impeccable\">x</skill>\n\nRequest from the owner: ทำหน้าใหม่";
+        assert_eq!(owner_words(two), "[skill impeccable, web-research] ทำหน้าใหม่");
+        let v =serde_json::json!({"type": "user", "message": {"role": "user", "content": sent}});
+        assert!(user(&v, "Thai").is_some_and(|l| l.contains("ทำจอลอยให้เล็กลง") && !l.contains("recipe")));
+        assert_eq!(owner_words("ปกติ ไม่มีอะไรห่อ"), "ปกติ ไม่มีอะไรห่อ");
+    }
     use serde_json::json;
 
     #[test]

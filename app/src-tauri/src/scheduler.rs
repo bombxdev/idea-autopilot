@@ -53,7 +53,9 @@ pub async fn run_loop(app: AppHandle) {
         }
         let _ = app.emit("state-changed", ());
         let st = app.state::<AppState>();
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(30), st.wake.notified()).await;
+        // a chat is open: the owner may be steering from the phone, so sync more often (ISSUE-064)
+        let every = if st.rt.lock().sessions.is_empty() { 30 } else { 10 };
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(every), st.wake.notified()).await;
     }
 }
 
@@ -65,8 +67,11 @@ async fn tick(app: &AppHandle) -> anyhow::Result<()> {
     if let Err(e) = crate::sync::tick(app) {
         st.push_log(format!("[sync] {e:#}"));
     }
+    // while idle: try models nobody has checked yet for the bot's kind of work
+    crate::model_check::tick(app);
     import_inbox(app);
     crate::remote::tick(app);
+    crate::naming::tick(app);
 
     let cal = calendar(&st);
     let bot_used_today: f64 = {
@@ -209,6 +214,7 @@ async fn tick(app: &AppHandle) -> anyhow::Result<()> {
         if let Some(why) = governor::should_kill(&kd) {
             if !forced || decision.paused {
                 st.push_log(format!("■ หยุดงานที่รันอยู่: {why}"));
+                db::log_event(&st.db.lock(), "stop", None, &format!("หยุดงานที่รันอยู่: {why}"));
                 if let Some(c) = cancel {
                     c.notify_one();
                 }
@@ -222,10 +228,27 @@ async fn tick(app: &AppHandle) -> anyhow::Result<()> {
         let power_ok = st.rt.lock().power_decision.allow;
         // (idea, forced by "do it now", full power)
         let pick = match forced_id {
-            Some(id) => db::get_idea(&st.db.lock(), id).ok().map(|i| {
-                let p = crate::power::is_on(&st.db.lock(), i.id);
-                (i, true, p)
-            }),
+            Some(id) => {
+                // each lock is taken and released on its own line: a second `db.lock()` inside the same
+                // expression (a closure of `.map`, `.and_then`) waits for the first one forever
+                let found = db::get_idea(&st.db.lock(), id).ok();
+                found.and_then(|i| {
+                    let now_ts = db::now();
+                    let pinned = crate::idea_ai::pinned_account(&st.db.lock(), i.id);
+                    let limited = pinned.and_then(|a| {
+                        let l = crate::limits::get(&st.db.lock(), &a, now_ts);
+                        l.map(|l| (a, l))
+                    });
+                    if let Some((a, (until, why))) = limited {
+                        let msg = format!("#{} รอก่อน: บัญชี {a} ชนลิมิต ({why}) — จะเริ่มเองเมื่อโควต้ามา ประมาณ {}", i.id, crate::limits::when_text(until, now_ts));
+                        st.push_log(format!("⏳ {msg}"));
+                        notify_idea(app, i.id, "⏳ ติดลิมิต", &msg);
+                        return None;
+                    }
+                    let p = crate::power::is_on(&st.db.lock(), i.id);
+                    Some((i, true, p))
+                })
+            }
             // ideas the owner wants at full power go first, and may run in work hours
             None if power_ok && !cooldown && next_power_idea(&st).is_some() => next_power_idea(&st).map(|i| (i, false, true)),
             None if !cooldown && next_pinned_idea(&st).is_some() => next_pinned_idea(&st).map(|i| (i, false, false)),
@@ -297,8 +320,34 @@ async fn refresh_account(st: &AppState, a: &crate::accounts::Account, now: chron
         let cfg = usage::BudgetCfg::load(&c);
         let since = usage::week_start(now, cfg.reset_day).timestamp().min(ts - 5 * 3600);
         let spans = db::run_spans_since_account(&c, since, &a.id, a.id == a.kind).unwrap_or_default();
-        (Some(usage::budget_snapshot(&spans, now, cfg)), None)
+        // metered the way the provider really limits it (only Claude/ChatGPT sign-ins have 5-hour + weekly windows)
+        (Some(crate::vendor_limits::meter(crate::vendor_limits::info(a).kind, &spans, now, cfg)), None)
     };
+    // OmniRoute: the quota of the providers behind it, and connections that need the owner (every 10 minutes)
+    if crate::omniroute::is(a) && ts - st.rt.lock().acct_balance.get(&format!("omni:{}", a.id)).map(|b| b.0).unwrap_or(0) >= 600 {
+        st.rt.lock().acct_balance.insert(format!("omni:{}", a.id), (ts, String::new()));
+        let key = crate::accounts::secret(&st.root, &a.id);
+        let (others, dup_ok) = {
+            let c = st.db.lock();
+            (crate::accounts::list(&c), crate::db::get_setting(&c, &crate::omniroute::dup_key(&a.id)).is_some_and(|v| v == "1"))
+        };
+        let a2 = a.clone();
+        let _ = tauri::async_runtime::spawn_blocking(move || crate::omniroute::refresh(&a2, key.as_deref(), &others, dup_ok)).await;
+    }
+    // the balance, where the key can read it (every 10 minutes)
+    if crate::vendor_limits::has_balance(a) && ts - st.rt.lock().acct_balance.get(&a.id).map(|b| b.0).unwrap_or(0) >= 600 {
+        if let Some(key) = crate::accounts::secret(&st.root, &a.id) {
+            let b = crate::vendor_limits::balance(a, &key).await;
+            let mut rt = st.rt.lock();
+            match b {
+                Some(t) => rt.acct_balance.insert(a.id.clone(), (ts, t)),
+                None => {
+                    let old = rt.acct_balance.get(&a.id).map(|x| x.1.clone()).unwrap_or_default();
+                    rt.acct_balance.insert(a.id.clone(), (ts, old))
+                }
+            };
+        }
+    }
     let mut log_it = false;
     {
         let mut rt = st.rt.lock();
@@ -325,6 +374,7 @@ fn select_account(st: &AppState, accts: &[crate::accounts::Account], now: chrono
         (rt.paused, rt.turbo_until > now.timestamp(), rt.reserve_per_hour)
     };
     let mut first_blocked: Option<crate::accounts::Account> = None;
+    let mut first_ok: Option<crate::accounts::Account> = None;
     for a in accts {
         let snap = st.rt.lock().acct_snaps.get(&a.id).cloned();
         let shared = a.shared_with_owner();
@@ -338,17 +388,27 @@ fn select_account(st: &AppState, accts: &[crate::accounts::Account], now: chrono
             bot_used_today,
             cal,
         });
+        // an account that hit its usage limit waits until its quota is back
+        let mut d = d;
+        if let Some((until, why)) = crate::limits::get(&st.db.lock(), &a.id, now.timestamp()) {
+            d.allow = false;
+            d.reason = format!("ชนลิมิต: {why} — รอถึง {}", crate::limits::when_text(until, now.timestamp()));
+        }
+        if let Some(why) = crate::omniroute::blocked(&a.id) {
+            d.allow = false;
+            d.reason = format!("พักไว้: {why}");
+        }
         {
             let mut rt = st.rt.lock();
             rt.acct_allowed.insert(a.id.clone(), (d.allow, d.reason.clone()));
             rt.acct_decisions.insert(a.id.clone(), d.clone());
         }
-        if d.allow {
-            return a.clone();
+        if d.allow && first_ok.is_none() {
+            first_ok = Some(a.clone());
         }
         first_blocked.get_or_insert_with(|| a.clone());
     }
-    first_blocked.unwrap_or_else(|| accts[0].clone())
+    first_ok.or(first_blocked).unwrap_or_else(|| accts[0].clone())
 }
 
 /// The first waiting idea that is covered by full-power mode.
@@ -444,6 +504,11 @@ fn import_dir(st: &AppState, dir: &std::path::Path) {
 
 /// Parse a one-line idea ("!" = urgent, "?" = research only) and create its folder.
 pub fn add_idea(st: &AppState, text: &str) -> anyhow::Result<i64> {
+    add_idea_in(st, text, None)
+}
+
+/// Same, filed under a set: "work" or "personal" (None = the owner's last choice).
+pub fn add_idea_in(st: &AppState, text: &str, scope: Option<&str>) -> anyhow::Result<i64> {
     let mut t = text.trim();
     let mut priority = 0;
     let mut research_only = false;
@@ -459,12 +524,17 @@ pub fn add_idea(st: &AppState, text: &str) -> anyhow::Result<i64> {
         }
     }
     anyhow::ensure!(!t.is_empty(), "ไอเดียว่าง");
-    let title: String = t.lines().next().unwrap_or(t).chars().take(80).collect();
+    // a readable stand-in until the short summary title arrives (naming.rs)
+    let title = crate::naming::fallback_title(t);
     let c = st.db.lock();
     let next_id: i64 = c.query_row("SELECT COALESCE(MAX(id),0)+1 FROM ideas", [], |r| r.get(0))?;
     let slug = workspace::make_slug(next_id, &title);
     workspace::create_idea_folder(&st.ws, &slug, &title, t)?;
     let id = db::insert_idea(&c, &slug, &title, t, priority, research_only)?;
+    let scope = db::norm_scope(&scope.map(String::from).or_else(|| db::get_setting(&c, "scope_default")).unwrap_or_default());
+    if scope == "work" {
+        db::set_scope(&c, id, scope)?;
+    }
     db::log_event(&c, "added", Some(id), &format!("จดไอเดีย: {title}"));
     drop(c);
     st.rt.lock().sync_dirty = true;
@@ -486,7 +556,8 @@ pub fn idea_lang(st: &AppState, idea: &Idea) -> String {
 /// Claude family names from older settings (haiku/sonnet/opus) still work.
 fn forced_model(st: &AppState, stage: &str, idea_id: i64, acct: Option<&crate::accounts::Account>) -> Option<String> {
     let c = st.db.lock();
-    let mine = crate::idea_ai::get(&c, idea_id).and_then(|a| a.model_forced().map(String::from));
+    // the idea's own model was chosen for the account it is pinned to: not applied on another one (that account is off)
+    let mine = crate::idea_ai::get(&c, idea_id).filter(|a| a.account.is_empty() || acct.is_some_and(|x| x.id == a.account)).and_then(|a| a.model_forced().map(String::from));
     mine.or_else(|| db::get_setting(&c, &format!("model_{stage}")).filter(|v| !v.is_empty() && v != "auto"))
         // the account's own choice: set to a model name = manual, "auto" = the router decides
         .or_else(|| acct.filter(|a| !a.is_auto_model()).map(|a| a.model.trim().to_string()))
@@ -497,7 +568,7 @@ fn forced_model(st: &AppState, stage: &str, idea_id: i64, acct: Option<&crate::a
 fn forced_effort(st: &AppState, stage: &str, idea_id: i64, acct: Option<&crate::accounts::Account>) -> Option<String> {
     let c = st.db.lock();
     let ok = |v: &String| ["low", "medium", "high", "xhigh"].contains(&v.as_str());
-    let mine = crate::idea_ai::get(&c, idea_id).and_then(|a| a.effort_forced().map(String::from));
+    let mine = crate::idea_ai::get(&c, idea_id).filter(|a| a.account.is_empty() || acct.is_some_and(|x| x.id == a.account)).and_then(|a| a.effort_forced().map(String::from));
     mine.or_else(|| db::get_setting(&c, &format!("effort_{stage}")).filter(ok))
         .or_else(|| acct.and_then(|a| a.forced_effort().map(String::from)))
         .or_else(|| db::get_setting(&c, "effort_default").filter(ok))
@@ -521,7 +592,7 @@ fn launch(app: AppHandle, idea: Idea, stage: String, forced: bool, power: bool) 
         let c = st.db.lock();
         let all = db::list_ideas(&c)?;
         let others: Vec<Idea> = all.into_iter().filter(|i| i.id != idea.id).collect();
-        workspace::write_inputs(&dir, &db::directives(&c, idea.id)?, &db::questions(&c, Some(idea.id), false)?, &crate::providers::chosen(&c))?;
+        workspace::write_inputs(&dir, &db::directive_rows(&c, idea.id)?, &db::questions(&c, Some(idea.id), false)?, &crate::providers::chosen(&c))?;
         workspace::ideas_summary_for_context(&others)
     };
     let _ = std::fs::remove_file(dir.join("STATUS.json"));
@@ -572,6 +643,15 @@ fn launch(app: AppHandle, idea: Idea, stage: String, forced: bool, power: bool) 
             model_name = m;
         }
     }
+    // a model this account cannot run (another provider's name, a Mistral API name for Vibe) is swapped for one it can
+    if let Some(a) = account.as_ref() {
+        let checks = crate::model_check::all(&st.db.lock());
+        let (m, note) = crate::acct_models::fit(a, &st.root, &model_name, &checks);
+        if let Some(n) = note {
+            choice.reason.push_str(&format!(" · {n}"));
+        }
+        model_name = m;
+    }
     let (week, five) = {
         let rt = st.rt.lock();
         // the quota of the account that really runs it
@@ -619,10 +699,12 @@ fn launch(app: AppHandle, idea: Idea, stage: String, forced: bool, power: bool) 
             stage_no: idea.stage_idx + 1,
             stage_total: idea.recipe.len() as i64,
             last_activity: db::now(),
-            last_line: String::new(),
+            // shown at once: the first message of an agent can take a few minutes (it loads its skills and reads the plan)
+            last_line: format!("⏳ กำลังเปิด {} … ข้อความแรกอาจใช้เวลา 1–3 นาที (อ่านแผนและโหลดสกิล)", crate::providers::label(&provider)),
             lang: lang.clone(),
             provider: crate::providers::label(&provider),
             model: crate::modelname::label(&provider, None, if model_name.is_empty() { &choice.model } else { &model_name }),
+            account: account.as_ref().map(|a| if a.label.trim().is_empty() { a.id.clone() } else { a.label.clone() }).unwrap_or_default(),
         });
         rt.cancel = Some(cancel.clone());
         rt.live_log.clear();
@@ -760,6 +842,29 @@ fn finish(app: &AppHandle, idea_id: i64, run_id: i64, stage: &str, out: &runner:
     if status_path.exists() {
         let _ = std::fs::rename(&status_path, dir.join("logs").join(format!("status-{run_id:05}.json")));
     }
+    // the agent ended "fine" but left no STATUS.json: nothing was done (a weak model that misread its task said the
+    // task file was empty and stopped) — count it as a failed try instead of moving the idea on
+    let adjusted;
+    let out = if out.status == "ok" && status.is_none() {
+        let mut o = out.clone();
+        o.status = "error".into();
+        // the agent's last words, from the live log of this run
+        let said = st.rt.lock().live_log.iter().rev().map(|l| l.trim_start_matches("💬").trim()).find(|l| !l.is_empty() && !l.starts_with('✓') && !l.starts_with('>')).unwrap_or("").chars().take(200).collect::<String>();
+        o.error = Some(format!("AI จบรอบโดยไม่ได้ส่งผลงาน (ไม่มี STATUS.json) — มักเป็นเพราะโมเดลอ่านคำสั่งไม่ครบหรือเล็กเกินไป แอปจะตรวจโมเดลนี้ใหม่ และรอบถัดไปจะใช้โมเดลที่ผ่านการตรวจ · AI ตอบว่า: {said}"));
+        // try this model again with the check job: if it is chat-only, the next run moves to one that passed
+        let (kind, model): (String, String) = st.db.lock().query_row("SELECT COALESCE(provider,''), COALESCE(model_used,'') FROM runs WHERE id=?1", [run_id], |r| Ok((r.get(0)?, r.get(1)?))).unwrap_or_default();
+        let acct: String = st.db.lock().query_row("SELECT COALESCE(account,'') FROM runs WHERE id=?1", [run_id], |r| r.get(0)).unwrap_or_default();
+        // OmniRoute's models are filed apart from Claude's even though Claude Code runs them
+        let kind = crate::accounts::find(&st.db.lock(), &acct).map(|a| crate::model_check::check_kind(&a)).unwrap_or(kind);
+        if crate::model_check::applies(&kind) && !model.is_empty() {
+            crate::model_check::retry(&st.db.lock(), &crate::model_check::key(&kind, &model));
+            crate::model_check::enqueue_front(&acct, &[model]);
+        }
+        adjusted = o;
+        &adjusted
+    } else {
+        out
+    };
 
     let (week_after, five_after) = {
         let rt = st.rt.lock();
@@ -784,6 +889,12 @@ fn finish(app: &AppHandle, idea_id: i64, run_id: i64, stage: &str, out: &runner:
             ..Default::default()
         },
     )?;
+    // a Codex run leaves its conversation id: the chat continues the same thread, and `codex resume <id>` opens it in Codex
+    if let (Some(tid), Some(a)) = (out.session_id.as_deref(), st.rt.lock().account.clone()) {
+        if a.kind == "codex" {
+            let _ = db::set_setting(&st.db.lock(), &format!("codex_tid_{idea_id}"), &format!("{}|{tid}", a.id));
+        }
+    }
     {
         // which offered skills were really used (the agent's own report + the marker left when a skill file is read)
         let reported = status.as_ref().map(|s| s.skills_used.clone()).unwrap_or_default();
@@ -791,6 +902,25 @@ fn finish(app: &AppHandle, idea_id: i64, run_id: i64, stage: &str, out: &runner:
         crate::skills::finish_run(&st.db.lock(), run_id, &log, &reported);
     }
 
+    // OmniRoute: which provider/model really did this run (the run itself only knows "auto/coding" or a combo)
+    {
+        let (acct, started, ended): (String, i64, i64) = st
+            .db
+            .lock()
+            .query_row("SELECT COALESCE(account,''), started, COALESCE(ended, strftime('%s','now')) FROM runs WHERE id=?1", [run_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap_or_default();
+        if let Some(a) = crate::accounts::find(&st.db.lock(), &acct).filter(crate::omniroute::is) {
+            let (app, key) = (app.clone(), crate::accounts::secret(&st.root, &a.id));
+            std::thread::spawn(move || {
+                if let Some(s) = crate::omniroute::served(&a, key.as_deref(), started, ended.max(crate::db::now())) {
+                    let st = app.state::<AppState>();
+                    let msg = format!("🔀 OmniRoute ส่งงานรอบนี้ไปที่ {s}");
+                    st.push_log(msg.clone());
+                    db::log_event(&st.db.lock(), "run", Some(idea_id), &msg);
+                }
+            });
+        }
+    }
     // every problem is written down in the idea's ISSUES.md with its likely cause and what to do
     if matches!(out.status.as_str(), "error" | "timeout" | "rate_limited") {
         workspace::log_issue(&dir, run_id, stage, &out.status, out.error.as_deref().unwrap_or(""), false);
@@ -803,8 +933,37 @@ fn finish(app: &AppHandle, idea_id: i64, run_id: i64, stage: &str, out: &runner:
     match out.status.as_str() {
         "cancelled" => return Ok(()),
         "rate_limited" => {
-            st.rt.lock().cooldown_until = db::now() + 20 * 60;
-            db::log_event(&st.db.lock(), "limit", Some(idea_id), "ชนลิมิต — พัก 20 นาทีแล้วลองใหม่");
+            let now = db::now();
+            let account: String = st.db.lock().query_row("SELECT COALESCE(account,'') FROM runs WHERE id=?1", [run_id], |r| r.get(0)).unwrap_or_default();
+            if account.is_empty() {
+                st.rt.lock().cooldown_until = now + 20 * 60;
+                db::log_event(&st.db.lock(), "limit", Some(idea_id), "ชนลิมิต — พัก 20 นาทีแล้วลองใหม่");
+            } else {
+                // only this account waits (until its quota is back); the others carry on
+                let text = out.error.clone().unwrap_or_default();
+                let snap = st.rt.lock().acct_snaps.get(&account).cloned();
+                let acct = crate::accounts::find(&st.db.lock(), &account);
+                if let Some(a) = acct.as_ref().filter(|a| crate::model_check::applies(&crate::model_check::check_kind(a)) && crate::acct_models::model_level_limit(&text)) {
+                    let model: String = st.db.lock().query_row("SELECT COALESCE(model_used,'') FROM runs WHERE id=?1", [run_id], |r| r.get(0)).unwrap_or_default();
+                    let checks = crate::model_check::all(&st.db.lock());
+                    if let Some(next) = (!model.is_empty()).then(|| crate::acct_models::alternative(a, &model, &checks, now)).flatten() {
+                        let until = crate::limits::parse_reset(&text, now).unwrap_or(now + 15 * 60).clamp(now + 60, now + 6 * 3600);
+                        crate::acct_models::lock_model(&a.id, &model, until);
+                        let msg = format!("โมเดล {model} ของ {} ติดลิมิตเฉพาะตัว — พักโมเดลนี้ถึง {} ระหว่างนี้ใช้ {next} แทน (บัญชีไม่ต้องรอ)", a.title(), crate::limits::when_text(until, now));
+                        st.push_log(format!("⏳ {msg}"));
+                        db::log_event(&st.db.lock(), "limit", Some(idea_id), &msg);
+                        return Ok(());
+                    }
+                }
+                let until = crate::vendor_limits::limit_until(acct.as_ref(), &text, snap.as_ref(), now);
+                let why = crate::limits::why(&text);
+                let name = acct.map(|a| a.title()).unwrap_or_else(|| account.clone());
+                crate::limits::set(&st.db.lock(), &account, until, &why);
+                let msg = format!("{name} ชนลิมิต: {why} — รอถึง {} แล้วจะเริ่มใหม่เอง", crate::limits::when_text(until, now));
+                st.push_log(format!("⏳ {msg}"));
+                db::log_event(&st.db.lock(), "limit", Some(idea_id), &msg);
+                notify_idea(app, idea_id, &format!("⏳ {name} ติดลิมิต"), &msg);
+            }
             return Ok(());
         }
         "error" => {
@@ -939,10 +1098,20 @@ fn finish(app: &AppHandle, idea_id: i64, run_id: i64, stage: &str, out: &runner:
 /// Give a folder that is only `idea-0016` its English name (`idea-0016-shared-group-calendar`) so
 /// it can be recognised at a glance. Skipped while a live session works inside the folder.
 pub fn rename_to_english(st: &AppState, idea: &mut Idea, english: &str) -> anyhow::Result<()> {
-    if workspace::has_english_name(&idea.slug) || st.rt.lock().sessions.contains_key(&idea.id) {
+    // an automatic name made from stray Latin words in a Thai text ("idea-0024-discord") is replaced too
+    if !crate::naming::auto_slug(idea) || st.rt.lock().sessions.contains_key(&idea.id) {
         return Ok(());
     }
     let Some(new) = workspace::slug_with_english(idea.id, english) else { return Ok(()) };
+    move_folder(st, idea, &new)
+}
+
+/// Move an idea's folder (and its knowledge note and synced copy) to a new name.
+pub fn move_folder(st: &AppState, idea: &mut Idea, new: &str) -> anyhow::Result<()> {
+    if st.rt.lock().sessions.contains_key(&idea.id) {
+        return Ok(()); // a chat session works inside it now
+    }
+    let new = new.to_string();
     let (from, to) = (workspace::idea_dir(&st.ws, &idea.slug), workspace::idea_dir(&st.ws, &new));
     if to.exists() {
         anyhow::bail!("{} มีอยู่แล้ว", to.display());
@@ -979,7 +1148,8 @@ pub fn edit_idea(st: &AppState, id: i64, text: &str) -> anyhow::Result<()> {
         }
     }
     anyhow::ensure!(!t.is_empty(), "ไอเดียว่าง");
-    let title: String = t.lines().next().unwrap_or(t).chars().take(80).collect();
+    let title = crate::naming::fallback_title(t);
+    crate::naming::retry(id);
     let mut idea = db::get_idea(&st.db.lock(), id)?;
     let old_slug = idea.slug.clone();
     let early = idea.status == "inbox" || idea.stage_idx <= 1;
@@ -1031,6 +1201,8 @@ pub fn steer(st: &AppState, id: i64, directive: &str) -> anyhow::Result<()> {
     let c = st.db.lock();
     let mut idea = db::get_idea(&c, id)?;
     db::add_directive(&c, id, directive)?;
+    // changing something that was ready/done: keep it out of "ready" until the owner says it works
+    db::mark_fixing(&c, id);
     if idea.status != "inbox" {
         let at = (idea.stage_idx as usize).min(idea.recipe.len());
         idea.recipe.insert(at, "replan".into());
@@ -1051,9 +1223,9 @@ pub fn state_json(st: &AppState) -> serde_json::Value {
     let providers = crate::providers::summary(&st.db.lock());
     let onboarded = db::get_setting(&st.db.lock(), "onboarded").as_deref() == Some("1");
     let seen_version = db::get_setting(&st.db.lock(), "seen_version");
-    let (power_mode, power_ideas, agents, idea_ai, usable) = {
+    let (power_mode, power_ideas, agents, idea_ai, usable, limits) = {
         let c = st.db.lock();
-        (crate::power::mode(&c), crate::power::ideas(&c), crate::agents::list(&c), crate::idea_ai::all_json(&c), crate::accounts::usable(&c))
+        (crate::power::mode(&c), crate::power::ideas(&c), crate::agents::list(&c), crate::idea_ai::all_json(&c), crate::accounts::usable(&c), crate::limits::all_json(&c, db::now()))
     };
     let rt = st.rt.lock();
     json!({
@@ -1070,6 +1242,7 @@ pub fn state_json(st: &AppState) -> serde_json::Value {
         "reserve_per_hour": rt.reserve_per_hour,
         "reserve_learned": rt.reserve_learned,
         "cooldown_until": rt.cooldown_until,
+        "account_limits": limits,
         "role": rt.role,
         "sessions": rt.sessions.values().collect::<Vec<_>>(),
         "agents": agents,
@@ -1079,6 +1252,7 @@ pub fn state_json(st: &AppState) -> serde_json::Value {
             "id": a.id, "label": a.title(), "kind": a.kind, "shared": a.shared_with_owner(),
             "decision": rt.acct_decisions.get(&a.id),
             "snap": rt.acct_snaps.get(&a.id),
+            "limit": crate::vendor_limits::info(a).kind.id(),
             "active": rt.account.as_ref().map(|x| x.id == a.id).unwrap_or(false),
         })).collect::<Vec<_>>(),
         "version": env!("CARGO_PKG_VERSION"),

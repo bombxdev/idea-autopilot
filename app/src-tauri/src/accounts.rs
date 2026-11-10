@@ -182,14 +182,22 @@ pub fn has_secret(root: &Path, id: &str) -> bool {
     valid_id(id) && secret_path(root, id).is_file()
 }
 
-fn secret(root: &Path, id: &str) -> Option<String> {
+pub(crate) fn secret(root: &Path, id: &str) -> Option<String> {
     std::fs::read_to_string(secret_path(root, id)).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
 }
 
 /// Everything a run of this account needs in its environment: its own login folder, and its key when it signs in with one.
 pub fn env_with_secret(a: &Account, root: &Path) -> Vec<(String, String)> {
     let mut env = env_for(a);
-    if a.uses_key() {
+    if crate::omniroute::is(a) {
+        // the gateway on this machine: start it when it is down; a key is optional there
+        if let Err(why) = crate::omniroute::ensure_running(a) {
+            eprintln!("omniroute: {why}");
+        }
+        let k = secret(root, &a.id).unwrap_or_else(|| crate::omniroute::NO_KEY.to_string());
+        env.push(("ANTHROPIC_AUTH_TOKEN".into(), k));
+        env.push(("ANTHROPIC_BASE_URL".into(), crate::omniroute::base(a)));
+    } else if a.uses_key() {
         if let (Some(v), Some(k)) = (crate::catalog::vendor(&a.vendor_id()), secret(root, &a.id)) {
             env.extend(crate::catalog::key_env(v, &k, &a.base_url));
         }

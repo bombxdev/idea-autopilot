@@ -90,7 +90,11 @@
         {@const a = info(id)}
         <div class="ch" class:off={a && !a.enabled}>
           <div class="row small"><b class="grow">{a?.label || id}</b><span class="faint">{a?.kind_label ?? ""}{a && !a.enabled ? " · ปิดชั่วคราว" : ""}</span></div>
-          {#if series[id]?.length}
+          {#if a?.limit && a.limit.kind !== "window"}
+            <!-- no 5-hour / weekly windows at this provider: say what it really has instead of drawing empty bars -->
+            <div class="small"><span class="chip">{a.limit.kind === "daily" ? "ลิมิตรายวัน" : "จ่ายตามใช้"}</span> {a.limit.text}</div>
+            {#if a.limit.balance}<div class="small"><b>{a.limit.balance}</b></div>{/if}
+          {:else if series[id]?.length}
             <svg viewBox="0 0 {W} {H}" preserveAspectRatio="none" role="img" aria-label="โควต้าของ {id}">
               <line x1="0" y1={H * 0.4} x2={W} y2={H * 0.4} class="g" /><line x1="0" y1={H * 0.8} x2={W} y2={H * 0.8} class="g" />
               <polyline points={line(series[id], 2)} class="w" /><polyline points={line(series[id], 1)} class="f" />

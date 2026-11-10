@@ -15,7 +15,8 @@ export const isStep = (l) => l.startsWith("›") || (/^\p{Extended_Pictographic}
 export const api = {
   state: () => invoke("get_state"),
   ideas: () => invoke("list_ideas"),
-  addIdea: (text, attachments = [], ai = null) => invoke("add_idea", { text, attachments: attachments.length ? attachments : null, ai: ai && (ai.account || ai.model || ai.effort) ? { account: ai.account || "", model: ai.model || "", effort: ai.effort || "", skills: [] } : null }),
+  addIdea: (text, attachments = [], ai = null, scope = null) => invoke("add_idea", { text, scope, attachments: attachments.length ? attachments : null, ai: ai && (ai.account || ai.model || ai.effort) ? { account: ai.account || "", model: ai.model || "", effort: ai.effort || "", skills: [] } : null }),
+  ideaScopeSet: (id, scope) => invoke("idea_scope_set", { id, scope }),
   ideaAiSet: (id, account, model, effort) => invoke("idea_ai_set", { id, account: account || null, model: model || null, effort: effort || null }),
   idea: (id) => invoke("get_idea", { id }),
   answer: (id, answer) => invoke("answer_question", { id, answer }),
@@ -43,6 +44,9 @@ export const api = {
   activity: (days) => invoke("get_activity", { days }),
   policy: () => invoke("get_policy"),
   remote: (id, on) => invoke("idea_remote", { id, on }),
+  sessionRevive: (id) => invoke("session_revive", { id }),
+  requestSet: (rid, state, note = null) => invoke("request_set", { rid, state, note }),
+  codexThread: (id) => invoke("codex_thread", { id }),
   ask: (id, text, attachments = [], ai = null) => invoke("idea_ask", { id, text, attachments: attachments.length ? attachments : null, ai }),
   handoff: (id, agent, text, attachments = [], ai = null) => invoke("idea_handoff", { id, agent, text, attachments: attachments.length ? attachments : null, ai }),
   sessionsOverview: () => invoke("sessions_overview"),
@@ -77,10 +81,12 @@ export const api = {
   accountSetKey: (id, key, baseUrl = null) => invoke("account_set_key", { id, key, baseUrl }),
   accountClearKey: (id) => invoke("account_clear_key", { id }),
   accountModels: (id) => invoke("account_models", { id }),
+  modelCheckNow: (account, models = null) => invoke("model_check_now", { account, models }),
   accountTest: (id) => invoke("account_test", { id }),
   cliInstallCommand: (kind) => invoke("cli_install_command", { kind }),
   cliInstallStart: (kind, registry = null) => invoke("cli_install_start", { kind, registry }),
   cliInstallStatus: () => invoke("cli_install_status"),
+  accountOmniDupOk: (id, ok) => invoke("account_omni_dup_ok", { id, ok }),
   accountUpdate: (id, patch) => invoke("account_update", { id, label: patch.label ?? null, enabled: patch.enabled ?? null, model: patch.model ?? null, effort: patch.effort ?? null }),
   accountRemove: (id) => invoke("account_remove", { id }),
   accountLogin: (id) => invoke("account_login", { id }),
@@ -106,15 +112,15 @@ export const api = {
 export { listen };
 
 export const INTENTS = {
-  money: { label: "หารายได้", icon: "💰", color: "amber" },
-  experiment: { label: "ทดลอง", icon: "🧪", color: "blue" },
-  learn: { label: "อยากเข้าใจ", icon: "📚", color: "purple" },
-  tool: { label: "ใช้เอง", icon: "🛠", color: "teal" },
-  sell: { label: "ต่อยอดขาย", icon: "🚀", color: "pink" },
+  money: { label: "หารายได้", icon: "coin", color: "amber" },
+  experiment: { label: "ทดลอง", icon: "flask", color: "blue" },
+  learn: { label: "อยากเข้าใจ", icon: "book", color: "purple" },
+  tool: { label: "ใช้เอง", icon: "wrench", color: "teal" },
+  sell: { label: "ต่อยอดขาย", icon: "rocket", color: "pink" },
 };
 
 export function intentMeta(key) {
-  return INTENTS[key] ?? { label: key, icon: "✨", color: "blue" };
+  return INTENTS[key] ?? { label: key, icon: "sparkle", color: "blue" };
 }
 
 export const STATUS = {

@@ -1,9 +1,12 @@
 <script>
+  import IconText from "./IconText.svelte";
+  import Icon from "./Icon.svelte";
   // The plan for one account (or for the accounts together): the weekly ring (used by you / by the bot / kept for your
   // work / still available to the bot) and what the governor says right now.
   import { pct, clock } from "../lib/api.js";
 
-  let { title = "", d, snap = null, userShare = null, shared = true, lines = [] } = $props();
+  // limit: "window" (5-hour + weekly), "daily" (a free count per day) or "paid" (pay per use) — the provider's real kind
+  let { title = "", d, snap = null, userShare = null, shared = true, lines = [], limit = "window" } = $props();
   const R = 70;
   const C = 2 * Math.PI * R;
   // how much of the used quota is yours (only an account that shares its quota with you has any)
@@ -55,17 +58,21 @@
 
   <div class="card decide">
     <div class="row"><span class="dot" class:ok={d?.allow}></span><b class="grow">{d?.allow ? "บอททำงานได้" : "บอทรออยู่"}</b>
-      {#if d?.sprint}<span class="chip sprint">🔥 โค้งสุดท้าย</span>{/if}
-      {#if d?.turbo}<span class="chip sprint">⚡ Turbo</span>{/if}</div>
+      {#if d?.sprint}<span class="chip sprint"><Icon name="flame" /> โค้งสุดท้าย</span>{/if}
+      {#if d?.turbo}<span class="chip sprint"><Icon name="bolt" /> Turbo</span>{/if}</div>
     <div class="muted small">{d?.reason}</div>
     <div class="kv">
       <span>ช่วงเวลา</span><b>{{ work: "เวลางาน", lunch: "พักเที่ยง", off: "นอกเวลางาน" }[d?.slot] ?? "—"}</b>
-      <span>5 ชม. ตอนนี้</span><b>{pct(d?.five_pct)} / เพดาน {pct(d?.five_cap)}</b>
-      <span>รีเซ็ต 5 ชม.</span><b>{clock(snap?.five_reset)}</b>
+      {#if limit === "window"}
+        <span>5 ชม. ตอนนี้</span><b>{pct(d?.five_pct)} / เพดาน {pct(d?.five_cap)}</b>
+        <span>รีเซ็ต 5 ชม.</span><b>{clock(snap?.five_reset)}</b>
+      {:else}
+        <span>ลิมิตของค่าย</span><b>{limit === "daily" ? "นับเป็นรายวัน (ไม่มีรอบ 5 ชม./สัปดาห์)" : "จ่ายตามใช้ (ไม่มีรอบ 5 ชม./สัปดาห์)"}</b>
+      {/if}
       <span>บอทใช้วันนี้</span><b>{pct(d?.bot_used_today, 1)} / {pct(d?.today_allowance, 1)}</b>
       <span>กันไว้ให้งานคุณ</span><b>{shared ? pct(d?.reserve, 1) : "ไม่ต้องกัน (บัญชีของบอท)"}</b>
     </div>
-    {#each lines as l}<div class="small faint">{l}</div>{/each}
+    {#each lines as l}<div class="small faint"><IconText text={l} /></div>{/each}
   </div>
 </div>
 

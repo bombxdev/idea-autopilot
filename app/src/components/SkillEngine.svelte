@@ -1,4 +1,5 @@
 <script>
+  import Icon from "./Icon.svelte";
   // Status of the SkillSpector tool: installed / version / updates / how many skills it has checked.
   import { onMount } from "svelte";
   import { listen } from "@tauri-apps/api/event";
@@ -54,7 +55,7 @@
 {#if s}
   <div class="card eng small">
     <div class="row wrap">
-      <b>🛡 ตัวตรวจสกิล: SkillSpector (NVIDIA)</b>
+      <b><Icon name="shieldCheck" /> ตัวตรวจสกิล: SkillSpector (NVIDIA)</b>
       {#if s.installed}
         <span class="chip teal">ติดตั้งแล้ว v{s.version}</span>
         <span class="faint">ตรวจแล้ว {s.checked}/{s.total} สกิล{s.busy ? " · กำลังตรวจ…" : ""}</span>

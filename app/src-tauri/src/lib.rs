@@ -1,10 +1,17 @@
 mod accounts;
+mod acct_models;
+mod model_check;
 mod activity;
 mod agents;
 mod api;
 mod attach;
 mod calendar;
 mod cli_install;
+mod agent_chat;
+mod codex_chat;
+mod limits;
+mod vendor_limits;
+mod omniroute;
 mod catalog;
 mod chat;
 mod commands;
@@ -15,6 +22,7 @@ mod lang;
 mod modelname;
 mod economics;
 mod power;
+mod naming;
 mod narrate;
 mod prompts;
 mod providers;
@@ -223,6 +231,14 @@ fn keep_awake_thread(app: AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // started from inside a Claude session (a terminal of the Claude app, a deploy script it ran): its markers and
+    // gateway address would be inherited by every Claude Code the bot starts — changing where it connects and turning
+    // off Remote Control. Dropped once, before any thread or child exists. An account's own ones are set per run.
+    for (k, _) in std::env::vars() {
+        if remote::inherited_claude_var(&k) {
+            std::env::remove_var(&k);
+        }
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             show_main(app, None);
@@ -272,6 +288,7 @@ pub fn run() {
             }
             register_toast_identity();
             workspace::set_language(&db::get_setting(&conn, "language").unwrap_or_default());
+            providers::set_codex_approval(&db::get_setting(&conn, "codex_approval").unwrap_or_default());
             lang::set_ui(&db::get_setting(&conn, "language").unwrap_or_default());
             let ws = workspace::ensure(&root)?;
             let paused = db::get_setting(&conn, "paused").as_deref() == Some("1");
@@ -389,7 +406,10 @@ pub fn run() {
             commands::get_policy,
             commands::list_days,
             commands::idea_remote,
+            commands::session_revive,
+            commands::request_set,
             commands::idea_ask,
+            commands::codex_thread,
             commands::idea_handoff,
             commands::list_agents,
             commands::edit_idea,
@@ -425,14 +445,17 @@ pub fn run() {
             commands::accounts_list,
             commands::account_add,
             commands::account_update,
+            commands::account_omni_dup_ok,
             commands::account_remove,
             commands::idea_ai_set,
+            commands::idea_scope_set,
             cli_install::cli_install_start,
             cli_install::cli_install_status,
             cli_install::cli_install_command,
             commands::account_set_key,
             commands::account_clear_key,
             commands::account_models,
+            commands::model_check_now,
             commands::account_test,
             commands::account_login,
             commands::accounts_series,

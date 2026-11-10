@@ -154,7 +154,23 @@ fn run(app: &AppHandle, kind: &str, registry: &str) {
     crate::providers::forget_found();
     let runner = if kind == "mistral" { "mistral" } else { kind };
     if ok && crate::providers::installed(runner) {
-        finish("ok", "ติดตั้งแล้ว — ตอนนี้ล็อกอินหรือใส่ key แล้วกด “ทดสอบ” ได้");
+        // proof that the program really starts: its own version line
+        let bin = crate::providers::def(runner).map(|d| d.bin).unwrap_or(runner);
+        let ver = crate::providers::resolve_bin(bin)
+            .and_then(|p| {
+                let mut c = std::process::Command::new(p);
+                c.arg("--version").stdin(std::process::Stdio::null());
+                #[cfg(windows)]
+                {
+                    use std::os::windows::process::CommandExt;
+                    c.creation_flags(0x0800_0000);
+                }
+                c.output().ok()
+            })
+            .map(|o| String::from_utf8_lossy(&o.stdout).lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("").chars().take(80).collect::<String>())
+            .unwrap_or_default();
+        push(&format!("✓ {bin} --version → {}", if ver.is_empty() { "(ไม่ตอบ)" } else { &ver }));
+        finish("ok", &format!("ติดตั้งแล้ว{} — ตอนนี้ล็อกอินหรือใส่ key แล้วกด “ทดสอบ” ได้", if ver.is_empty() { String::new() } else { format!(" ({ver})") }));
     } else if ok {
         finish("error", "ติดตั้งแล้วแต่ยังหาโปรแกรมไม่เจอใน PATH — ปิดแล้วเปิดโปรแกรมนี้ใหม่");
     } else {

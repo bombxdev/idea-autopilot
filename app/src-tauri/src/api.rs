@@ -71,6 +71,32 @@ fn text(a: &Value, k: &str) -> Option<String> {
     a.get(k).and_then(Value::as_str).map(String::from)
 }
 
+/// Files the phone uploaded into the sync repo (`uploads/phone-<time>-<name>`) for this command: staged as attachments
+/// (the same way a file dropped on the desktop is), then removed from the repo. None when there are none.
+fn uploads(app: &AppHandle, a: &Value) -> Result<Option<Vec<String>>, String> {
+    let paths: Vec<String> = a.get("files").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
+    if paths.is_empty() {
+        return Ok(None);
+    }
+    let st = app.state::<AppState>();
+    let dir = crate::sync::sync_dir(&st).ok_or("ยังไม่ได้ตั้งโฟลเดอร์ sync")?;
+    let mut tokens = vec![];
+    for p in paths {
+        if !p.starts_with("uploads/") || p.contains("..") || p.contains('\\') || p.matches('/').count() != 1 {
+            return Err(format!("ไฟล์แนบไม่ถูกต้อง: {p}"));
+        }
+        let f = dir.join(&p);
+        let bytes = std::fs::read(&f).map_err(|e| format!("ไม่พบไฟล์แนบ {p} ({e})"))?;
+        let file = p.trim_start_matches("uploads/");
+        // phone-<time>-<name> → <name>
+        let name = file.splitn(3, '-').nth(2).filter(|n| !n.is_empty()).unwrap_or(file);
+        let s = crate::attach::stage_bytes(&st.root, name, &bytes).map_err(|e| format!("{e:#}"))?;
+        tokens.push(s.token);
+        let _ = std::fs::remove_file(&f);
+    }
+    Ok(Some(tokens))
+}
+
 pub fn dispatch(app: &AppHandle, cmd: &str, a: Value) -> Result<Value, String> {
     let st = || app.state::<AppState>();
     let unit = |r: Result<(), String>| r.map(|_| Value::Null);
@@ -86,7 +112,9 @@ pub fn dispatch(app: &AppHandle, cmd: &str, a: Value) -> Result<Value, String> {
         }
         "ideas" => commands::list_ideas(st()),
         "idea" => commands::get_idea(st(), id(&a)?),
-        "add" => commands::add_idea(st(), text(&a, "text").ok_or("ต้องมีข้อความไอเดีย")?, None, None).map(|i| json!(i)),
+        // from the phone: `files` = photos it uploaded to the sync repo, `ai` = { account, model, effort } of the new idea
+        "add" => commands::add_idea(st(), text(&a, "text").ok_or("ต้องมีข้อความไอเดีย")?, uploads(app, &a)?, a.get("ai").and_then(|v| serde_json::from_value(v.clone()).ok()), text(&a, "scope")).map(|i| json!(i)),
+        "scope" => commands::idea_scope_set(st(), id(&a)?, text(&a, "scope").unwrap_or_default()).map(|_| json!(null)),
         "edit" => unit(commands::edit_idea(st(), id(&a)?, text(&a, "text").ok_or("ต้องมีข้อความไอเดีย")?)),
         "answer" => {
             let qid = id(&a)?;
@@ -129,17 +157,28 @@ pub fn dispatch(app: &AppHandle, cmd: &str, a: Value) -> Result<Value, String> {
         }
         "handoff" => crate::commands::idea_handoff(app.clone(), st(), id(&a)?, text(&a, "agent").unwrap_or_default(), text(&a, "text").unwrap_or_default(), None, None).map(|m| json!(m)),
         "agents" => Ok(crate::agents::list_json(&st().db.lock())),
-        "ask" => unit(commands::idea_ask(app.clone(), st(), id(&a)?, text(&a, "text").unwrap_or_default(), None, None)),
+        // `ai` (optional): { account, model, effort } chosen for this message, as in the desktop chat
+        "ask" => unit(commands::idea_ask(app.clone(), st(), id(&a)?, text(&a, "text").unwrap_or_default(), uploads(app, &a)?, a.get("ai").and_then(|v| serde_json::from_value(v.clone()).ok()))),
+        "idea_ai" => unit(commands::idea_ai_set(st(), id(&a)?, text(&a, "account"), text(&a, "model"), text(&a, "effort"))),
         "hold" => {
             let on = a.get("on").and_then(Value::as_bool).unwrap_or(true);
             unit(commands::idea_hold(app.clone(), st(), id(&a)?, on))
         }
         "note" => unit(commands::idea_note(app.clone(), st(), id(&a)?, text(&a, "text").unwrap_or_default())),
+        "reqs" => crate::remote::requests(&st(), id(&a)?),
+        "req" => unit(crate::remote::set_request(app, a.get("rid").and_then(Value::as_i64).ok_or("ต้องระบุเลขคำสั่ง")?, &text(&a, "state").unwrap_or_default(), &text(&a, "note").unwrap_or_default(), false)),
         "ui" => {
             crate::show_main(app, None);
             let _ = app.emit_to("main", "navigate", json!({ "page": text(&a, "page"), "idea": a.get("id") }));
             Ok(Value::Null)
         }
+        // accounts: their state, the models each can run, and a short real run (the same as the buttons in Settings)
+        "accounts" => Ok(commands::accounts_list(st())),
+        "account_models" => tauri::async_runtime::block_on(commands::account_models(app.clone(), text(&a, "account").ok_or("ต้องระบุ account")?)),
+        "model_check" => commands::model_check_now(st(), text(&a, "account").ok_or("ต้องระบุ account")?, a.get("models").and_then(|v| serde_json::from_value(v.clone()).ok())).map(|n| json!(n)),
+        "model_checks" => Ok(json!(crate::model_check::all(&st().db.lock()))),
+        "model_checks_export" => crate::model_check::export(&st()).map(|p| json!(p)),
+        "account_test" => tauri::async_runtime::block_on(commands::account_test(app.clone(), text(&a, "account").ok_or("ต้องระบุ account")?)),
         other => Err(format!("ไม่รู้จักคำสั่ง {other}")),
     }
 }

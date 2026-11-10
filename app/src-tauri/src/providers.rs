@@ -317,6 +317,28 @@ pub struct Invocation {
     pub claude_stream: bool,
 }
 
+/// Setting `codex_approval`: how Codex runs deal with tools that need a person's approval (Computer Use drives the real
+/// Chrome and asks for it). "headless" (default): Computer Use is switched off for the run, so Codex does not burn turns on
+/// a request nobody can answer and checks web pages with headless Edge (see the rules in AGENTS.md). "full": Codex may use
+/// Computer Use; every prompt is skipped and the folder sandbox is dropped for these runs (dangerous, needs the Codex app open).
+static CODEX_FULL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_codex_approval(v: &str) {
+    CODEX_FULL.store(v == "full", std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The arguments of the approval mode for one Codex run; `first` = a new conversation (resume does not take `-s`).
+pub fn codex_approval_args(first: bool) -> Vec<String> {
+    let s = |v: &str| v.to_string();
+    if CODEX_FULL.load(std::sync::atomic::Ordering::Relaxed) {
+        vec![s("--dangerously-bypass-approvals-and-sandbox")]
+    } else {
+        let mut a = if first { vec![s("-s"), s("workspace-write")] } else { vec![s("-c"), s("sandbox_mode=workspace-write")] };
+        a.extend([s("-c"), s("sandbox_workspace_write.network_access=true"), s("-c"), s("features.computer_use=false")]);
+        a
+    }
+}
+
 const READ_FILE_MSG: &str = "Read the file logs/prompt.md in the current folder and carry out the task described there.";
 
 pub fn build(provider: &str, model: &str, effort: &str, tools: &str, custom: &str, prompt_file: &Path) -> Result<Invocation, String> {
@@ -343,10 +365,8 @@ pub fn build(provider: &str, model: &str, effort: &str, tools: &str, custom: &st
         }
         "codex" => {
             // workspace-write sandbox (files only in the idea folder) + network so research works
-            let mut args: Vec<String> = ["exec", "--skip-git-repo-check", "--color", "never", "-s", "workspace-write", "-c", "sandbox_workspace_write.network_access=true"]
-                .iter()
-                .map(|x| s(x))
-                .collect();
+            let mut args: Vec<String> = ["exec", "--skip-git-repo-check", "--json", "--color", "never"].iter().map(|x| s(x)).collect();
+            args.extend(codex_approval_args(true));
             if !model.is_empty() {
                 args.extend([s("-m"), s(model)]);
             }
@@ -366,6 +386,10 @@ pub fn build(provider: &str, model: &str, effort: &str, tools: &str, custom: &st
         }
         "opencode" => {
             let mut args: Vec<String> = vec![s("run")];
+            // OpenCode 2.x: without this the background service answers with its own login, not this account's key
+            if crate::acct_models::opencode_standalone() {
+                args.push(s("--standalone"));
+            }
             if !model.is_empty() {
                 args.extend([s("-m"), s(model)]);
             }
@@ -373,8 +397,14 @@ pub fn build(provider: &str, model: &str, effort: &str, tools: &str, custom: &st
             Ok(Invocation { program: bin("opencode")?, args, shell_line: None, stdin_prompt: false, claude_stream: false })
         }
         "mistral" => {
-            // programmatic mode: the prompt is the argument of -p (Vibe picks its model from its own config)
-            let args: Vec<String> = vec![s("-p"), s(READ_FILE_MSG)];
+            // programmatic mode: the prompt is the argument of -p; --trust = the idea folder for this run only (no prompt);
+            // --model takes one of Vibe's own aliases (acct_models::fit keeps other names out), empty = Vibe's active model
+            // --auto-approve: headless Vibe otherwise refuses shell commands (it could write code but not run or test it) —
+            // the same freedom Claude Code gets with bypassPermissions
+            let mut args: Vec<String> = vec![s("-p"), s(READ_FILE_MSG), s("--trust"), s("--auto-approve")];
+            if !model.is_empty() {
+                args.extend([s("--model"), s(model)]);
+            }
             Ok(Invocation { program: bin("vibe")?, args, shell_line: None, stdin_prompt: false, claude_stream: false })
         }
         "custom" => {
@@ -472,6 +502,9 @@ fn opencode_models() -> Vec<ModelInfo> {
                 .and_then(|bin| {
                     let mut c = std::process::Command::new(bin);
                     c.arg("models");
+                    if crate::acct_models::opencode_standalone() {
+                        c.arg("--standalone");
+                    }
                     hidden(&mut c);
                     c.output().ok()
                 })
@@ -604,6 +637,18 @@ mod tests {
     fn custom_template_fills_placeholders() {
         let i = build("custom", "m1", "low", "", "myagent --model {model} --file {prompt_file}", Path::new("C:/x/logs/prompt.md")).unwrap();
         assert_eq!(i.shell_line.unwrap(), "myagent --model m1 --file C:/x/logs/prompt.md");
+    }
+
+    #[test]
+    fn codex_approval_mode_picks_the_arguments() {
+        set_codex_approval("headless");
+        let a = codex_approval_args(true);
+        assert!(a.contains(&"features.computer_use=false".to_string()) && a.contains(&"workspace-write".to_string()));
+        assert!(codex_approval_args(false).contains(&"sandbox_mode=workspace-write".to_string()));
+        set_codex_approval("full");
+        assert_eq!(codex_approval_args(true), vec!["--dangerously-bypass-approvals-and-sandbox".to_string()]);
+        set_codex_approval("");
+        assert!(codex_approval_args(true).contains(&"features.computer_use=false".to_string()), "default is the easy mode");
     }
 
     #[test]

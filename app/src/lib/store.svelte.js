@@ -7,6 +7,7 @@ export const store = $state({
   questions: [],
   stages: [],
   openIdea: null, // id of the idea shown in the drawer
+  settingsTab: null, // a tab of the Settings page to open next (e.g. "about" from the version button)
   page: (typeof location !== "undefined" && new URLSearchParams(location.search).get("page")) || "morning",
   toast: null,
   now: Math.floor(Date.now() / 1000), // ticks every few seconds so "x minutes ago" stays true
@@ -87,12 +88,25 @@ export function progress(idea) {
 }
 
 /** Board column for an idea. */
+/** A chat (Remote Control / Codex / other AI) is open on this idea. */
+export function chatOpen(idea) {
+  return (store.state?.sessions ?? []).some((s) => s.idea_id === idea.id);
+}
+
+/** Being changed after it was ready/done: the owner asked for fixes (flag) or a chat is open on it. */
+export function fixing(idea) {
+  return ["ready", "done"].includes(idea.status) && (idea.fixing || chatOpen(idea));
+}
+
 export function column(idea) {
   if (idea.status === "inbox") return "inbox";
+  if (fixing(idea)) return "building";
   if (idea.status === "ready") return "ready";
   if (["done", "archived", "failed"].includes(idea.status)) return "done";
   const stage = idea.recipe[idea.stage_idx];
   if (["plan", "build", "verify", "compare"].includes(stage)) return "building";
+  // a program sent back for changes ("replan" after it was built) is being fixed, not thought about
+  if (idea.run_cmd || idea.fixing) return "building";
   return "thinking";
 }
 

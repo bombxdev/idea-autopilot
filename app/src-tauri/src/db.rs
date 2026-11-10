@@ -125,6 +125,10 @@ pub fn open(path: &Path) -> Result<Connection> {
         "#,
     )?;
     // migrations for columns added after the first release
+    // the owner's requests as a checklist: "" waiting · done (the AI says so) · ok (the owner checked) · no (cannot) — ISSUE-063
+    let _ = conn.execute("ALTER TABLE directives ADD COLUMN state TEXT NOT NULL DEFAULT ''", []);
+    let _ = conn.execute("ALTER TABLE directives ADD COLUMN note TEXT NOT NULL DEFAULT ''", []);
+    let _ = conn.execute("ALTER TABLE directives ADD COLUMN changed INTEGER NOT NULL DEFAULT 0", []);
     let _ = conn.execute("ALTER TABLE runs ADD COLUMN effort TEXT", []);
     let _ = conn.execute("ALTER TABLE runs ADD COLUMN reason TEXT", []);
     let _ = conn.execute("ALTER TABLE runs ADD COLUMN summary TEXT", []);
@@ -147,6 +151,12 @@ pub fn open(path: &Path) -> Result<Connection> {
                       ("ss_at", "INTEGER NOT NULL DEFAULT 0"), ("ss_sha", "TEXT NOT NULL DEFAULT ''"), ("ss_issues", "TEXT NOT NULL DEFAULT '[]'")] {
         let _ = conn.execute(&format!("ALTER TABLE skills ADD COLUMN {col} {ty}"), []);
     }
+    // which set the idea belongs to: "personal" or "work" (company material, exported and stored apart)
+    let _ = conn.execute("ALTER TABLE ideas ADD COLUMN scope TEXT NOT NULL DEFAULT 'personal'", []);
+    // board: pinned = the owner's focus (top of its column); fixing = the owner says it still needs work
+    // (kept out of the "ready" column until the owner marks it working)
+    let _ = conn.execute("ALTER TABLE ideas ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0", []);
+    let _ = conn.execute("ALTER TABLE ideas ADD COLUMN fixing INTEGER NOT NULL DEFAULT 0", []);
     Ok(conn)
 }
 
@@ -270,6 +280,24 @@ pub struct Idea {
     pub sort: f64,
     pub created: i64,
     pub updated: i64,
+    /// "personal" or "work"
+    #[serde(default = "personal")]
+    pub scope: String,
+    /// the owner pinned it to the top of its board column
+    #[serde(default)]
+    pub pinned: bool,
+    /// the owner is still fixing it (asked for changes after it was ready/done); cleared by "works now"
+    #[serde(default)]
+    pub fixing: bool,
+}
+
+fn personal() -> String {
+    "personal".into()
+}
+
+/// "work" or "personal" (anything else counts as personal).
+pub fn norm_scope(s: &str) -> &'static str {
+    if s.trim().eq_ignore_ascii_case("work") { "work" } else { "personal" }
 }
 
 impl Idea {
@@ -281,7 +309,7 @@ impl Idea {
     }
 }
 
-const IDEA_COLS: &str = "id,slug,title,body,intents,recipe,stage_idx,status,priority,research_only,summary,verdict,run_cmd,knowledge,needs,repeat_count,fail_count,sort,created,updated";
+const IDEA_COLS: &str = "id,slug,title,body,intents,recipe,stage_idx,status,priority,research_only,summary,verdict,run_cmd,knowledge,needs,repeat_count,fail_count,sort,created,updated,scope,pinned,fixing";
 
 fn json_vec(s: String) -> Vec<String> {
     serde_json::from_str(&s).unwrap_or_default()
@@ -309,6 +337,9 @@ fn idea_from_row(r: &Row) -> rusqlite::Result<Idea> {
         sort: r.get(17)?,
         created: r.get(18)?,
         updated: r.get(19)?,
+        scope: r.get(20)?,
+        pinned: r.get::<_, i64>(21)? != 0,
+        fixing: r.get::<_, i64>(22)? != 0,
     })
 }
 
@@ -336,6 +367,32 @@ pub fn insert_idea(c: &Connection, slug: &str, title: &str, body: &str, priority
     Ok(c.last_insert_rowid())
 }
 
+pub fn set_scope(c: &Connection, id: i64, scope: &str) -> Result<()> {
+    c.execute("UPDATE ideas SET scope=?2, updated=?3 WHERE id=?1", params![id, norm_scope(scope), now()])?;
+    Ok(())
+}
+
+/// Board flags, written on their own so a bot run saving the idea never undoes them.
+pub fn set_pinned(c: &Connection, id: i64, on: bool) -> Result<()> {
+    c.execute("UPDATE ideas SET pinned=?2 WHERE id=?1", params![id, on])?;
+    Ok(())
+}
+
+pub fn set_fixing(c: &Connection, id: i64, on: bool) -> Result<()> {
+    c.execute("UPDATE ideas SET fixing=?2 WHERE id=?1", params![id, on])?;
+    Ok(())
+}
+
+/// The owner asked for changes to something already ready or done: it is not ready any more.
+pub fn mark_fixing(c: &Connection, id: i64) {
+    let _ = c.execute("UPDATE ideas SET fixing=1 WHERE id=?1 AND status IN ('ready','done')", [id]);
+}
+
+pub fn set_title(c: &Connection, id: i64, title: &str) -> Result<()> {
+    c.execute("UPDATE ideas SET title=?2, updated=?3 WHERE id=?1", params![id, title, now()])?;
+    Ok(())
+}
+
 pub fn set_slug(c: &Connection, id: i64, slug: &str) -> Result<()> {
     c.execute("UPDATE ideas SET slug=?2, updated=?3 WHERE id=?1", params![id, slug, now()])?;
     Ok(())
@@ -344,7 +401,7 @@ pub fn set_slug(c: &Connection, id: i64, slug: &str) -> Result<()> {
 pub fn save_idea(c: &Connection, i: &Idea) -> Result<()> {
     c.execute(
         "UPDATE ideas SET title=?2,body=?3,intents=?4,recipe=?5,stage_idx=?6,status=?7,priority=?8,research_only=?9,
-         summary=?10,verdict=?11,run_cmd=?12,knowledge=?13,needs=?14,repeat_count=?15,fail_count=?16,sort=?17,updated=?18
+         summary=?10,verdict=?11,run_cmd=?12,knowledge=?13,needs=?14,repeat_count=?15,fail_count=?16,sort=?17,updated=?18,scope=?19
          WHERE id=?1",
         params![
             i.id,
@@ -364,7 +421,8 @@ pub fn save_idea(c: &Connection, i: &Idea) -> Result<()> {
             i.repeat_count,
             i.fail_count,
             i.sort,
-            now()
+            now(),
+            norm_scope(&i.scope)
         ],
     )?;
     Ok(())
@@ -418,9 +476,48 @@ pub fn answer_question(c: &Connection, id: i64, answer: &str) -> Result<i64> {
     Ok(c.query_row("SELECT idea_id FROM questions WHERE id=?1", [id], |r| r.get(0))?)
 }
 
-pub fn add_directive(c: &Connection, idea_id: i64, text: &str) -> Result<()> {
+pub fn add_directive(c: &Connection, idea_id: i64, text: &str) -> Result<i64> {
     c.execute("INSERT INTO directives(idea_id,text,created) VALUES(?1,?2,?3)", params![idea_id, text, now()])?;
-    Ok(())
+    Ok(c.last_insert_rowid())
+}
+
+/// One instruction of the owner, with where it stands.
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct Request {
+    pub id: i64,
+    pub ts: i64,
+    pub text: String,
+    /// "" waiting · "done" the AI says it is done · "ok" the owner checked it works · "no" the AI cannot do it
+    pub state: String,
+    pub note: String,
+    pub changed: i64,
+    /// a request to be ticked off (asked in a chat or reported as not done), not a steer like "go on"
+    pub checklist: bool,
+}
+
+/// Is this directive a request to tick off?
+pub fn is_request(text: &str) -> bool {
+    text.starts_with("(สั่งในแชต)") || text.starts_with("(เจ้าของแจ้ง")
+}
+
+pub fn directive_rows(c: &Connection, idea_id: i64) -> Result<Vec<Request>> {
+    let mut st = c.prepare("SELECT id,created,text,state,note,changed FROM directives WHERE idea_id=?1 ORDER BY id")?;
+    let v = st
+        .query_map([idea_id], |r| {
+            let text: String = r.get(2)?;
+            Ok(Request { id: r.get(0)?, ts: r.get(1)?, checklist: is_request(&text), text, state: r.get(3)?, note: r.get(4)?, changed: r.get(5)? })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(v)
+}
+
+/// Change where a request stands; returns its idea.
+pub fn set_request(c: &Connection, id: i64, state: &str, note: &str) -> Result<i64> {
+    let n = c.execute("UPDATE directives SET state=?2, note=?3, changed=?4 WHERE id=?1", params![id, state, note, now()])?;
+    if n == 0 {
+        anyhow::bail!("ไม่พบคำสั่งเลข {id}");
+    }
+    Ok(c.query_row("SELECT idea_id FROM directives WHERE id=?1", [id], |r| r.get(0))?)
 }
 
 pub fn directives(c: &Connection, idea_id: i64) -> Result<Vec<(i64, String)>> {
@@ -651,4 +748,52 @@ pub fn latest_digest(c: &Connection) -> Result<Option<(i64, serde_json::Value)>>
         .query_row("SELECT ts,body FROM digests ORDER BY id DESC LIMIT 1", [], |r| Ok((r.get(0)?, r.get(1)?)))
         .optional()?;
     Ok(r.map(|(t, b)| (t, serde_json::from_str(&b).unwrap_or_default())))
+}
+
+#[cfg(test)]
+mod board_tests {
+    use super::*;
+
+    #[test]
+    fn the_owners_requests_are_a_checklist_in_directives_md() {
+        let dir = std::env::temp_dir().join(format!("ia_req_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let _ = std::fs::create_dir_all(&dir);
+        let c = open(&dir.join("t.db")).unwrap();
+        let id = insert_idea(&c, "s", "t", "", 0, false).unwrap();
+        add_directive(&c, id, "ไปต่อได้เลย").unwrap();
+        let r = add_directive(&c, id, "(สั่งในแชต) login ผ่าน claude เองบนมือถือ").unwrap();
+        let rows = directive_rows(&c, id).unwrap();
+        assert_eq!(rows.iter().filter(|x| x.checklist).count(), 1);
+        assert_eq!(set_request(&c, r, "done", "ทดสอบบนมือถือแล้ว").unwrap(), id);
+        assert!(set_request(&c, 99999, "done", "").is_err());
+        crate::workspace::write_directives(&dir, &directive_rows(&c, id).unwrap()).unwrap();
+        let md = std::fs::read_to_string(dir.join("DIRECTIVES.md")).unwrap();
+        assert!(md.contains(&format!("- [~] **#{r}**")) && md.contains("ทดสอบบนมือถือแล้ว") && md.contains("req <เลข> done"));
+        assert!(md.contains("] ไปต่อได้เลย") && !md.contains("[ ] **#") );
+    }
+
+    #[test]
+    fn asking_for_changes_takes_a_ready_idea_out_of_ready_and_bot_saves_keep_flags() {
+        let dir = std::env::temp_dir().join(format!("ia_board_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let c = open(&dir.join("t.db")).unwrap();
+        let id = insert_idea(&c, "s", "t", "", 0, false).unwrap();
+        // an idea still being worked on is not "fixing"
+        mark_fixing(&c, id);
+        assert!(!get_idea(&c, id).unwrap().fixing);
+        let mut i = get_idea(&c, id).unwrap();
+        i.status = "ready".into();
+        save_idea(&c, &i).unwrap();
+        mark_fixing(&c, id);
+        set_pinned(&c, id, true).unwrap();
+        // a bot run saving the idea must not clear the owner's flags
+        let i = get_idea(&c, id).unwrap();
+        save_idea(&c, &i).unwrap();
+        let i = get_idea(&c, id).unwrap();
+        assert!(i.fixing && i.pinned);
+        set_fixing(&c, id, false).unwrap();
+        assert!(!get_idea(&c, id).unwrap().fixing);
+        drop(c);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

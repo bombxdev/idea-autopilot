@@ -34,6 +34,10 @@ const ideas = [
     repeat_count: 0, fail_count: 0, sort: 5, created: now - 300, updated: now - 300,
   },
 ];
+// more finished ideas, so a crowded "done" column (and its "show more") can be previewed
+for (let n = 0; n < 6; n++) {
+  ideas.push({ ...ideas[2], id: 20 + n, slug: `idea-00${20 + n}`, title: `บทสรุปเรื่องที่ ${n + 1}`, summary: "", sort: 20 + n, updated: now - (10 + n) * H });
+}
 
 const questions = [
   { id: 1, idea_id: 1, question: "อยากให้เกมเล่นกับเพื่อนแบบไหน?", options: ["ออนไลน์ real-time", "ผลัดกันเล่น (async)", "เล่นคนเดียวกับบอท"], guess: "ผลัดกันเล่น (async)", answer: null, created: now - 900 },
@@ -71,10 +75,10 @@ const state = {
       snap: { week_reset: now + 120 * H, five_reset: now + 4 * H } },
   ],
   snap_note: null,
-  current: { run_id: 9, idea_id: 1, stage: "verdict", title: "เกมการ์ดเล่นสั้นบนเว็บ", started: now - 640, forced: false, deadline: now + 1400, stage_no: 2, stage_total: 5, last_activity: now - 25, last_line: "🌐 ค้นเว็บ: ตลาดเกมการ์ดสั้นบนเว็บ", lang: "th", provider: "Claude Code", model: "opus" },
+  current: { run_id: 9, idea_id: 1, stage: "verdict", title: "เกมการ์ดเล่นสั้นบนเว็บ", started: now - 640, forced: false, deadline: now + 1400, stage_no: 2, stage_total: 5, last_activity: now - 25, last_line: "🌐 ค้นเว็บ: ตลาดเกมการ์ดสั้นบนเว็บ", lang: "th", provider: "Claude Code", model: "Opus 5.5", account: "claude01" },
   paused: false, turbo_until: 0, user_active: false, reserve_per_hour: 1.5, reserve_learned: false, cooldown_until: 0,
   agents: [{ id: "claude", label: "Claude", via: "app", hint: "หลัก" }, { id: "codex", label: "Codex (OpenAI)", via: "orca", hint: "งานโค้ด/ขัดเกลาหน้าตา · ใช้โควต้า OpenAI · เปิดใน Orca" }],
-  sessions: [{ idea_id: 5, name: "Idea#5 : กาแฟเย็นทำให้ง่วงจริงไหม", status: "working", started: now - 300, pid: 1, note: "", sid: "x", feed: [
+  sessions: [{ idea_id: 5, name: "Idea#5 : กาแฟเย็นทำให้ง่วงจริงไหม", status: "working", started: now - 300, pid: 1, note: "", sid: "x", ai: "Claude Code · Opus 5.5", quiet: 420, screen: "● Read(t2.png)\n  ⎿  Reading…", feed: [
     { ts: now - 290, text: "⏳ กำลังเปิด session…" }, { ts: now - 284, text: "🛰 พร้อมแล้ว — เปิดดูในแอป Claude ได้" },
     { ts: now - 280, text: "🙋 คุณ: เพิ่มตารางเปรียบเทียบปริมาณน้ำตาลของกาแฟเย็นแต่ละร้าน" },
     { ts: now - 270, text: "💬 จะอ่านรายงานเดิมก่อน เพื่อดูว่ามีข้อมูลน้ำตาลอะไรอยู่แล้วบ้าง" },
@@ -148,13 +152,17 @@ const handlers = {
   },
   cli_install_command: ({ kind }) => "npm install -g @google/gemini-cli",
   cli_install_start: () => null,
+  model_check_now: () => 1,
+  sessions_overview: () => ({ idle_min: 45, has_claude: true, resumable: [{ idea_id: 3, title: "ระบบจองคิวร้านตัดผม", last: Math.floor(Date.now() / 1000) - 7200 }], open: [{ idea_id: 1, name: "Idea#1 : เกมการ์ด", status: "idle", agent: "claude", started: Math.floor(Date.now() / 1000) - 900, idle_secs: 300, feed: [{ ts: Math.floor(Date.now() / 1000) - 300, text: "💬 แก้ปุ่มเสร็จแล้ว" }] }, { idea_id: 2, name: "Idea#2 · Codex", status: "working", agent: "codex", started: Math.floor(Date.now() / 1000) - 400, idle_secs: 20, feed: [] }, { idea_id: 5, name: "Idea#5 · Mistral Vibe", status: "idle", agent: "mistral", started: Math.floor(Date.now() / 1000) - 200, idle_secs: 100, feed: [] }] }),
   cli_install_status: () => ({ kind: "gemini", state: "error", lines: ["$ npm install -g @google/gemini-cli", "npm error code ENOTFOUND"], message: "ติดตั้งไม่สำเร็จ — ดูข้อความด้านล่าง หรือรันคำสั่งเองใน terminal" }),
   accounts_list: () => ({
     accounts: [
-      { id: "claude01", kind: "claude", kind_label: "Claude Code", label: "", enabled: true, vendor: "anthropic", vendor_label: "Anthropic — Claude", auth: "login", key_set: false, base_url: "", needs_model: false, isolated: false, model: "auto", effort: "auto", installed: true, logged_in: true, real_quota: true, quota: { five: 22, week: 58, source: "api" }, active: true, effort_supported: true },
-      { id: "codex01", kind: "codex", kind_label: "Codex CLI", label: "Codex งาน", enabled: true, vendor: "openai", vendor_label: "OpenAI — Codex (GPT)", auth: "login", key_set: false, base_url: "", needs_model: false, isolated: false, model: "auto", effort: "auto", installed: true, logged_in: true, real_quota: true, quota: { five: 16, week: 42, source: "codex" }, effort_supported: true },
-      { id: "gemini01", kind: "gemini", kind_label: "Gemini CLI", label: "", enabled: true, vendor: "google", vendor_label: "Google — Gemini", auth: "login", key_set: false, base_url: "", needs_model: false, isolated: false, model: "auto", effort: "auto", installed: false, logged_in: null, real_quota: false, effort_supported: false },
-      { id: "deepseek01", kind: "claude", kind_label: "Claude Code", label: "", enabled: false, vendor: "deepseek", vendor_label: "DeepSeek", auth: "key", key_set: true, base_url: "", needs_model: true, isolated: true, model: "deepseek-chat", effort: "auto", installed: true, logged_in: true, real_quota: false, quota: { five: 3, week: 8, source: "budget" }, effort_supported: true },
+      { id: "claude01", kind: "claude", kind_label: "Claude Code", label: "", enabled: true, vendor: "anthropic", vendor_label: "Anthropic — Claude", auth: "login", key_set: false, base_url: "", needs_model: false, isolated: false, model: "auto", effort: "auto", installed: true, logged_in: true, real_quota: true, quota: { five: 22, week: 58, source: "api" }, active: true, effort_supported: true, last_test: { ok: true, ts: 1793860000, model: "haiku" } },
+      { id: "codex01", kind: "codex", kind_label: "Codex CLI", label: "Codex งาน", enabled: true, vendor: "openai", vendor_label: "OpenAI — Codex (GPT)", auth: "login", key_set: false, base_url: "", needs_model: false, isolated: false, model: "auto", effort: "auto", installed: true, logged_in: true, real_quota: true, quota: { five: 16, week: 42, source: "codex" }, effort_supported: true, last_test: { ok: false, ts: 1793860300, error: "Free usage limit reached" } },
+      { id: "gemini01", kind: "gemini", kind_label: "Gemini CLI", label: "", enabled: true, vendor: "google", vendor_label: "Google — Gemini", auth: "login", key_set: false, base_url: "", needs_model: false, isolated: false, model: "auto", effort: "auto", installed: false, logged_in: null, real_quota: false, effort_supported: false , limit: { kind: "daily", text: "ล็อกอิน Google: ฟรีราว 1,000 คำขอ/วัน (60 คำขอ/นาที) ไม่มีรอบ 5 ชม./สัปดาห์ — เริ่มนับใหม่เที่ยงคืนเวลาแปซิฟิก", reset: Math.floor(Date.now() / 1000) + 9000 } },
+      { id: "omni01", kind: "claude", kind_label: "Claude Code", label: "", enabled: true, vendor: "omniroute", vendor_label: "OmniRoute (เกตเวย์ในเครื่อง รวมหลายค่าย)", auth: "key", key_set: false, base_url: "http://localhost:20128", needs_model: true, isolated: true, model: "auto/coding", effort: "auto", installed: true, logged_in: false, real_quota: false, quota: { five: 0, week: 0, source: "provider" }, effort_supported: true, budget: { five_h: 3, week_h: 10 }, allowed: false, reason: "พักไว้: OmniRoute เชื่อมแพ็กเกจ Claude (me@example.com) ไว้ ซึ่งแอปก็ใช้ Claude อยู่โดยตรง", limit: { kind: "daily", text: "เกตเวย์ในเครื่อง: ลิมิตจริงเป็นของแต่ละค่ายที่เชื่อมไว้ใน OmniRoute" }, omni: { quota: [{ provider: "groq", name: "groq omniroute", pct: 99.9, used: 1, total: 1000, reset: null }, { provider: "opencode-zen", name: "OpenCode Zen", pct: 100, used: 0, total: null, reset: null }], warnings: ["การเชื่อมต่อใน OmniRoute ใช้ไม่ได้แล้ว: kiro (kiro) — OmniRoute จะข้ามไป · วิธีแก้: dashboard → Providers → ล็อกอินใหม่ หรือลบทิ้ง"], block: "OmniRoute เชื่อมแพ็กเกจ Claude (me@example.com) ไว้ ซึ่งแอปก็ใช้แพ็กเกจนี้อยู่โดยตรง — ถ้าเป็นบัญชีเดียวกัน โควต้าจะถูกใช้สองทางและแอปคุมเพดานไม่ได้ · จึงพักบัญชี OmniRoute นี้ไว้ · วิธีแก้: ปิดการเชื่อมต่อ claude ใน dashboard ของ OmniRoute (Providers) หรือปิดบัญชีนี้ในแอป · ถ้าเป็นคนละบัญชีกัน กด “เป็นคนละบัญชี — ใช้ต่อ”", dup_ok: false } },
+      { id: "openrouter01", kind: "opencode", kind_label: "OpenCode", label: "", enabled: true, vendor: "openrouter", vendor_label: "OpenRouter", auth: "key", key_set: true, base_url: "", needs_model: true, isolated: true, model: "auto", effort: "auto", installed: true, logged_in: true, real_quota: false, quota: { five: 0, week: 2, source: "budget" }, effort_supported: false, budget: { five_h: 3, week_h: 10 }, limit: { kind: "paid", text: "จ่ายตามใช้" }, check: { total: 12, done: 3, bot: 1, chat: 2, unknown: 0, started: Math.floor(Date.now() / 1000) - 400, finished: 0, current: "openrouter/qwen/qwen3-coder:free", current_since: Math.floor(Date.now() / 1000) - 75, last: { model: "openrouter/nvidia/nemotron-3-nano:free", v: "chat", note: "ไม่ได้เขียน STATUS.json" }, waiting: null } },
+      { id: "deepseek01", kind: "claude", kind_label: "Claude Code", label: "", enabled: false, vendor: "deepseek", vendor_label: "DeepSeek", auth: "key", key_set: true, base_url: "", needs_model: true, isolated: true, model: "deepseek-chat", effort: "auto", installed: true, logged_in: true, real_quota: false, quota: { five: 3, week: 8, source: "budget" }, effort_supported: true , budget: { five_h: 3, week_h: 10 }, limit: { kind: "paid", text: "จ่ายตามโทเคนจากยอดเงินที่เติมไว้ ไม่มีรอบ 5 ชม./สัปดาห์ — เงินหมดแล้วจึงหยุด", balance: "ยอดเงินคงเหลือ 4.12 USD" } },
     ],
     vendors: [
       { id: "anthropic", label: "Anthropic — Claude", runner: "claude", auth: ["login", "key"], note: "Claude Code: sign in or API key", base_url: "", models: ["opus", "sonnet", "haiku"], installed: true, install: "npm install -g @anthropic-ai/claude-code", needs_model: false },
@@ -166,7 +174,7 @@ const handlers = {
       { id: "mistral", label: "Mistral Vibe", installed: false, install: "uv tool install mistral-vibe" },
     ],
   }),
-  account_models: ({ id }) => ({ source: id === "codex01" ? "account" : "known", runner: "x", efforts: ["low", "medium", "high", "xhigh"], models: id === "codex01" ? [{ id: "gpt-6.1-sol", label: "gpt-6.1-sol", efforts: ["low", "medium", "high", "xhigh"] }, { id: "gpt-6-luna", label: "gpt-6-luna", efforts: ["low", "medium"] }] : [{ id: "deepseek-chat", label: "deepseek-chat", efforts: [] }, { id: "openrouter/meta-llama/llama-3.3-70b-instruct:free", label: "openrouter/meta-llama/llama-3.3-70b-instruct:free", efforts: [], free: true }, { id: "openrouter/anthropic/claude-sonnet-4", label: "openrouter/anthropic/claude-sonnet-4", efforts: [] }] }),
+  account_models: ({ id }) => ({ source: id === "codex01" ? "account" : "known", runner: "x", efforts: ["low", "medium", "high", "xhigh"], models: id === "codex01" ? [{ id: "gpt-6.1-sol", label: "gpt-6.1-sol", efforts: ["low", "medium", "high", "xhigh"] }, { id: "gpt-6-luna", label: "gpt-6-luna", efforts: ["low", "medium"] }] : [{ id: "deepseek-chat", label: "deepseek-chat", efforts: [] }, { id: "openrouter/meta-llama/llama-3.3-70b-instruct:free", label: "openrouter/meta-llama/llama-3.3-70b-instruct:free", efforts: [], free: true }, { id: "openrouter/anthropic/claude-sonnet-4", label: "openrouter/anthropic/claude-sonnet-4", efforts: [] }], hidden: id === "codex01" ? [] : [{ id: "openrouter/nvidia/nemotron-3-nano:free", state: "chat", note: "ไม่ได้เขียน STATUS.json", free: true }, { id: "openrouter/new/model-x", state: "pending", note: "" }], hidden_counts: { chat: 1, pending: 1, unknown: 0 }, checking: false }),
   accounts_series: () => {
     const n = Math.floor(Date.now() / 1000); const mk = (f, w) => Array.from({ length: 30 }, (_, i) => [n - (30 - i) * 4 * 3600, Math.min(100, f + ((i * 7) % 30)), Math.min(100, w + i)]);
     return { claude01: mk(10, 30), codex01: mk(5, 20), deepseek01: mk(1, 2) };
@@ -179,12 +187,14 @@ const handlers = {
     { slug: "summarize", name: "Summarize", description: "Summarize a document" },
   ],
   idea_handoff: ({ agent }) => `เปิด ${agent} ใน Orca แล้ว (mock)`,
+  codex_thread: ({ id }) => (id === 1 ? { thread: "019a-demo-thread", account: "codex01", command: "codex resume 019a-demo-thread" } : null),
   idea_ask: ({ id, text }) => { const x = state.sessions.find((s) => s.idea_id === id); if (x) x.feed.push({ ts: Math.floor(Date.now() / 1000), text: `🙋 คุณ: ${text}` }); return null; },
   list_ideas: () => ({ ideas, questions, stages }),
   get_idea: ({ id }) => ({
     idea: ideas.find((i) => i.id === id), files: { report: md, idea: "# ไอเดีย\n\nข้อความเดิมของคุณ" },
     runs: [{ id: 9, stage: "research", status: "ok", started: now - 3 * H, input_tokens: 2e4, output_tokens: 9e3, cache_write: 6e4, week_before: 52, week_after: 55.5 }],
     questions: questions.filter((q) => q.idea_id === id), directives: [[now - 2 * H, "เน้นตลาดไทย"]], dir: "",
+    requests: mockReqs,
   }),
   get_digest: () => ({ ts: now - 2 * H, body: { since: now - 20 * H, headline: "1 พร้อมลองเล่น · 2 เสร็จ · 2 คำถามรอคุณ · บอทใช้ไป 18% ของสัปดาห์", runs: 7, bot_pct: 18.2, needs: [{ id: 4, title: ideas[3].title, needs: ideas[3].needs }] } }),
   make_digest: () => handlers.get_digest(),
@@ -204,18 +214,36 @@ const handlers = {
     schedule: { start: 9, lunch_start: 12, lunch_end: 13, end: 18, half_end: 12, days: { mon: "full", tue: "full", wed: "full", thu: "full", fri: "full", sat: "off", sun: "off" } },
   }),
   get_policy: () => ({ stages: {}, versions: {}, learned_at: 0 }),
-  sync_status: () => ({ machine: "demo-pc", mode: "standalone", brain_dir: "C:/IdeaAutopilot/brain", brain_exported: 0 }),
+  sync_status: () => ({ machine: "demo-pc", mode: "standalone", brain_dir: "C:/IdeaAutopilot/brain", brain_personal_dir: "C:/IdeaAutopilot/brain/personal", brain_work_dir: "C:/IdeaAutopilot/brain/work", brain_work_keywords: [], brain_exported: 0 }),
   list_days: () => [],
   library: () => ideas.filter((i) => i.status !== "inbox").map((i) => ({ ...i, snippet: null })),
   get_events: () => [],
 };
 
+const mockReqs = [
+  { id: 41, ts: now - 5 * H, text: "(สั่งในแชต) ทำจอลอยให้เล็กที่สุด และย้ายไปมาได้", state: "ok", note: "", checklist: true },
+  { id: 42, ts: now - 3 * H, text: "(สั่งในแชต) ปุ่มคำแปลไทยกดแล้วหุบขึ้นบน", state: "done", note: "ปุ่มหุบได้แล้ว ทดสอบบนมือถือจริงผ่าน", checklist: true },
+  { id: 43, ts: now - 2 * H, text: "(สั่งในแชต) login ผ่าน claude เองบนมือถือ ไม่ต้องผ่านคอมฯ", state: "no", note: "Claude ยังไม่เปิดให้แอปอื่นใช้ login ของผู้ใช้ — ต้องใช้ API key", checklist: true },
+  { id: 44, ts: now - H, text: "(สั่งในแชต) ให้คะแนนประโยคที่พิมพ์ และเสนอประโยคที่เป็นธรรมชาติกว่า", state: "", note: "", checklist: true },
+];
+
 export async function mockInvoke(cmd, args = {}) {
   await new Promise((r) => setTimeout(r, 60));
   const h = handlers[cmd];
   if (h) return structuredClone(h(args));
+  if (cmd === "request_set") {
+    const r = mockReqs.find((x) => x.id === args.rid);
+    if (r) { r.state = args.state; if (args.state === "") r.note = "เจ้าของลองแล้วยังไม่ได้"; }
+    return null;
+  }
+  if (cmd === "idea_action") {
+    const i = ideas.find((x) => x.id === args.id);
+    if (i && ["pin", "unpin"].includes(args.action)) i.pinned = args.action === "pin";
+    if (i && ["fixing", "works"].includes(args.action)) i.fixing = args.action === "fixing";
+    return null;
+  }
   if (cmd === "add_idea") {
-    ideas.unshift({ ...ideas[4], id: ideas.length + 10, title: args.text.slice(0, 80), created: now, updated: now });
+    ideas.unshift({ ...ideas[4], id: ideas.length + 10, title: args.text.slice(0, 80), scope: args.scope || "personal", created: now, updated: now });
     return 1;
   }
   return null;

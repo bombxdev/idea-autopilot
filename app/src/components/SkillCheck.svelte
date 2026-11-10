@@ -1,4 +1,5 @@
 <script>
+  import Icon from "./Icon.svelte";
   // Deep check of a skill text with SkillSpector (NVIDIA). Runs by itself when the text changes and
   // reports the combined verdict (built-in scan + SkillSpector) back through `result`.
   import { api } from "../lib/api.js";
@@ -26,16 +27,16 @@
     if (t) run(t);
   });
 
-  const LABEL = { pass: ["✓ ผ่านการตรวจ", "teal"], caution: ["⚠ ควรระวัง", "amber"], fail: ["✕ ไม่ผ่าน", "red"] };
+  const LABEL = { pass: ["ผ่านการตรวจ", "teal", "check"], caution: ["ควรระวัง", "amber", "warning"], fail: ["ไม่ผ่าน", "red", "close"] };
   const SEV = { CRITICAL: "red", HIGH: "red", MEDIUM: "amber", LOW: "faint" };
 </script>
 
 <div class="sc">
   <div class="row wrap">
-    <b class="small">🛡 SkillSpector (NVIDIA)</b>
+    <b class="small"><Icon name="shieldCheck" /> SkillSpector (NVIDIA)</b>
     {#if busy}<span class="faint small">กำลังตรวจเชิงลึก… (ประมาณ 15 วินาที)</span>{/if}
     {#if result?.ss}
-      <span class="chip {LABEL[result.ss.status]?.[1]}">{LABEL[result.ss.status]?.[0] ?? result.ss.status}</span>
+      <span class="chip {LABEL[result.ss.status]?.[1]}">{#if LABEL[result.ss.status]}<Icon name={LABEL[result.ss.status][2]} /> {/if}{LABEL[result.ss.status]?.[0] ?? result.ss.status}</span>
       <span class="faint small">คะแนนเสี่ยง {result.ss.score}/100 · v{result.ss.version}{result.ss.complete ? "" : " · ตรวจไม่ครบทุกไฟล์"}</span>
     {:else if result && !result.ss_available}
       <span class="faint small">ยังไม่ได้ติดตั้ง — ใช้ตัวสแกนในโปรแกรมอย่างเดียว (ติดตั้งได้ที่แถบด้านบนของหน้านี้)</span>

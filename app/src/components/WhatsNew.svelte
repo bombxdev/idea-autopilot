@@ -1,4 +1,5 @@
 <script>
+  import Icon from "./Icon.svelte";
   // หน้า “มีอะไรใหม่”: ขึ้นทุกครั้งที่ติดตั้งใหม่หรืออัปเดต แล้วจำว่าเห็นเวอร์ชันนี้แล้ว
   import { onMount } from "svelte";
   import { api } from "../lib/api.js";
@@ -28,13 +29,14 @@
   }
   async function all() {
     await ok();
+    store.settingsTab = "about";
     store.page = "settings";
   }
 </script>
 
 <div class="scrim" role="presentation"></div>
 <div class="box card">
-  <h1>🎉 มีอะไรใหม่ใน Idea Autopilot v{about?.version ?? ""}</h1>
+  <h1><Icon name="sparkle" /> มีอะไรใหม่ใน Idea Autopilot v{about?.version ?? ""}</h1>
   <div class="body">
     {#each entries as e (e.v)}<Markdown text={e.text} />{/each}
   </div>

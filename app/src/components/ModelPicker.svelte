@@ -1,8 +1,18 @@
 <script>
+  import Icon from "./Icon.svelte";
   // One model chooser used everywhere (account settings, AI of an idea, AI of a chat): a box you can type in to search
   // the list, or to enter a name that is not listed. When some of the models are free (OpenRouter's ":free" ones and
   // the like) a tick shows only those.
-  let { value = "", models = [], onchange = () => {}, auto = "", placeholder = "ชื่อโมเดล", disabled = false, width = 260 } = $props();
+  let { value = "", models = [], hidden = [], onchange = () => {}, auto = "", placeholder = "ชื่อโมเดล", disabled = false, width = 260 } = $props();
+  // models left out because they did not pass the bot-work check (or are not checked yet): counted at the bottom of
+  // the list, names shown on request, never selectable here
+  let showHidden = $state(false);
+  const WHY = { chat: "แชตได้อย่างเดียว", pending: "รอตรวจ", retry: "รอตรวจใหม่", unknown: "ตรวจไม่ได้" };
+  const hiddenCount = $derived.by(() => {
+    const c = {};
+    for (const h of hidden) c[h.state] = (c[h.state] ?? 0) + 1;
+    return Object.entries(c).map(([k, n]) => `${n} ${WHY[k] ?? k}`).join(" · ");
+  });
   let open = $state(false);
   let q = $state("");
   let typing = $state(false);
@@ -65,7 +75,7 @@
     oninput={(e) => { q = e.currentTarget.value; typing = true; open = true; active = 0; }}
     onkeydown={key}
   />
-  <button type="button" class="arrow" tabindex="-1" {disabled} aria-label="รายการ" onclick={() => (open = !open)}>▾</button>
+  <button type="button" class="arrow" tabindex="-1" {disabled} aria-label="รายการ" onclick={() => (open = !open)}><Icon name="chevronDown" /></button>
   {#if open}
     <div class="list" role="listbox">
       {#if hasFree}
@@ -79,7 +89,16 @@
           <span class="nm">{m.label ?? m.id}</span>{#if m.free}<span class="badge">ฟรี</span>{/if}
         </button>
       {/each}
-      {#if typing && q.trim() && !known(q.trim())}
+      {#if hidden.length}
+        <button type="button" class="hid" onclick={() => (showHidden = !showHidden)} title="โมเดลที่ไม่ผ่านการตรวจว่าทำงานบอทได้ (อ่านไฟล์ ทำงาน และส่งผล) จะไม่ให้เลือก">
+          ซ่อน {hidden.length} ตัว ({hiddenCount}) {showHidden ? "▾" : "▸"}</button>
+        {#if showHidden}
+          {#each hidden.filter((h) => !typing || !q.trim() || h.id.toLowerCase().includes(q.trim().toLowerCase())) as h (h.id)}
+            <div class="opt off" title={h.note || WHY[h.state] || ""}><span class="nm">{h.label ?? h.id}</span><span class="tag {h.state}">{WHY[h.state] ?? h.state}</span></div>
+          {/each}
+        {/if}
+      {/if}
+      {#if typing && q.trim() && !known(q.trim()) && !hidden.some((h) => h.id === q.trim())}
         <button type="button" class="opt use" onclick={() => pick(q.trim())}>ใช้ชื่อ “{q.trim()}”</button>
       {:else if !shown.length}
         <div class="none">{freeOnly ? "ไม่พบโมเดลฟรีในรายการ" : "ไม่พบรายชื่อ — พิมพ์ชื่อโมเดลได้เลย"}</div>
@@ -100,5 +119,11 @@
   .nm { overflow-wrap: anywhere; }
   .badge { font-size: 11px; padding: 0 6px; border-radius: 999px; background: var(--teal-bg); color: var(--teal); flex: none; }
   .free { display: flex; gap: 6px; align-items: center; padding: 6px 10px; font-size: 12px; color: var(--text-2); border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+  .hid { text-align: left; border: none; border-top: 1px solid var(--line); background: transparent; margin-top: 4px; padding: 6px 10px; font-size: 12px; color: var(--text-3); }
+  .hid:hover { color: var(--text-2); }
+  .opt.off { color: var(--text-3); cursor: default; }
+  .opt.off:hover { background: transparent; }
+  .tag { font-size: 11px; padding: 0 6px; border-radius: 999px; background: var(--bg); color: var(--text-3); flex: none; }
+  .tag.chat { color: var(--red); }
   .none { padding: 8px 10px; color: var(--text-3); font-size: 12px; }
 </style>

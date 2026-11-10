@@ -1,4 +1,5 @@
 <script>
+  import Icon from "./Icon.svelte";
   // Draws the app's confirmation box (see lib/dialog.svelte.js). Esc / click outside = cancel, Enter = OK.
   import { dialog, answer } from "../lib/dialog.svelte.js";
 
@@ -21,7 +22,7 @@
   {@const d = dialog.open}
   <div class="back" role="presentation" onclick={(e) => e.target === e.currentTarget && answer(false)}>
     <div class="box" role="alertdialog" aria-modal="true" aria-label={d.title || d.message}>
-      <div class="ic" class:danger={d.danger}>{d.danger ? "🗑" : "❔"}</div>
+      <div class="ic" class:danger={d.danger}><Icon name={d.danger ? "trash" : "question"} /></div>
       <div class="body">
         {#if d.title}<b class="t">{d.title}</b>{/if}
         <div class="msg">{d.message}</div>

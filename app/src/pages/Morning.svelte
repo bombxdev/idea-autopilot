@@ -1,4 +1,5 @@
 <script>
+  import Icon from "../components/Icon.svelte";
   import { onMount } from "svelte";
   import { store, questionsFor } from "../lib/store.svelte.js";
   import { api, pct, clock } from "../lib/api.js";
@@ -29,7 +30,7 @@
 <div class="wrapx">
   <div class="hero">
     <div>
-      <h1>{greet} 👋</h1>
+      <h1>{greet} <Icon name="sunrise" /></h1>
       <p class="muted">{b?.headline ?? "ยังไม่มีสรุป — จดไอเดียทิ้งไว้ แล้วตื่นมาดูตรงนี้"}</p>
     </div>
     <button class="ghost small" onclick={async () => (digest = await api.makeDigest())}>สรุปใหม่ตอนนี้</button>
@@ -44,35 +45,35 @@
 
   {#if store.state?.current}
     <section>
-      <h2>⚙️ กำลังทำอยู่ตอนนี้</h2>
+      <h2><Icon name="gear" /> กำลังทำอยู่ตอนนี้</h2>
       <LiveLog />
     </section>
   {/if}
 
   {#if asking.length}
     <section>
-      <h2>🙋 รอคุณตอบ <span class="faint small">แตะเลือกได้เลย</span></h2>
+      <h2><Icon name="user" /> รอคุณตอบ <span class="faint small">แตะเลือกได้เลย</span></h2>
       <div class="grid">{#each asking as idea (idea.id)}<IdeaCard {idea} />{/each}</div>
     </section>
   {/if}
 
   {#if ready.length}
     <section>
-      <h2>▶ พร้อมลองเล่น</h2>
+      <h2><Icon name="play" /> พร้อมลองเล่น</h2>
       <div class="grid">{#each ready as idea (idea.id)}<IdeaCard {idea} />{/each}</div>
     </section>
   {/if}
 
   {#if fresh.length}
     <section>
-      <h2>✓ เสร็จเมื่อคืน</h2>
+      <h2><Icon name="check" /> เสร็จเมื่อคืน</h2>
       <div class="grid">{#each fresh as idea (idea.id)}<IdeaCard {idea} />{/each}</div>
     </section>
   {/if}
 
   {#if b?.needs?.length}
     <section>
-      <h2>🧾 สิ่งที่ต้องทำเอง</h2>
+      <h2><Icon name="checklist" /> สิ่งที่ต้องทำเอง</h2>
       <div class="card">
         {#each b.needs as n}
           <div class="need"><button class="ghost" onclick={() => (store.openIdea = n.id)}><b>{n.title}</b></button>
@@ -83,12 +84,12 @@
   {/if}
 
   <section>
-    <h2>🧭 ในคิว</h2>
+    <h2><Icon name="compass" /> ในคิว</h2>
     {#if moving.length}
       <div class="grid">{#each moving as idea (idea.id)}<IdeaCard {idea} compact />{/each}</div>
     {:else}
       <div class="empty card">
-        <div class="big">💡</div>
+        <div class="big"><Icon name="bulb" size="40" /></div>
         <div><b>คิวว่าง</b></div>
         <div class="muted small">จดไอเดียที่ช่องด้านบน หรือกดปุ่มลัดจดไอเดียจากที่ไหนก็ได้ (ดูได้ที่หน้าตั้งค่า) แล้วไปทำอย่างอื่นได้เลย</div>
       </div>

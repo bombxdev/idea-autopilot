@@ -24,7 +24,7 @@ use crate::state::AppState;
 
 const TABLES: &[&str] = &["ideas", "questions", "directives", "runs", "calendar_overrides", "digests", "settings"];
 /// settings that belong to one machine and must not travel
-const LOCAL_SETTINGS: &[&str] = &["autostart", "hotkey", "sync_dir", "brain_dir", "extra_inbox", "digest_day", "seen_version"];
+const LOCAL_SETTINGS: &[&str] = &["autostart", "hotkey", "sync_dir", "brain_dir", "brain_personal", "brain_work", "extra_inbox", "digest_day", "seen_version"];
 
 /// Settings that stay on this machine: machine paths, plus every secret (bot tokens, chat ids…).
 fn is_local_setting(key: &str) -> bool {
@@ -147,6 +147,8 @@ fn publish_state(c: &Connection, dir: &Path) -> Result<()> {
         }
         write_if_changed(&state.join(format!("{t}.json")), &serde_json::to_string_pretty(&rows)?)?;
     }
+    // the AIs and checked models the phone app can choose from
+    write_if_changed(&state.join("models.json"), &serde_json::to_string_pretty(&crate::model_check::options_for_phone(c))?)?;
     let events = dump_table(c, "events", "ORDER BY id DESC LIMIT 500")?;
     write_if_changed(&state.join("events.json"), &serde_json::to_string_pretty(&events)?)?;
     // quota history, one CSV per month (only the current month changes)
@@ -284,8 +286,16 @@ pub fn mirror(src: &Path, dst: &Path) -> Result<usize> {
 // ---------- git ----------
 
 fn git(dir: &Path, args: &[&str]) -> Result<String> {
+    git_run(Some(dir), args)
+}
+
+/// Run git (inside `dir` when given) without a console window.
+pub fn git_run(dir: Option<&Path>, args: &[&str]) -> Result<String> {
     let mut c = std::process::Command::new("git");
-    c.arg("-C").arg(dir).args(args);
+    if let Some(d) = dir {
+        c.arg("-C").arg(d);
+    }
+    c.args(args);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -298,7 +308,7 @@ fn git(dir: &Path, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).into())
 }
 
-fn git_pull(dir: &Path) -> Result<()> {
+pub fn git_pull(dir: &Path) -> Result<()> {
     // a brand-new empty remote has nothing to pull yet
     if git(dir, &["rev-parse", "--abbrev-ref", "@{u}"]).is_err() {
         return Ok(());
@@ -307,11 +317,16 @@ fn git_pull(dir: &Path) -> Result<()> {
 }
 
 fn git_push(dir: &Path) -> Result<()> {
+    git_commit_push(dir, &format!("sync from {}", machine()))
+}
+
+/// Commit everything that changed and push it (nothing to commit = nothing to do).
+pub fn git_commit_push(dir: &Path, message: &str) -> Result<()> {
     git(dir, &["add", "-A"])?;
     if git(dir, &["status", "--porcelain"])?.trim().is_empty() {
         return Ok(());
     }
-    git(dir, &["commit", "-q", "-m", &format!("sync from {}", machine())])?;
+    git(dir, &["commit", "-q", "-m", message])?;
     git(dir, &["push", "-q", "-u", "origin", "HEAD"]).map(|_| ())
 }
 
@@ -339,7 +354,8 @@ pub fn tick(app: &AppHandle) -> Result<()> {
     };
     // an open remote session means the owner is steering from the phone: pick commands up faster
     let live_session = !st.rt.lock().sessions.is_empty();
-    if git_mode && now - last_pull >= if live_session { 60 } else { 2 * 60 } {
+    // (a phone command waits for this pull: with a chat open, every 20 s — ISSUE-064)
+    if git_mode && now - last_pull >= if live_session { 20 } else { 2 * 60 } {
         if let Err(e) = git_pull(&dir) {
             st.push_log(format!("[sync] {e:#}"));
         }
@@ -371,6 +387,8 @@ pub fn tick(app: &AppHandle) -> Result<()> {
                 if let Some(v) = read_json(&f) {
                     let cmd = v["cmd"].as_str().unwrap_or("");
                     let res = crate::api::dispatch(app, cmd, v["args"].clone());
+                    // show the phone what became of it at once, not at the next live interval
+                    st.rt.lock().sync_live = 0;
                     st.push_log(format!("[sync] คำสั่งจาก {}: {cmd} {}", v["from"].as_str().unwrap_or("?"), if res.is_ok() { "✓" } else { "✕" }));
                 }
                 let _ = std::fs::remove_file(&f);
@@ -391,13 +409,13 @@ pub fn tick(app: &AppHandle) -> Result<()> {
         // live status for the phone app: written/pushed only when something actually changed
         // wait until the governor has produced a real decision (first tick runs sync before it)
         let decided = !st.rt.lock().decision.code.is_empty();
-        if decided && now - st.rt.lock().sync_live >= if live_session { 30 } else { LIVE_EVERY } {
+        if decided && now - st.rt.lock().sync_live >= if live_session { 10 } else { LIVE_EVERY } {
             st.rt.lock().sync_live = now;
             let mut v = crate::scheduler::state_json(&st);
             let log: Vec<String> = st.rt.lock().live_log.iter().rev().take(25).rev().cloned().collect();
             v["live_log"] = json!(log);
             v["open_questions"] = json!(db::questions(&st.db.lock(), None, true).map(|q| q.len()).unwrap_or(0));
-            let sessions: String = st.rt.lock().sessions.values().map(|s| format!("{}:{}:{};", s.idea_id, s.status, s.feed.last().map(|f| f.ts).unwrap_or(0))).collect();
+            let sessions: String = st.rt.lock().sessions.values().map(|s| format!("{}:{}:{}:{};", s.idea_id, s.status, s.feed.last().map(|f| f.ts).unwrap_or(0), s.ai)).collect();
             let sig = format!(
                 "{}|{}|{}|{}|{}|{}",
                 v["decision"]["code"], v["current"]["run_id"], v["paused"], log.last().cloned().unwrap_or_default(), v["open_questions"], sessions
@@ -494,6 +512,7 @@ mod tests {
         std::fs::create_dir_all(&tmp).unwrap();
         let a = db::open(&tmp.join("a.db")).unwrap();
         let id = db::insert_idea(&a, "idea-0001", "ทดสอบ", "body", 1, false).unwrap();
+        db::set_scope(&a, id, "work").unwrap();
         db::insert_question(&a, id, "ข้อไหน?", &["ก".into(), "ข".into()], Some("ก")).unwrap();
         db::set_setting(&a, "schedule", "{}").unwrap();
         db::set_setting(&a, "sync_dir", "X:/local-only").unwrap();
@@ -512,6 +531,7 @@ mod tests {
         let ideas = db::list_ideas(&b).unwrap();
         assert_eq!(ideas.len(), 1);
         assert_eq!(ideas[0].title, "ทดสอบ");
+        assert_eq!(ideas[0].scope, "work", "the set an idea belongs to travels with it");
         assert_eq!(db::questions(&b, None, true).unwrap()[0].options, vec!["ก", "ข"]);
         assert_eq!(db::snapshots_since(&b, 0).unwrap()[0].week_pct, 40.0);
         assert_eq!(db::get_setting(&b, "schedule").as_deref(), Some("{}"));

@@ -1,4 +1,5 @@
 <script>
+  import Icon from "../components/Icon.svelte";
   import { onMount } from "svelte";
   import { store } from "../lib/store.svelte.js";
   import { api, ago, INTENTS } from "../lib/api.js";
@@ -28,16 +29,16 @@
   <input class="search" bind:value={q} oninput={onInput} placeholder="ค้นหา เช่น บอร์ดเกม, rust, ราคา…" />
   <div class="row wrap">
     <button class="f" class:on={filter === "all"} onclick={() => (filter = "all")}>ทั้งหมด</button>
-    <button class="f" class:on={filter === "knowledge"} onclick={() => (filter = "knowledge")}>📚 บทความความรู้</button>
+    <button class="f" class:on={filter === "knowledge"} onclick={() => (filter = "knowledge")}><Icon name="book" /> บทความความรู้</button>
     {#each Object.entries(INTENTS) as [k, m]}
-      <button class="f" class:on={filter === k} onclick={() => (filter = k)}>{m.icon} {m.label}</button>
+      <button class="f" class:on={filter === k} onclick={() => (filter = k)}><Icon name={m.icon} /> {m.label}</button>
     {/each}
   </div>
   <div class="list">
     {#each shown as i (i.id)}
       <button class="item card" onclick={() => (store.openIdea = i.id)}>
         <div class="row"><b class="grow"><span class="idn">#{i.id}</span>{i.title}</b>{#if i.verdict}<span class="chip">{i.verdict}</span>{/if}<span class="faint small">{ago(i.updated)}</span></div>
-        <div class="row wrap"><Intents intents={i.intents} />{#if i.knowledge}<span class="chip">📚 ความรู้</span>{/if}</div>
+        <div class="row wrap"><Intents intents={i.intents} />{#if i.knowledge}<span class="chip"><Icon name="book" /> ความรู้</span>{/if}</div>
         {#if i.snippet}<div class="snip small">…{i.snippet}…</div>{:else if i.summary}<div class="muted small">{i.summary}</div>{/if}
       </button>
     {:else}

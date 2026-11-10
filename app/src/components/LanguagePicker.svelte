@@ -1,4 +1,5 @@
 <script>
+  import Icon from "./Icon.svelte";
   // 16 languages, each with its flag and a line in that language. Choosing one saves it at once and switches the whole
   // interface. Thai and English are built in; any other language is translated once by your own AI (it asks first).
   import { onMount } from "svelte";
@@ -39,7 +40,7 @@
       if (typeof document !== "undefined") document.documentElement.dir = isRtl(code) ? "rtl" : "ltr";
       await setUiLang(code);
       // the confirmation is in the language just chosen
-      toast(`${LANGS.find((l) => l.code === code)?.sample ?? ""} ✓`, "ok");
+      toast(LANGS.find((l) => l.code === code)?.sample ?? "", "ok");
     } catch (e) {
       toast(String(e), "err");
     }
@@ -71,7 +72,7 @@
     <button type="button" class="lang" class:on={current === l.code} role="radio" aria-checked={current === l.code} onclick={() => pick(l.code)} dir={l.rtl ? "rtl" : "ltr"}>
       <Flag code={l.code} size={20} />
       <span class="txt"><b>{l.name}</b><span class="sample">{l.sample}</span></span>
-      {#if current === l.code}<span class="tick">✓</span>{/if}
+      {#if current === l.code}<span class="tick"><Icon name="check" /></span>{/if}
     </button>
   {/each}
 </div>

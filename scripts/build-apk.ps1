@@ -21,18 +21,15 @@ if (-not (Test-Path $ts)) {
     Remove-Item $tmp -Recurse -Force
 }
 $tsPath = $ts.Replace("\", "/")
-@"
-org.gradle.jvmargs=-Xmx2g -Djavax.net.ssl.trustStore=$tsPath -Djavax.net.ssl.trustStorePassword=changeit
-systemProp.javax.net.ssl.trustStore=$tsPath
-systemProp.javax.net.ssl.trustStorePassword=changeit
-android.useAndroidX=false
-android.nonTransitiveRClass=true
-"@ | Set-Content "$m\gradle.properties" -Encoding ascii
+# the truststore path is machine-specific: pass it on the command line, never write it into the
+# committed gradle.properties (it would leak this folder's path into the public repo)
+$trust = @("-Dorg.gradle.jvmargs=-Xmx2g -Djavax.net.ssl.trustStore=$tsPath -Djavax.net.ssl.trustStorePassword=changeit",
+           "-Djavax.net.ssl.trustStore=$tsPath", "-Djavax.net.ssl.trustStorePassword=changeit")
 
 $gradle = Get-ChildItem "$env:USERPROFILE\.gradle\wrapper\dists\gradle-8.7-bin\*\gradle-8.7\bin\gradle.bat" | Select-Object -First 1
 if (-not $gradle) { throw "Gradle 8.7 not found - open mobile\ once in Android Studio to download it" }
 Push-Location $m
-& $gradle.FullName assembleRelease --no-daemon -q
+& $gradle.FullName assembleRelease --no-daemon -q @trust
 if ($LASTEXITCODE) { throw "gradle build failed" }
 Pop-Location
 New-Item -ItemType Directory -Force "$root\dist" | Out-Null

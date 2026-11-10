@@ -71,7 +71,7 @@ pub fn list(c: &rusqlite::Connection) -> Vec<AgentInfo> {
         .map(|(id, label, hint)| AgentInfo {
             id: id.to_string(),
             label: label.to_string(),
-            via: if *id == "claude" { "app" } else if orca && *id != "mistral" { "orca" } else { "terminal" }.into(),
+            via: if *id == "claude" || *id == "codex" || crate::agent_chat::KINDS.contains(id) { "app" } else if orca && *id != "mistral" { "orca" } else { "terminal" }.into(),
             hint: hint.to_string(),
         })
         .collect()
@@ -108,6 +108,14 @@ pub fn handoff(app: &AppHandle, id: i64, agent: &str, text: &str, ai: &crate::re
         }
         crate::remote::ask_with(app, id, text, ai)?;
         return Ok("ส่งให้ Claude แล้ว".into());
+    }
+    if agent == "codex" {
+        crate::codex_chat::ask(app, id, text, ai)?;
+        return Ok("ส่งให้ Codex แล้ว".into());
+    }
+    if crate::agent_chat::KINDS.contains(&agent) {
+        crate::agent_chat::ask(app, id, agent, text, ai)?;
+        return Ok(format!("ส่งให้ {agent} แล้ว"));
     }
     let st = app.state::<AppState>();
     let known = list(&st.db.lock());

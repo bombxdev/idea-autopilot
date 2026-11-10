@@ -89,6 +89,11 @@ nav button.on { color: var(--text); background: var(--card); }
 .step { font-size: 12px; padding: 3px 10px; border-radius: 8px; background: var(--bg2); color: var(--text3); }
 .step.done { background: var(--tealbg); color: var(--teal); } .step.now { outline: 1px solid var(--teal); color: var(--text); }
 .acts { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+.photos { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 0 0 8px; }
+.photo-add { font-size: 14px; padding: 8px 12px; border: 1px dashed var(--line); border-radius: 10px; color: var(--text2); cursor: pointer; }
+.thumb { position: relative; width: 56px; height: 56px; }
+.thumb img { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; display: block; }
+.thumb button { position: absolute; top: -6px; right: -6px; width: 22px; height: 22px; padding: 0; border-radius: 50%; font-size: 14px; line-height: 20px; }
 .acts button { flex: 1; min-width: 30%; font-size: 14px; }
 .md { font-size: 14.5px; line-height: 1.7; overflow-wrap: anywhere; }
 .md h1 { font-size: 19px; margin: 14px 0 6px; } .md h2 { font-size: 16px; margin: 18px 0 6px; padding-bottom: 4px; border-bottom: 1px solid var(--line); } .md h3 { font-size: 15px; }
@@ -197,16 +202,61 @@ async function gh(path) {
   return r.text();
 }
 async function ghJson(path) { const t = await gh(path); return t ? JSON.parse(t) : null; }
-async function send(cmd, args) {
-  if (MOCK) return;
-  const body = JSON.stringify({ cmd, args, from: "phone", ts: Math.floor(Date.now() / 1000) });
-  const name = `commands/phone-${Date.now()}-${cmd}.json`;
+async function ghPut(name, b64, message) {
   const r = await fetch(`https://api.github.com/repos/${cfg.repo}/contents/${name}`, {
     method: "PUT",
     headers: { Authorization: `Bearer ${cfg.token}`, Accept: "application/vnd.github+json" },
-    body: JSON.stringify({ message: `phone: ${cmd}`, content: btoa(unescape(encodeURIComponent(body))) }),
+    body: JSON.stringify({ message, content: b64 }),
   });
   if (!r.ok) throw new Error(r.status === 403 ? "token ไม่มีสิทธิ์เขียน (ต้องเป็น Contents: Read and write)" : `ส่งไม่สำเร็จ (${r.status})`);
+}
+async function send(cmd, args) {
+  if (MOCK) return;
+  const body = JSON.stringify({ cmd, args, from: "phone", ts: Math.floor(Date.now() / 1000) });
+  await ghPut(`commands/phone-${Date.now()}-${cmd}.json`, btoa(unescape(encodeURIComponent(body))), `phone: ${cmd}`);
+}
+
+// ---------- photos from the gallery ----------
+// shrunk on the phone (≤1600 px, JPEG) so they travel fast, put in uploads/ of the repo, and named in the command;
+// the PC attaches them to the idea / message exactly like a file dropped on the desktop, then removes them
+const photos = {}; // "add" | idea id -> [{ name, b64, thumb }]
+function shrink(file) {
+  return new Promise((ok, bad) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, 1600 / Math.max(img.width, img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      const data = c.toDataURL("image/jpeg", 0.82);
+      const t = document.createElement("canvas"), tk = 96 / Math.max(c.width, c.height);
+      t.width = Math.round(c.width * tk); t.height = Math.round(c.height * tk);
+      t.getContext("2d").drawImage(c, 0, 0, t.width, t.height);
+      const base = (file.name || "photo").replace(/\.[^.]+$/, "").replace(/[^\w-]+/g, "_").slice(0, 40) || "photo";
+      ok({ name: `${base}.jpg`, b64: data.split(",")[1], thumb: t.toDataURL("image/jpeg", 0.7) });
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); bad(new Error("เปิดรูปนี้ไม่ได้")); };
+    img.src = url;
+  });
+}
+async function uploadPhotos(key) {
+  const list = photos[key] || [];
+  const paths = [];
+  for (let n = 0; n < list.length; n++) {
+    const p = `uploads/phone-${Date.now()}${n}-${list[n].name}`;
+    if (!MOCK) await ghPut(p, list[n].b64, "phone: photo");
+    paths.push(p);
+  }
+  return paths;
+}
+function photoRow(key) {
+  const list = photos[key] || [];
+  return `<div class="photos">
+    <label class="photo-add">📎 แนบรูป<input type="file" accept="image/*" multiple data-pick="${key}" hidden></label>
+    ${list.map((p, n) => `<span class="thumb"><img src="${p.thumb}" alt=""><button data-unpick="${key}" data-n="${n}" aria-label="เอาออก">×</button></span>`).join("")}
+  </div>`;
 }
 
 async function refresh(quiet) {
@@ -214,12 +264,12 @@ async function refresh(quiet) {
   loading = true;
   $("#refresh").textContent = "…";
   try {
-    const [live, ideas, questions, runs, leader, settings] = await Promise.all([
+    const [live, ideas, questions, runs, leader, settings, models] = await Promise.all([
       ghJson("state/live.json"), ghJson("state/ideas.json"), ghJson("state/questions.json"), ghJson("state/runs.json"), ghJson("leader.json"),
-      ghJson("state/settings.json"),
+      ghJson("state/settings.json"), ghJson("state/models.json"),
     ]);
     data = {
-      live, leader,
+      live, leader, models: models || { accounts: [] },
       settings: Object.fromEntries((settings || []).map((r) => [r.key, r.value])),
       ideas: (ideas || []).filter((i) => i.status !== "deleted")
         .map((i) => ({ ...i, intents: parseList(i.intents), recipe: parseList(i.recipe), needs: parseList(i.needs) }))
@@ -229,7 +279,7 @@ async function refresh(quiet) {
     };
     for (const q of data.questions) if (q.answer && sentAnswers[q.id]) delete sentAnswers[q.id];
     for (const k of Object.keys(pendingRemote)) if (!!sessionOf(Number(k)) === pendingRemote[k]) delete pendingRemote[k];
-    for (const k of Object.keys(pendingAsk)) if ((sessionOf(Number(k))?.feed || []).some((f) => f.text.includes(pendingAsk[k].slice(0, 40)))) delete pendingAsk[k];
+    for (const k of Object.keys(pendingAsk)) if ((sessionOf(Number(k))?.feed || []).some((f) => squash(f.text).includes(askKey(pendingAsk[k])))) delete pendingAsk[k];
     save("sent", sentAnswers);
     save("cache", data);
     fetchedAt = Date.now();
@@ -260,7 +310,7 @@ function renderNow(L, d, stale) {
   const cur = L.current;
   const cls = cur ? "run" : L.paused ? "stop" : d.allow ? "ok" : "wait";
   const head = cur
-    ? `<div class="muted small">กำลังทำ · ${esc(STAGES[cur.stage] || cur.stage)} · เริ่ม ${ago(cur.started)}</div><h2 style="margin:2px 0 0">${esc(cur.title)}</h2>`
+    ? `<div class="muted small">กำลังทำ · ${esc(STAGES[cur.stage] || cur.stage)} · เริ่ม ${ago(cur.started)}${cur.model ? ` · 🤖 ${esc([cur.account || cur.provider, cur.model].filter(Boolean).join(" · "))}` : ""}</div><h2 style="margin:2px 0 0">${esc(cur.title)}</h2>`
     : `<h2 style="margin:0">${L.paused ? "พักบอทอยู่" : d.allow ? "พร้อมทำงาน · คิวว่าง" : "บอทรออยู่"}</h2><div class="muted small">${esc(d.reason || "ยังไม่มีข้อมูลจากคอมฯ")}</div>`;
   const log = cur && L.live_log?.length
     ? `<div class="log">${L.live_log.slice(-8).map((l) => `<div class="${isStep(l) ? "tool" : ""}">${esc(l)}</div>`).join("")}</div>` : "";
@@ -290,6 +340,7 @@ function renderNow(L, d, stale) {
     ${(L.sessions || []).length ? `<div class="card" style="border-color:var(--teal)"><b>🛠 AI กำลังทำงานกับไอเดีย</b>
       ${(L.sessions || []).map((x) => `<div class="run" data-open="${x.idea_id}"><div style="flex:1;min-width:0">
         <div class="small"><b>${esc(x.name)}</b> <span class="chip ${(SESS[x.status] || SESS.idle)[1]}">${(SESS[x.status] || SESS.idle)[0]}</span></div>
+        ${x.ai ? `<div class="faint small">🤖 ${esc(x.ai)}</div>` : ""}
         <div class="small muted ellipsis">${esc(x.feed?.at(-1)?.text || "")}</div></div></div>`).join("")}
       <button data-url="https://claude.ai/code" class="primary" style="width:100%;margin-top:10px">เปิดแอป Claude</button></div>` : ""}
     ${queue.length ? `<div class="card"><h3>คิวถัดไป</h3>${queue.map((i) => `
@@ -388,7 +439,9 @@ async function openIdea(id) {
     <div class="steps">${i.recipe.map((s, n) => `<span class="step ${n < i.stage_idx || ["done", "ready"].includes(i.status) ? "done" : n === i.stage_idx && i.status === "active" ? "now" : ""}">${esc(STAGES[s] || s)}</span>`).join("")}</div>
     ${i.summary ? `<p class="muted">${esc(i.summary)}</p>` : ""}
     ${i.needs.length ? `<div class="card" style="background:var(--bluebg)"><b class="small">ต้องการจากคุณ</b><ul class="small" style="margin:6px 0 0;padding-left:18px">${i.needs.map((n) => `<li>${esc(n)}</li>`).join("")}</ul></div>` : ""}
+    ${aiCard(i)}
     <div class="acts">
+      ${["done", "ready"].includes(i.status) ? "" : `<button data-act="run_now" data-id="${id}" class="primary">⚡ ทำเลยตอนนี้</button>`}
       <button data-act="go" data-id="${id}">👍 ไปต่อ</button><button data-act="deeper" data-id="${id}">🔍 ขุดลึก</button>
       <button data-act="alt" data-id="${id}">🔀 ลองอีกแนว</button>${["done", "ready"].includes(i.status) ? "" : `<button data-act="stop" data-id="${id}">✂️ พอแค่นี้</button>`}
     </div>
@@ -402,34 +455,74 @@ async function openIdea(id) {
   } catch (e) { const el = $("#report"); if (el) el.textContent = "โหลดรายงานไม่ได้"; }
 }
 
-const agents = () => data.live?.agents || [{ id: "claude", label: "Claude", via: "app" }];
+const accts = () => data.models?.accounts || [];
+const acctOf = (id) => accts().find((a) => a.id === id);
+const acctName = (id) => acctOf(id)?.label || id || "";
+const aiOf = (id) => (data.live?.idea_ai || {})[String(id)] || { account: "", model: "", effort: "" };
+// "OpenRouter (ผ่าน OpenCode)": the account, and the program when it is a different one
+const sendTo = (id) => { const a = acctOf(id); if (!a) return "AI"; return a.program && a.program.toLowerCase() !== a.label.toLowerCase() ? `${a.label} (ผ่าน ${a.program})` : a.label; };
+let aiDraft = {}; // idea id -> { account, model, effort } being edited
+function aiCard(i) {
+  const cur = aiDraft[i.id] || aiOf(i.id);
+  const a = acctOf(cur.account);
+  const models = a?.models || [];
+  const efforts = data.models?.efforts || [];
+  const label = cur.account ? `${acctName(cur.account)}${cur.model ? " · " + cur.model : ""}${cur.effort ? " · effort " + cur.effort : ""}` : "อัตโนมัติ";
+  if (!aiDraft[i.id]) return `<div class="card"><div style="display:flex;gap:8px;align-items:center"><span class="small" style="flex:1">🤖 AI สำหรับไอเดียนี้: <b>${esc(label)}</b></span><button data-ai-edit="${i.id}">เปลี่ยน</button></div></div>`;
+  return `<div class="card"><b class="small">🤖 AI สำหรับไอเดียนี้</b>
+    <select data-ai-field="account" data-id="${i.id}" style="margin-top:8px"><option value="">อัตโนมัติ (บัญชีที่บอทใช้อยู่)</option>${accts().map((x) => `<option value="${esc(x.id)}" ${x.id === cur.account ? "selected" : ""}>${esc(x.label)} · ${esc(x.program || x.kind)}</option>`).join("")}</select>
+    ${cur.account ? `<select data-ai-field="model" data-id="${i.id}" style="margin-top:8px"><option value="">โมเดล: auto (โปรแกรมเลือกให้)</option>${models.map((m) => `<option value="${esc(m)}" ${m === cur.model ? "selected" : ""}>${esc(m)}${/:free$|-free$/.test(m) ? " · ฟรี" : ""}</option>`).join("")}${cur.model && !models.includes(cur.model) ? `<option value="${esc(cur.model)}" selected>${esc(cur.model)} (ไม่อยู่ในรายการที่ผ่านการตรวจ)</option>` : ""}</select>
+      ${a?.hidden ? `<div class="faint small" style="margin-top:4px">ซ่อนไว้ ${a.hidden} โมเดลที่ยังไม่ผ่านการตรวจงานบอท (แชตได้อย่างเดียว/รอตรวจ) — ดูรายชื่อได้ที่คอมฯ</div>` : ""}
+      ${a?.effort ? `<select data-ai-field="effort" data-id="${i.id}" style="margin-top:8px"><option value="">effort: auto</option>${efforts.map((e) => `<option value="${e}" ${e === cur.effort ? "selected" : ""}>effort: ${e}</option>`).join("")}</select>` : ""}` : ""}
+    <div class="acts" style="margin-bottom:0"><button data-ai-cancel="${i.id}">ยกเลิก</button><button class="primary" data-ai-save="${i.id}">บันทึก</button></div>
+  </div>`;
+}
 let pendingAsk = {}; // idea id -> instruction sent from the phone, until the PC shows it
+// how a sent instruction is spotted in the feed: without a leading /skill (the PC shows "[skill name] …") and spaces
+const squash = (t) => String(t || "").replace(/\s+/g, "");
+const askKey = (t) => squash(String(t).replace(/(^|\s)\/[\w-]+(?=\s|$)/g, " ")).slice(0, 25);
 function remoteCard(i) {
   const r = sessionOf(i.id);
   const pend = pendingAsk[i.id];
   const st = r ? SESS[r.status] || SESS.idle : null;
   const feed = (r?.feed || []).slice(-10);
-  const msg = pend ? "ส่งแล้ว — คอมฯ จะรับภายใน ~1-2 นาที แล้ว AI จะเริ่มทำ"
-    : r ? `ส่งเข้า session เดิม “${r.name}” · อัปเดตทุก ~30 วินาที`
+  const msg = pend ? "ส่งแล้ว — คอมฯ จะรับภายใน ~30 วินาที แล้ว AI จะเริ่มทำ"
+    : r ? `ส่งเข้า session เดิม “${r.name}” · อัปเดตทุก ~15 วินาที`
     : `จะเปิด session “Idea#${i.id} : …” ให้ (คุยต่อจากครั้งก่อน ถ้าเคยเปิด)`;
   return `<div class="card ask" style="${r ? "border-color:var(--teal)" : ""}">
     <div style="display:flex;gap:8px;align-items:center"><b style="flex:1">🛠 สั่ง AI แก้ / ทำต่อ</b>${st ? `<span class="chip ${st[1]}">${st[0]}</span>` : ""}</div>
+    ${r?.ai ? `<div class="faint small" style="margin:-2px 0 6px">🤖 คุยกับ ${esc(r.ai)}</div>` : ""}
     <textarea id="ask-text" rows="3" placeholder="บอกสิ่งที่อยากให้แก้ เช่น “ทำปุ่มให้ใหญ่ขึ้น และเพิ่มโหมดมืด”"></textarea>
-    ${agents().length > 1 ? `<select id="ask-agent" style="width:100%;margin-bottom:8px">${agents().map((a) => `<option value="${a.id}">${esc(a.label)}${a.via === "orca" ? " · เปิดใน Orca บนคอมฯ" : ""}</option>`).join("")}</select>` : ""}
-    <button class="primary" data-ask="${i.id}" style="width:100%">ส่งให้ AI</button>
+    ${photoRow(i.id)}
+    ${accts().length > 1 ? `<select id="ask-acct" data-sendto="1" style="width:100%;margin-bottom:8px"><option value="">AI ของไอเดียนี้ (${esc(acctName(aiOf(i.id).account) || "อัตโนมัติ")})</option>${accts().map((a) => `<option value="${esc(a.id)}">${esc(a.label)}${a.program && a.program.toLowerCase() !== a.label.toLowerCase() ? ` (ผ่าน ${esc(a.program)})` : ""}</option>`).join("")}</select>` : ""}
+    <button class="primary" id="ask-btn" data-ask="${i.id}" style="width:100%">ส่งให้ ${esc(sendTo(aiOf(i.id).account))}</button>
     <div class="faint small" style="margin-top:6px">${esc(msg)}</div>
     ${feed.length ? `<div class="log feed">${feed.map((f) => `<div class="${feedKind(f.text)}"><span class="faint">${hm(f.ts)}</span> ${esc(f.text)}</div>`).join("")}</div>` : ""}
     ${r ? `<div class="acts" style="margin:10px 0 0"><button data-url="https://claude.ai/code">เปิดในแอป Claude</button><button data-remote="${i.id}" data-on="0">ปิด session</button></div>` : ""}
   </div>`;
 }
 
+let addAi = { account: "", model: "", effort: "" }; // AI of the idea being written
+function aiSelects(cur, attr) {
+  const a = acctOf(cur.account);
+  const efforts = data.models?.efforts || [];
+  return `<select ${attr}="account"><option value="">AI: อัตโนมัติ (บัญชีที่บอทใช้อยู่)</option>${accts().map((x) => `<option value="${esc(x.id)}" ${x.id === cur.account ? "selected" : ""}>${esc(x.label)} · ${esc(x.program || x.kind)}</option>`).join("")}</select>
+    ${cur.account ? `<select ${attr}="model" style="margin-top:8px"><option value="">โมเดล: auto (โปรแกรมเลือกให้)</option>${(a?.models || []).map((m) => `<option value="${esc(m)}" ${m === cur.model ? "selected" : ""}>${esc(m)}${/:free$|-free$/.test(m) ? " · ฟรี" : ""}</option>`).join("")}</select>
+      ${a?.hidden ? `<div class="faint small" style="margin-top:4px">ซ่อนไว้ ${a.hidden} โมเดลที่ยังไม่ผ่านการตรวจงานบอท — ดูรายชื่อได้ที่คอมฯ</div>` : ""}
+      ${a?.effort ? `<select ${attr}="effort" style="margin-top:8px"><option value="">effort: auto</option>${efforts.map((e) => `<option value="${e}" ${e === cur.effort ? "selected" : ""}>effort: ${e}</option>`).join("")}</select>` : ""}` : ""}`;
+}
 function openAdd() {
+  const text = $("#idea-text")?.value || "";
   overlay(`<h2>จดไอเดีย</h2>
     <textarea id="idea-text" rows="4" placeholder="พิมพ์บรรทัดเดียวพอ เช่น อยากรู้ว่าทำแอปจองคิวขายได้ไหม"></textarea>
-    <div class="faint small" style="margin:6px 0 12px">! นำหน้า = ด่วน · ? นำหน้า = ขอแค่ research</div>
+    <div class="faint small" style="margin:6px 0 10px">! นำหน้า = ด่วน · ? นำหน้า = ขอแค่ research</div>
+    ${photoRow("add")}
+    <div style="margin:4px 0 12px">${aiSelects(addAi, "data-add-field")}</div>
     <div id="idea-err" class="err"></div>
     <button class="primary" id="idea-send" style="width:100%">ส่งเข้าคิว</button>`);
-  setTimeout(() => $("#idea-text")?.focus(), 150);
+  const box = $("#idea-text");
+  if (box) box.value = text;
+  if (!text) setTimeout(() => $("#idea-text")?.focus(), 150);
 }
 
 function openOther(qid) {
@@ -460,7 +553,7 @@ document.addEventListener("click", async (e) => {
   else if (t.dataset.answer) {
     if (t.dataset.other) openOther(Number(t.dataset.answer)); else answer(Number(t.dataset.answer), t.dataset.val);
   } else if (t.dataset.act) {
-    try { await send("action", { id: Number(t.dataset.id), action: t.dataset.act }); toast("ส่งคำสั่งแล้ว — คอมฯ จะทำภายใน ~5 นาที"); closeOverlay(); }
+    try { await send("action", { id: Number(t.dataset.id), action: t.dataset.act }); toast(t.dataset.act === "run_now" ? "ส่งแล้ว — คอมฯ จะเริ่มทำทันทีที่รับคำสั่ง (~1-5 นาที)" : "ส่งคำสั่งแล้ว — คอมฯ จะทำภายใน ~5 นาที"); closeOverlay(); }
     catch (err) { toast(err.message); }
   } else if (t.dataset.cmd) {
     try { await send(t.dataset.cmd, null); toast(t.dataset.cmd === "pause" ? "ส่งคำสั่งพักบอทแล้ว" : "ส่งคำสั่งให้ทำต่อแล้ว"); }
@@ -469,10 +562,15 @@ document.addEventListener("click", async (e) => {
     const id = Number(t.dataset.ask), v = $("#ask-text")?.value.trim();
     if (!v) { toast("พิมพ์สิ่งที่อยากให้ AI ทำก่อน"); return; }
     t.disabled = true;
-    const ag = $("#ask-agent")?.value || "claude";
+    const account = $("#ask-acct")?.value || "";
     try {
-      if (ag === "claude") { await send("ask", { id, text: v }); pendingAsk[id] = v; toast("ส่งให้ AI แล้ว"); }
-      else { await send("handoff", { id, agent: ag, text: v }); toast("ส่งแล้ว — คอมฯ จะเปิดใน Orca ภายใน ~2 นาที"); }
+      // every AI is answered inside the app on the PC (as in the desktop chat); the PC picks the idea's AI when none is chosen
+      const n = (photos[id] || []).length;
+      if (n) t.textContent = `กำลังส่งรูป ${n} รูป…`;
+      const files = await uploadPhotos(id);
+      await send("ask", { id, text: v, ai: account ? { account } : null, files });
+      photos[id] = [];
+      pendingAsk[id] = v; toast(`ส่งให้ ${sendTo(account || aiOf(id).account)} แล้ว${n ? ` พร้อมรูป ${n} รูป` : ""}`);
       openIdea(id);
     }
     catch (err) { toast(err.message); t.disabled = false; }
@@ -480,6 +578,22 @@ document.addEventListener("click", async (e) => {
     const id = Number(t.dataset.remote), on = t.dataset.on === "1";
     try { await send("remote", { id, on }); pendingRemote[id] = on; toast(on ? "ส่งคำสั่งเปิด session แล้ว" : "ส่งคำสั่งปิดแล้ว"); openIdea(id); }
     catch (err) { toast(err.message); }
+  } else if (t.dataset.unpick) {
+    const k = t.dataset.unpick, key = k === "add" ? "add" : Number(k);
+    (photos[key] || []).splice(Number(t.dataset.n), 1);
+    if (key === "add") openAdd(); else redrawIdea(key);
+  } else if (t.dataset.aiEdit) {
+    const id = Number(t.dataset.aiEdit); aiDraft[id] = { ...aiOf(id) }; openIdea(id);
+  } else if (t.dataset.aiCancel) {
+    const id = Number(t.dataset.aiCancel); delete aiDraft[id]; openIdea(id);
+  } else if (t.dataset.aiSave) {
+    const id = Number(t.dataset.aiSave), d = aiDraft[id];
+    t.disabled = true;
+    try {
+      await send("idea_ai", { id, account: d.account || "", model: d.model || "", effort: d.effort || "" });
+      if (data.live) { data.live.idea_ai = { ...(data.live.idea_ai || {}), [String(id)]: d }; }
+      delete aiDraft[id]; toast("บันทึกแล้ว — มีผลกับรอบถัดไป (คอมฯ รับภายใน ~5 นาที)"); openIdea(id);
+    } catch (err) { toast(err.message); t.disabled = false; }
   } else if (t.dataset.url) {
     location.href = t.dataset.url;
   } else if (t.dataset.toggle) {
@@ -493,8 +607,16 @@ document.addEventListener("click", async (e) => {
     const v = $("#idea-text").value.trim();
     if (!v) { $("#idea-err").textContent = "พิมพ์ไอเดียก่อน"; return; }
     t.disabled = true;
-    try { await send("add", { text: v }); closeOverlay(); toast("ส่งแล้ว — จะเข้าคิวภายใน ~5 นาที"); }
-    catch (err) { $("#idea-err").textContent = err.message; t.disabled = false; }
+    try {
+      const n = (photos.add || []).length;
+      if (n) t.textContent = `กำลังส่งรูป ${n} รูป…`;
+      const files = await uploadPhotos("add");
+      const ai = addAi.account ? { ...addAi } : null;
+      await send("add", { text: v, files, ai });
+      photos.add = []; addAi = { account: "", model: "", effort: "" };
+      closeOverlay(); toast(`ส่งแล้ว${n ? ` พร้อมรูป ${n} รูป` : ""} — จะเข้าคิวภายใน ~5 นาที`);
+    }
+    catch (err) { $("#idea-err").textContent = err.message; t.disabled = false; t.textContent = "ส่งเข้าคิว"; }
   } else if (t.id === "other-send") {
     const v = $("#other-text").value.trim();
     if (!v) { $("#other-err").textContent = "พิมพ์คำตอบก่อน"; return; }
@@ -504,6 +626,41 @@ document.addEventListener("click", async (e) => {
   } else if (t.id === "f-go") connect();
 });
 document.addEventListener("input", (e) => { if (e.target.id === "idea-text") $("#idea-err").textContent = ""; });
+// redraw the idea sheet without losing what was typed in the chat box
+function redrawIdea(id) {
+  const txt = $("#ask-text")?.value;
+  openIdea(id);
+  if (txt) setTimeout(() => { const b = $("#ask-text"); if (b) b.value = txt; }, 0);
+}
+document.addEventListener("change", async (e) => {
+  const el = e.target;
+  if (el.dataset.pick) {
+    const k = el.dataset.pick, key = k === "add" ? "add" : Number(k);
+    const files = [...(el.files || [])];
+    photos[key] = photos[key] || [];
+    for (const f of files.slice(0, 6)) {
+      try { photos[key].push(await shrink(f)); } catch (err) { toast(err.message); }
+    }
+    if (files.length > 6) toast("แนบได้ครั้งละไม่เกิน 6 รูป");
+    if (key === "add") openAdd(); else redrawIdea(key);
+    return;
+  }
+  if (el.dataset.addField) {
+    addAi[el.dataset.addField] = el.value;
+    if (el.dataset.addField === "account") { addAi.model = ""; addAi.effort = ""; }
+    openAdd();
+    return;
+  }
+  if (el.dataset.aiField) {
+    const id = Number(el.dataset.id), d = aiDraft[id] || (aiDraft[id] = { ...aiOf(id) });
+    d[el.dataset.aiField] = el.value;
+    if (el.dataset.aiField === "account") { d.model = ""; d.effort = ""; }
+    // keep what was typed in the chat box while the sheet redraws
+    const txt = $("#ask-text")?.value; openIdea(id); if (txt) setTimeout(() => { const b = $("#ask-text"); if (b) b.value = txt; }, 0);
+  } else if (el.dataset.sendto) {
+    const b = $("#ask-btn"); if (b) b.textContent = `ส่งให้ ${sendTo(el.value || aiOf(Number(b.dataset.ask)).account)}`;
+  }
+});
 
 async function connect() {
   const repo = $("#f-repo").value.trim().replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "").replace(/\/$/, "");
@@ -534,7 +691,12 @@ function fitNav() {
 }
 window.addEventListener("resize", fitNav);
 new ResizeObserver(fitNav).observe(document.querySelector("nav"));
-setInterval(() => { if (!document.hidden && cfg.token) refresh(true); }, 60000);
+// every 60 s; every 15 s while something sent is on its way or a chat is open (ISSUE-064)
+setInterval(() => {
+  if (document.hidden || !cfg.token) return;
+  const live = Object.keys(pendingAsk).length || Object.keys(pendingRemote).length || (data.live?.sessions || []).length;
+  if (live || Date.now() - fetchedAt >= 58000) refresh(true);
+}, 15000);
 document.addEventListener("visibilitychange", () => { if (!document.hidden && cfg.token && Date.now() - fetchedAt > 20000) refresh(true); });
 start();
 </script>

@@ -1,13 +1,17 @@
 <script>
-  import { store, stageLabel, refresh, toast, progress, stepGroups } from "../lib/store.svelte.js";
+  import Icon from "./Icon.svelte";
+  import { store, stageLabel, refresh, toast, progress, stepGroups, fixing } from "../lib/store.svelte.js";
   import { api, ago, clock, STATUS } from "../lib/api.js";
   import Markdown from "./Markdown.svelte";
   import Intents from "./Intents.svelte";
   import Question from "./Question.svelte";
   import Actions from "./Actions.svelte";
   import AskAI from "./AskAI.svelte";
+  import Requests from "./Requests.svelte";
   import AttachList from "./AttachList.svelte";
   import IdeaAi from "./IdeaAi.svelte";
+  import Scope from "./Scope.svelte";
+  import LiveLog from "./LiveLog.svelte";
 
   let { id } = $props();
   let data = $state(null);
@@ -24,6 +28,15 @@
     try {
       await api.ideaAiSet(id, v.account, v.model, v.effort);
       toast("บันทึกการเลือก AI ของไอเดียนี้แล้ว", "ok", 1800);
+      refresh();
+    } catch (e) {
+      toast(String(e), "err");
+    }
+  }
+  async function saveScope(v) {
+    try {
+      await api.ideaScopeSet(id, v);
+      toast(v === "work" ? "ย้ายไปชุดงานแล้ว — export ครั้งถัดไปจะเก็บแยกจากเรื่องส่วนตัว" : "ย้ายไปชุดส่วนตัวแล้ว", "ok", 2500);
       refresh();
     } catch (e) {
       toast(String(e), "err");
@@ -68,13 +81,28 @@
       { key: "plan", label: "แผน", text: f.plan },
       { key: "progress", label: "ความคืบหน้า", text: f.progress },
       { key: "idea", label: "ไอเดียเดิม", text: f.idea },
-      { key: "issues", label: "⚠ ปัญหา/วิธีแก้", text: f.issues },
+      { key: "issues", icon: "warning", label: "ปัญหา/วิธีแก้", text: f.issues },
     ].filter((t) => t.text),
   );
   $effect(() => {
     if (tabs.length && !tabs.find((t) => t.key === tab) && tab !== "history") tab = tabs[0].key;
   });
   const running = $derived(store.state?.current?.idea_id === id);
+  // when nothing runs: how the last run ended and what the bot is waiting for, so a short run never leaves a blank
+  const lastRun = $derived((data?.runs ?? []).reduce((a, r) => (!a || r.started > a.started ? r : a), null));
+  const pinnedAcct = $derived(store.state?.idea_ai?.[id]?.account || "");
+  const waitText = $derived.by(() => {
+    const st = store.state;
+    if (!st) return "";
+    if (st.force === id) return "อยู่ในคิว “ทำเลย” — เริ่มเมื่องานที่รันอยู่จบ";
+    if (st.paused) return "บอทถูก Pause อยู่";
+    const lim = pinnedAcct && st.account_limits?.[pinnedAcct];
+    if (lim) return `บัญชี ${pinnedAcct} ติดลิมิต — รอถึง ${clock(lim.until)} (${lim.why})`;
+    const d = (pinnedAcct && st.accounts?.find((a) => a.id === pinnedAcct)?.decision) || st.decision;
+    if (!d) return "";
+    return d.allow ? "บอทจะหยิบงานขั้นถัดไปของไอเดียนี้ตามลำดับคิว" : `บอทรอ: ${d.reason}`;
+  });
+  const RESULT = { ok: "สำเร็จ", error: "ไม่สำเร็จ", timeout: "หมดเวลา", cancelled: "ถูกยกเลิก", rate_limited: "ติดลิมิต" };
   const powerOn = $derived(store.state?.power?.mode === "all" || (store.state?.power?.ideas ?? []).includes(id));
   async function togglePower() {
     await api.powerSetIdea(id, !powerOn);
@@ -86,7 +114,8 @@
 
   async function act(a) {
     await api.action(id, a);
-    toast({ archive: "เก็บแล้ว", restore: "กู้คืนแล้ว", delete: "ลบแล้ว", urgent: "เปลี่ยนความด่วนแล้ว" }[a] ?? "ok");
+    toast({ archive: "เก็บแล้ว", restore: "กู้คืนแล้ว", delete: "ลบแล้ว", urgent: "เปลี่ยนความด่วนแล้ว", pin: "ปักหมุดไว้บนสุดของคอลัมน์แล้ว", unpin: "เลิกปักหมุดแล้ว",
+      fixing: "ย้ายไปช่องกำลังสร้าง — กด “ใช้ได้แล้ว” เมื่อแก้เสร็จ", works: "ย้ายกลับไปพร้อมใช้แล้ว" }[a] ?? "ok");
     if (a === "delete") store.openIdea = null;
     refresh();
   }
@@ -100,20 +129,28 @@
       <div class="row">
         <span class="idn big" title="เลขไอเดีย ใช้อ้างอิงเวลาสั่งงาน เช่น ia ask {id} …">Idea #{id}</span>
         <span class="chip">{STATUS[idea.status]?.label ?? idea.status}</span>
-        {#if running}<span class="chip run">● กำลังทำ</span>
-        {:else if store.state?.force === id}<span class="chip run">⚡ คิวถัดไป — รองานที่รันอยู่จบ</span>{/if}
+        {#if running}<span class="chip run"><Icon name="dot" size="0.8em" /> กำลังทำ</span>
+        {:else if store.state?.force === id}<span class="chip run"><Icon name="bolt" /> คิวถัดไป — รองานที่รันอยู่จบ</span>{/if}
         <span class="grow"></span>
-        <button class="ghost small" onclick={startEdit} title="แก้ข้อความไอเดีย (เช่น กด Enter เร็วไป)">✏️ แก้ข้อความ</button>
-        <button class="ghost small" onclick={() => api.openFolder(id)} title="เปิดโฟลเดอร์งาน">📁</button>
+        <button class="ghost small" onclick={startEdit} title="แก้ข้อความไอเดีย (เช่น กด Enter เร็วไป)"><Icon name="pencil" /> แก้ข้อความ</button>
+        <button class="ghost small" onclick={() => api.openFolder(id)} title="เปิดโฟลเดอร์งาน"><Icon name="folder" /></button>
         <button class="ghost small" class:on-power={powerOn} disabled={store.state?.power?.mode === "all"} onclick={togglePower}
-          title="โหมดเต็มที่: ใช้โมเดลแรงสุด + effort สูงสุด และทำได้แม้ในเวลางาน (ใช้โควต้าที่กันไว้ให้งานคุณด้วย)">{store.state?.power?.mode === "all" ? "🚀 เต็มที่ (ทั้งหมด)" : powerOn ? "🚀 เต็มที่: เปิด" : "🚀 เต็มที่"}</button>
-        <button class="ghost small" onclick={() => act("urgent")} title="ด่วน = ขึ้นหัวคิว (ยังรอโควต้า/เวลาว่างตามปกติ) ถ้าอยากเริ่มทันทีให้กด ⚡ ทำเลยตอนนี้ ใต้การ์ด">{idea.priority > 0 ? "⬇ ไม่ด่วน" : "⚡ ด่วน"}</button>
+          title="โหมดเต็มที่: ใช้โมเดลแรงสุด + effort สูงสุด และทำได้แม้ในเวลางาน (ใช้โควต้าที่กันไว้ให้งานคุณด้วย)"><Icon name="rocket" /> {store.state?.power?.mode === "all" ? "เต็มที่ (ทั้งหมด)" : powerOn ? "เต็มที่: เปิด" : "เต็มที่"}</button>
+        <button class="ghost small" class:on-pin={idea.pinned} onclick={() => act(idea.pinned ? "unpin" : "pin")} title="ปักหมุด = ไอเดียที่โฟกัสอยู่ ขึ้นบนสุดของคอลัมน์ในบอร์ด">📌 {idea.pinned ? "เลิกปักหมุด" : "ปักหมุด"}</button>
+        {#if idea.status === "ready" || idea.status === "done"}
+          {#if idea.fixing}
+            <button class="ghost small" onclick={() => act("works")} title="ลองแล้วใช้งานได้ — ย้ายกลับไปช่องพร้อมใช้/จบแล้ว">✓ ใช้ได้แล้ว</button>
+          {:else}
+            <button class="ghost small" onclick={() => act("fixing")} title="ยังใช้งานไม่ได้จริง — ย้ายไปช่องกำลังสร้างจนกว่าจะกด “ใช้ได้แล้ว”">🔧 ยังต้องแก้</button>
+          {/if}
+        {/if}
+        <button class="ghost small" onclick={() => act("urgent")} title="ด่วน = ขึ้นหัวคิว (ยังรอโควต้า/เวลาว่างตามปกติ) ถ้าอยากเริ่มทันทีให้กด “ทำเลยตอนนี้” ใต้การ์ด"><Icon name={idea.priority > 0 ? "arrowDown" : "bolt"} /> {idea.priority > 0 ? "ไม่ด่วน" : "ด่วน"}</button>
         {#if idea.status === "archived"}
           <button class="ghost small" onclick={() => act("restore")}>กู้คืน</button>
         {:else}
           <button class="ghost small" onclick={() => act("archive")}>เก็บ</button>
         {/if}
-        <button class="ghost small" onclick={() => (store.openIdea = null)}>✕</button>
+        <button class="ghost small" onclick={() => (store.openIdea = null)}><Icon name="close" /></button>
       </div>
       {#if editing}
         <textarea class="edit" rows="5" bind:value={draft} onkeydown={(e) => e.key === "Escape" && (editing = false)}></textarea>
@@ -131,19 +168,35 @@
       </div>
       {#if idea.summary}<p class="summary">{idea.summary}</p>{/if}
       <div class="row small"><div class="pb grow"><i style="width:{progress(idea)}%"></i></div><b>{progress(idea)}%</b></div>
+      {#if fixing(idea)}<div class="small faint">🔧 กำลังแก้ตามที่สั่ง — % นี้นับเฉพาะขั้นที่บอทเดินมาแล้ว งานที่สั่งในแชตดูความคืบหน้าในกล่องแชตด้านล่าง</div>{/if}
       {#if idea.recipe.length}
         <div class="stepper">
           {#each stepGroups(idea.recipe, idea.stage_idx, idea.status === "active") as g, gi}
             <div class="st" class:done={g.done} class:now={g.now}>
-              <span class="n">{g.done ? "✓" : gi + 1}</span>{stageLabel(g.key)}{#if g.count > 1} ×{g.count}{/if}
+              <span class="n">{#if g.done}<Icon name="check" />{:else}{gi + 1}{/if}</span>{stageLabel(g.key)}{#if g.count > 1} ×{g.count}{/if}
             </div>
           {/each}
         </div>
       {/if}
+      <div class="row small"><span class="faint">เก็บในชุด</span><Scope value={idea.scope ?? "personal"} onchange={saveScope} /></div>
       <IdeaAi bind:value={aiVal} onchange={saveAi} />
       <Actions {idea} />
+      <!-- the bot's run of this idea, live (the same panel as on the morning page), for every AI -->
+      {#if running}<LiveLog />
+      {:else if idea.status === "active" || idea.status === "inbox"}
+        <div class="botstate small">
+          {#if lastRun}
+            <div><span class="faint">รอบล่าสุด:</span> {stageLabel(lastRun.stage)} · <b class="st-{lastRun.status}">{RESULT[lastRun.status] ?? lastRun.status}</b>
+              {#if lastRun.ended} · จบ {clock(lastRun.ended)} ({Math.max(1, Math.round((lastRun.ended - lastRun.started) / 60))} นาที){/if}
+              {#if lastRun.model_label || lastRun.model}· {lastRun.model_label || lastRun.model}{/if}</div>
+            {#if lastRun.error && lastRun.status !== "ok"}<div class="faint err">{lastRun.error.slice(0, 260)}</div>{/if}
+          {/if}
+          {#if waitText}<div><span class="faint">ตอนนี้:</span> {waitText}</div>{/if}
+        </div>
+      {/if}
       <AttachList {id} />
       <AskAI {id} />
+      <Requests requests={data.requests ?? []} onchange={load} />
       {#if openQs.length}<div class="qs">{#each openQs as q (q.id)}<Question {q} />{/each}</div>{/if}
       {#if idea.needs.length}
         <div class="needs small"><b>ต้องการจากคุณ</b><ul>{#each idea.needs as n}<li>{n}</li>{/each}</ul></div>
@@ -151,7 +204,7 @@
     </div>
 
     <div class="tabs">
-      {#each tabs as t}<button class="tab" class:on={tab === t.key} onclick={() => (tab = t.key)}>{t.label}</button>{/each}
+      {#each tabs as t}<button class="tab" class:on={tab === t.key} onclick={() => (tab = t.key)}>{#if t.icon}<Icon name={t.icon} /> {/if}{t.label}</button>{/each}
       <button class="tab" class:on={tab === "history"} onclick={() => (tab = "history")}>ประวัติ</button>
     </div>
 
@@ -164,7 +217,7 @@
             {#each data.runs as r}
               <tr title={r.error ?? ""}>
                 <td>{clock(r.started)}</td><td>{stageLabel(r.stage)}</td>
-                <td title={r.reason ?? ""}>{r.power ? "🚀 " : ""}{r.model_label || r.model}{r.effort ? ` · ${r.effort}` : ""}</td>
+                <td title={r.reason ?? ""}>{#if r.power}<Icon name="rocket" /> {/if}{r.model_label || r.model}{r.effort ? ` · ${r.effort}` : ""}</td>
                 <td class="st-{r.status}">{r.status}</td>
                 <td>{(tokens(r) / 1000).toFixed(0)}k</td>
                 <td>{r.week_after != null && r.week_before != null ? `+${(r.week_after - r.week_before).toFixed(1)}` : "—"}</td>
@@ -173,7 +226,7 @@
           </tbody>
         </table>
         {#if data.directives.length}
-          <h3>คำสั่งของคุณ</h3>
+          <h3>ประวัติคำสั่ง</h3>
           <ul>{#each data.directives as [ts, t]}<li><span class="faint small">{ago(ts)}</span> {t}</li>{/each}</ul>
         {/if}
         {#if answered.length}
@@ -225,7 +278,10 @@
   .runs { width: 100%; border-collapse: collapse; font-size: 13px; }
   .runs th, .runs td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
   .runs th { color: var(--text-3); font-weight: 500; }
+  .botstate { display: flex; flex-direction: column; gap: 3px; padding: 8px 12px; background: var(--bg-2); border-radius: 8px; border-left: 3px solid var(--line); }
+  .botstate .err { color: var(--red); opacity: 0.85; }
   .st-ok { color: var(--teal); }
   .st-error, .st-interrupted { color: var(--red); }
   .st-timeout, .st-rate_limited, .st-cancelled { color: var(--amber); }
+  .on-pin { color: var(--amber); border-color: var(--amber); }
 </style>

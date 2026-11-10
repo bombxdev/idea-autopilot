@@ -32,6 +32,8 @@ pub struct CurrentRun {
     pub lang: String,
     pub provider: String,
     pub model: String,
+    /// the account this run uses ("" = the single AI chosen in settings)
+    pub account: String,
 }
 
 #[derive(Default)]
@@ -45,6 +47,8 @@ pub struct Runtime {
     pub acct_snaps: std::collections::HashMap<String, Snapshot>,
     pub acct_fetch: std::collections::HashMap<String, i64>,
     pub acct_notes: std::collections::HashMap<String, String>,
+    /// balance read with an account's own key (when the provider allows it): (when, text)
+    pub acct_balance: std::collections::HashMap<String, (i64, String)>,
     pub acct_allowed: std::collections::HashMap<String, (bool, String)>,
     /// the full governor decision of every usable account (the quota page draws a plan per account)
     pub acct_decisions: std::collections::HashMap<String, Decision>,
@@ -124,5 +128,48 @@ mod lock_rules {
             }
         }
         assert!(bad.is_empty(), "same lock twice in one expression:\n{}", bad.join("\n"));
+    }
+
+    /// `x.lock()...map(|i| { ... y.lock() ... })`: the first guard lives until the end of the statement, so the lock
+    /// taken inside the closure waits for it forever. Take the first lock in its own `let`.
+    #[test]
+    fn no_closure_locks_again_while_the_chain_holds_a_lock() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut bad = Vec::new();
+        for f in std::fs::read_dir(dir).unwrap().flatten() {
+            let p = f.path();
+            if p.extension().and_then(|e| e.to_str()) != Some("rs") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&p).unwrap();
+            let lines: Vec<&str> = text.lines().collect();
+            for (i, l) in lines.iter().enumerate() {
+                let code = l.split("//").next().unwrap_or("");
+                let opens_closure = [".map(|", ".and_then(|", ".unwrap_or_else(|", ".or_else(|", ".filter(|", ".is_some_and(|", ".map_or_else("].iter().any(|k| code.contains(k)) && code.trim_end().ends_with('{');
+                let holds = code.contains("rt.lock()") || code.contains("db.lock()");
+                // the condition of a plain `if` is released before its body runs (`if let` and `match` are not)
+                let t = code.trim_start();
+                if t.starts_with("if ") && !t.starts_with("if let") {
+                    continue;
+                }
+                if !(opens_closure && holds) {
+                    continue;
+                }
+                let mut depth = 0i32;
+                for (j, lj) in lines.iter().enumerate().skip(i) {
+                    let c = lj.split("//").next().unwrap_or("");
+                    depth += c.matches('{').count() as i32 - c.matches('}').count() as i32;
+                    if j > i && (c.contains("rt.lock()") || c.contains("db.lock()")) {
+                        bad.push(format!("{}:{}", p.file_name().unwrap().to_string_lossy(), j + 1));
+                    }
+                    if depth <= 0 && j > i {
+                        break;
+                    }
+                }
+            }
+        }
+        assert!(bad.is_empty(), "lock taken inside a closure while the same chain already holds one:
+{}", bad.join("
+"));
     }
 }

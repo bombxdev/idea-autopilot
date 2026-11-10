@@ -1,8 +1,9 @@
 <script>
+  import Icon from "../components/Icon.svelte";
   import { onMount } from "svelte";
   import { api } from "../lib/api.js";
   import LanguagePicker from "../components/LanguagePicker.svelte";
-  import { toast, refresh } from "../lib/store.svelte.js";
+  import { toast, refresh, store } from "../lib/store.svelte.js";
   import { ask } from "../lib/dialog.svelte.js";
   import Markdown from "../components/Markdown.svelte";
   import Accounts from "../components/Accounts.svelte";
@@ -80,8 +81,9 @@
   async function exportBrain() {
     busy = "brain";
     try {
-      await api.exportBrain();
-      toast("export สมองแล้ว");
+      const at = await api.exportBrain();
+      // a repo that could not be pulled or pushed is named in brackets after the folder
+      toast(at && at.includes(" (") ? `export แล้ว แต่ ${at.slice(at.indexOf(" (") + 2, -1)}` : "export สมองแล้ว", at && at.includes(" (") ? "err" : "ok");
       load();
     } catch (e) {
       toast(String(e), "err");
@@ -164,6 +166,30 @@
     load();
     refresh();
   }
+  // the page in tabs, one per kind of setting, so nothing needs a long scroll; the last tab is remembered
+  const TABS = [
+    { key: "ai", label: "AI และโมเดล", icon: "bot" },
+    { key: "time", label: "เวลาและโควต้า", icon: "gauge" },
+    { key: "devices", label: "มือถือและหลายเครื่อง", icon: "signal" },
+    { key: "general", label: "ทั่วไป", icon: "gear" },
+    { key: "about", label: "เกี่ยวกับ · อัปเดต", icon: "sparkle" },
+  ];
+  const remembered = () => {
+    try {
+      return localStorage.getItem("settings_tab");
+    } catch {
+      return null;
+    }
+  };
+  let tab = $state(store.settingsTab ?? remembered() ?? "ai");
+  if (!TABS.some((t) => t.key === tab)) tab = "ai";
+  store.settingsTab = null;
+  function pick(k) {
+    tab = k;
+    try {
+      localStorage.setItem("settings_tab", k);
+    } catch {}
+  }
   const KIND = { off: "หยุด / ลา", work: "ทำงานเต็มวัน", half: "ครึ่งวันเช้า" };
   const MODELS = [
     ["strong", "บังคับระดับแรง (ฉลาดสุด กินโควต้าสุด)"],
@@ -174,7 +200,13 @@
 
 <div class="wrapx">
   <h1>ตั้งค่า</h1>
+  <div class="tabs" role="tablist">
+    {#each TABS as t (t.key)}
+      <button class="tab" class:on={tab === t.key} role="tab" aria-selected={tab === t.key} onclick={() => pick(t.key)}><Icon name={t.icon} /> {t.label}</button>
+    {/each}
+  </div>
 
+  {#if tab === "ai"}
   {#if prov}
     <div class="card">
       <h2>AI ที่ใช้ทำงาน</h2>
@@ -206,18 +238,22 @@
       </div>
       {#if test}
         <div class="small" style="color:{test.ok ? 'var(--teal)' : 'var(--red)'}">
-          {test.ok ? `✓ ใช้ได้ (${test.seconds} วินาที)` : `✗ ไม่สำเร็จ: ${test.error ?? test.status}`}
+          <Icon name={test.ok ? "check" : "closeCircle"} /> {test.ok ? `ใช้ได้ (${test.seconds} วินาที)` : `ไม่สำเร็จ: ${test.error ?? test.status}`}
           {#each test.lines ?? [] as l}<div class="faint">{l}</div>{/each}
         </div>
       {/if}
     </div>
   {/if}
+  {/if}
 
+  {#if tab === "general"}
   <div class="card">
-    <h2>🌐 Language / ภาษา</h2>
+    <h2><Icon name="globe" /> Language / ภาษา</h2>
     <LanguagePicker value={s.language || "en"} follow={s.lang_follow ?? "1"} />
   </div>
+  {/if}
 
+  {#if tab === "time"}
   {#if sched}
     <div class="card">
       <h2>ตารางงานของคุณ</h2>
@@ -251,7 +287,9 @@
       <div class="row"><button class="primary" onclick={saveSched}>บันทึกตารางงาน</button></div>
     </div>
   {/if}
+  {/if}
 
+  {#if tab === "time"}
   <div class="card">
     <h2>วันหยุดพิเศษ / วันลา / ทำงานเพิ่ม</h2>
     <div class="row wrap">
@@ -268,7 +306,7 @@
       <div class="faint small">ยังไม่มีวันหยุดพิเศษที่จะมาถึง</div>
     {/each}
     {#if past.length}
-      <button class="ghost small" style="align-self:flex-start" onclick={() => (showPast = !showPast)}>{showPast ? "▾" : "▸"} ผ่านไปแล้ว ({past.length})</button>
+      <button class="ghost small" style="align-self:flex-start" onclick={() => (showPast = !showPast)}><Icon name={showPast ? "chevronDown" : "chevronRight"} /> ผ่านไปแล้ว ({past.length})</button>
       {#if showPast}
         {#each past as o (o.date)}
           <div class="row small ov faint"><span class="dt">{weekday(o.date)} {toDmy(o.date)}</span><span>{KIND[o.kind] ?? o.kind}</span><span class="grow">{o.note ?? ""}</span><button class="ghost small" onclick={() => clearDay(o.date)}>ลบ</button></div>
@@ -276,9 +314,11 @@
       {/if}
     {/if}
   </div>
+  {/if}
 
+  {#if tab === "ai"}
   <div class="card">
-    <h2>🚀 โหมดเต็มที่</h2>
+    <h2><Icon name="rocket" /> โหมดเต็มที่</h2>
     <p class="muted small">
       ใช้เมื่ออยากได้คำตอบที่ดีที่สุดตอนนี้ เช่น ให้บอทช่วยคิดงานในเวลางาน ไอเดียที่อยู่ในโหมดนี้จะใช้<b>โมเดลแรงสุดและ effort สูงสุด</b>
       ไม่ถูกลดระดับเพื่อประหยัด และทำงานได้แม้ในเวลางานหรือตอนคุณใช้ Claude อยู่ (ใช้โควต้าที่กันไว้ให้งานคุณด้วย)
@@ -287,14 +327,16 @@
     <div class="row field"><span class="grow">ขอบเขต</span>
       <select value={s.power_mode ?? "off"} onchange={(e) => save("power_mode", e.target.value)}>
         <option value="off">ปิด</option>
-        <option value="ideas">เฉพาะไอเดียที่กดปุ่ม 🚀 (ในหน้าไอเดีย){(s.power_ideas || "").split(",").filter(Boolean).length ? ` · ตอนนี้ ${(s.power_ideas || "").split(",").filter(Boolean).length} ไอเดีย` : ""}</option>
+        <option value="ideas">เฉพาะไอเดียที่กดปุ่ม “เต็มที่” (ในหน้าไอเดีย){(s.power_ideas || "").split(",").filter(Boolean).length ? ` · ตอนนี้ ${(s.power_ideas || "").split(",").filter(Boolean).length} ไอเดีย` : ""}</option>
         <option value="all">ทุกไอเดีย</option>
       </select></div>
     {#if s.power_mode === "all"}
       <div class="warnbox small">เปิดสำหรับทุกไอเดีย: บอทจะใช้โควต้าเต็มสูบแม้ในเวลางานของคุณ จนถึงเพดานความปลอดภัย — อย่าลืมปิดเมื่อไม่ต้องการ</div>
     {/if}
   </div>
+  {/if}
 
+  {#if tab === "ai"}
   <div class="card">
     <h2>โมเดลและ effort</h2>
     <p class="muted small">โหมดอัตโนมัติเลือกด้วยกฎ + สถิติจริง จึงไม่เสีย token ในการตัดสินใจ และ Claude เรียกรุ่นล่าสุดของแต่ละตระกูลเสมอ: งานปริมาณมาก (ค้นเว็บ เขียนโค้ด) ใช้ระดับกลาง, งานตัดสินใจ (ตัดสิน วางแผน) ใช้ระดับแรง, งานจัดคิวใช้ระดับเร็ว (แต่ละ AI จับคู่ระดับกับโมเดลของตัวเองตามที่ตั้งไว้ด้านบน · Claude = Haiku / Sonnet / Opus) · ถ้าเคยติดขัดจะขยับขึ้น · ถ้าโควต้าเหลือและกำลังจะหมดอายุจะอัปเกรดคุณภาพ · ถ้าโควต้าใกล้หมดจะลด effort · ทุก 5 รอบจะลองรุ่นที่ถูกกว่า 1 ครั้ง ถ้าดีพอๆ กัน 5 รอบขึ้นไปจะเปลี่ยนไปใช้ถาวร และเริ่มนับใหม่เมื่อมีโมเดลเวอร์ชันใหม่</p>
@@ -335,30 +377,34 @@
         </select></div>
     {/each}
   </div>
+  {/if}
 
+  {#if tab === "time"}
   <div class="card">
     <h2>การกันโควต้า</h2>
     {#if prov?.meter === "real"}
       <div class="row field"><span class="grow">กันไว้ให้งานต่อชั่วโมงทำงาน (% ของสัปดาห์) — ใช้จนกว่าจะมีสถิติพอ (~3 วันทำงาน)</span>
         <input type="number" min="0.2" max="6" step="0.1" style="width:90px" value={s.reserve_per_hour ?? 1.5}
           onchange={(e) => save("reserve_per_hour", e.target.value)} /></div>
-    {:else}
-      <p class="muted small">AI ตัวนี้ไม่มีตัวอ่านโควต้า แอปจึงนับเวลาที่บอทรันจริงเทียบกับงบที่ตั้งไว้ (ไม่นับการใช้งานของคุณเอง)</p>
+    {/if}
+    <!-- always shown: accounts of other providers (Mistral, OpenCode, Gemini, keys…) use this budget even when the main AI has a real quota -->
+      <p class="muted small">มีแค่บัญชี Claude / ChatGPT ที่มีรอบ 5 ชม. และรอบสัปดาห์จริง ค่ายอื่นแอปนับตามแบบของค่ายนั้น: แบบฟรีรายวัน (Gemini ที่ล็อกอิน Google, OpenCode) ใช้ได้จนค่ายแจ้งว่าครบแล้วรอรอบใหม่ · แบบจ่ายตามใช้ (key ของ Mistral, OpenRouter, DeepSeek ฯลฯ) ใช้ <b>งบต่อสัปดาห์</b> ด้านล่างเป็นเพดานกันใช้เงินเกิน แยกทีละบัญชี (ดูลิมิตจริงของแต่ละค่ายได้ที่ ตั้งค่า → AI → บัญชี)</p>
       <div class="row field"><span class="grow">งบต่อสัปดาห์ (ชั่วโมงที่บอทรันได้)</span>
         <input type="number" min="1" max="168" step="1" style="width:90px" value={s.budget_hours_week ?? 10} onchange={(e) => save("budget_hours_week", e.target.value)} /></div>
-      <div class="row field"><span class="grow">งบต่อ 5 ชั่วโมง (กันบอทรันรวดเดียวนานเกิน)</span>
+      <div class="row field"><span class="grow">งบต่อ 5 ชั่วโมง (ใช้เฉพาะตอนวัดโควต้าของ Claude/Codex ด้วยงบชั่วโมง)</span>
         <input type="number" min="0.5" max="5" step="0.5" style="width:90px" value={s.budget_hours_5h ?? 3} onchange={(e) => save("budget_hours_5h", e.target.value)} /></div>
       <div class="row field"><span class="grow">งบเริ่มนับใหม่ทุกวัน</span>
         <select value={s.budget_reset_day ?? "0"} onchange={(e) => save("budget_reset_day", e.target.value)}>
           {#each ["จันทร์", "อังคาร", "พุธ", "พฤหัสบดี", "ศุกร์", "เสาร์", "อาทิตย์"] as d, i}<option value={String(i)}>{d}</option>{/each}
         </select></div>
-    {/if}
     {#if prov && prov.list.find((p) => p.id === "claude")?.installed}
       <div class="row field"><span class="grow">วิธีวัดโควต้า <span class="faint small">(Claude อ่านจริงได้ — เปลี่ยนเป็นงบชั่วโมงถ้าใช้ API key)</span></span>
         <select value={s.meter ?? "auto"} onchange={(e) => save("meter", e.target.value)}><option value="auto">อัตโนมัติ</option><option value="budget">ใช้งบชั่วโมงของแอป</option></select></div>
     {/if}
   </div>
+  {/if}
 
+  {#if tab === "devices"}
   <div class="card">
     <h2>สั่งงานจากมือถือ (Telegram)</h2>
     <p class="muted small">1) ใน Telegram คุยกับ <b>@BotFather</b> พิมพ์ <code>/newbot</code> ตั้งชื่อ แล้ว copy token มาวางด้านล่าง 2) เปิดบอทของคุณแล้วส่งข้อความอะไรก็ได้ — คนแรกที่ทักจะถูกผูกเป็นเจ้าของ คนอื่นทักมาบอทจะไม่สนใจ<br/>จากนั้นพิมพ์ไอเดียได้เลย, ตอบคำถามด้วยปุ่ม, ได้แจ้งเตือนเมื่องานเสร็จ, พิมพ์ /help ดูคำสั่ง</p>
@@ -366,7 +412,7 @@
       <input type="password" style="width:380px" value={s.telegram_token ?? ""} placeholder="123456:ABC-DEF..." onchange={(e) => save("telegram_token", e.target.value.trim())} /></div>
     {#if s.telegram_token}
       <div class="kv small">
-        <span>การเชื่อมต่อ</span><b>{s.telegram_status === "ok" ? "✓ ต่อได้" : (s.telegram_status ?? "กำลังต่อ…")}</b>
+        <span>การเชื่อมต่อ</span><b>{#if s.telegram_status === "ok"}<Icon name="check" /> ต่อได้{:else}{s.telegram_status ?? "กำลังต่อ…"}{/if}</b>
         <span>ผูกกับ</span><b>{s.telegram_owner || "ยังไม่มี — ส่งข้อความหาบอทก่อน"}</b>
       </div>
       <div class="row field"><span class="grow">ส่งความคืบหน้าทุกขั้น + แจ้งเตือนเมื่อไอเดียพร้อมใช้งาน<br/><span class="faint small">เปิดไว้เป็นค่าเริ่มต้น</span></span>
@@ -378,7 +424,9 @@
       {/if}
     {/if}
   </div>
+  {/if}
 
+  {#if tab === "devices"}
   <div class="card">
     <h2>หลายเครื่อง (ที่ทำงาน · ที่บ้าน)</h2>
     <p class="muted small">ชี้ไปที่โฟลเดอร์ที่ sync ข้ามเครื่องได้ — Google Drive / OneDrive ส่วนตัว หรือโฟลเดอร์ที่ clone จาก GitHub private repo (ถ้าเป็น git ระบบ pull/push ให้เองทุก 5 นาที) เครื่องหลักรันบอท เครื่องอื่นจดไอเดีย ดูรายงาน ตอบคำถามได้</p>
@@ -396,18 +444,31 @@
       {/if}
     {/if}
   </div>
+  {/if}
 
+  {#if tab === "devices"}
   <div class="card">
     <h2>สมองพกพา</h2>
     <p class="muted small">รวมความรู้ที่สะสมไว้ (memory และ skill ของ Claude Code ถ้ามี, คลังความรู้, ไอเดียทั้งหมด) เป็นไฟล์ Markdown ที่โมเดลไหนก็อ่านได้ แยกชุด <b>ส่วนตัว</b> กับ <b>งานบริษัท</b> — export อัตโนมัติทุกวัน</p>
+    <p class="muted small">ไอเดียแยกตามที่เลือกตอนจด (ส่วนตัว / งาน) · memory และ skill ที่มีคำของบริษัทด้านล่างจะเข้าชุดงาน (ยกเว้นข้อมูลตัวคุณและวิธีทำงานที่สอนไว้ ซึ่งเป็นส่วนตัวเสมอ)</p>
+    <div class="row field"><span class="grow">คำของบริษัท / โปรเจกต์งาน</span>
+      <input style="width:380px" value={s.brain_work_keywords ?? (sync.brain_work_keywords ?? []).join(", ")} placeholder="เช่น ชื่อบริษัท, ชื่อระบบภายใน (คั่นด้วย ,)" onchange={(e) => save("brain_work_keywords", e.target.value)} /></div>
+    <div class="row field"><span class="grow">ที่เก็บชุดส่วนตัว</span>
+      <input style="width:380px" value={s.brain_personal ?? ""} placeholder="ว่าง = ในโฟลเดอร์ sync · หรือใส่โฟลเดอร์ / git URL" onchange={(e) => save("brain_personal", e.target.value)} /></div>
+    <div class="row field"><span class="grow">ที่เก็บชุดงาน</span>
+      <input style="width:380px" value={s.brain_work ?? ""} placeholder="ว่าง = เก็บในเครื่องนี้เท่านั้น · หรือใส่โฟลเดอร์ / git URL ของบริษัท" onchange={(e) => save("brain_work", e.target.value)} /></div>
+    <p class="faint small">ใส่ git URL (เช่น https://github.com/คุณ/brain-work.git) แล้วแอปจะ clone มาเก็บ และ push ให้เองหลัง export ทุกครั้ง — ใช้สิทธิ์ git ที่เครื่องนี้ login ไว้ ชุดงานไม่ถูกส่งไปกับโฟลเดอร์ sync</p>
     <div class="kv small">
-      <span>เก็บไว้ที่</span><code>{sync.brain_dir}</code>
+      <span>ชุดส่วนตัว</span><code>{sync.brain_personal_dir}</code>
+      <span>ชุดงาน</span><code>{sync.brain_work_dir}</code>
       <span>export ล่าสุด</span><b>{ago(sync.brain_exported)}</b>
     </div>
     <div class="row"><button class="primary" disabled={busy === "brain"} onclick={exportBrain}>export ตอนนี้ + เปิดโฟลเดอร์</button>
-      <span class="faint small">นำไปใช้ที่อื่น: เปิด personal/IMPORT.md</span></div>
+      <span class="faint small">นำไปใช้ที่อื่น: เปิด IMPORT.md ในแต่ละชุด</span></div>
   </div>
+  {/if}
 
+  {#if tab === "about"}
   <div class="card">
     <h2>เกี่ยวกับ · ประวัติเวอร์ชัน</h2>
     <UpdateCard />
@@ -416,7 +477,9 @@
     <div class="faint small">© 2026 bombxdev · เป็นโอเพนซอร์สภายใต้ GPL-3.0-or-later — ใช้ แก้ไข และแจกต่อได้ แต่งานที่ดัดแปลงต้องเปิดซอร์สภายใต้สัญญาเดียวกัน</div>
     {#if showLog && about}<div class="logbox"><Markdown text={about.changelog} /></div>{/if}
   </div>
+  {/if}
 
+  {#if tab === "general"}
   <div class="card">
     <h2>ระบบ</h2>
     <div class="row field"><span class="grow">เปิดพร้อม Windows (ซ่อนอยู่ที่ tray)</span>
@@ -428,15 +491,28 @@
       </select></div>
     <div class="row field"><span class="grow">รอก่อนเริ่มทำไอเดียที่เพิ่งจด (วินาที) <span class="faint small">— เวลาให้แก้ข้อความถ้าพิมพ์พลาด</span></span>
       <input type="number" min="0" max="3600" step="10" style="width:90px" value={s.grace_secs ?? 90} onchange={(e) => save("grace_secs", e.target.value)} /></div>
+    <div class="row field"><span class="grow">Codex เมื่อต้องการให้คนอนุมัติ (เช่น ควบคุมเบราว์เซอร์) <span class="faint small">— บอทรันเงียบๆ ไม่มีคนกดอนุมัติได้</span></span>
+      <select value={s.codex_approval ?? "headless"} onchange={(e) => save("codex_approval", e.target.value)}>
+        <option value="headless">ง่าย: ปิด Computer Use แล้วตรวจหน้าเว็บด้วย Edge แบบ headless (แนะนำ)</option>
+        <option value="full">เต็มที่: ให้ Codex ควบคุมเบราว์เซอร์จริง · ข้ามการขออนุมัติและปิด sandbox (เสี่ยง)</option>
+      </select></div>
+    {#if s.codex_approval === "full"}
+      <p class="small" style="color:var(--amber)"><Icon name="warning" /> โหมดเต็มที่: Codex ทุกรอบ (ทั้งบอทและแชต) จะรันโดยไม่มี sandbox จึงแก้/ลบไฟล์นอกโฟลเดอร์ไอเดียได้ และต้องเปิดแอป Codex ค้างไว้เพื่อให้ Computer Use ทำงาน — ยังไม่ได้ทดสอบว่าผ่านจริง ใช้เมื่อจำเป็นจริงๆ</p>
+    {/if}
     <div class="row field"><span class="grow">ปุ่มลัดจดไอเดีย</span><b>{s.hotkey ? s.hotkey.toUpperCase() : "ไม่ว่าง (ทุกปุ่มถูกโปรแกรมอื่นใช้อยู่)"}</b></div>
     <div class="row field"><span class="grow">โฟลเดอร์ข้อมูล</span><code class="small">{s.root}</code></div>
     <div class="row field"><span class="grow">โฟลเดอร์รับไอเดียเพิ่ม (คั่นด้วย ;) เช่น โฟลเดอร์ที่ sync กับมือถือ</span>
       <input style="width:340px" value={s.extra_inbox ?? ""} placeholder="เช่น D:/Sync/Ideas" onchange={(e) => save("extra_inbox", e.target.value)} /></div>
     <p class="faint small">จดไอเดียแบบไฟล์ได้ด้วย: วางไฟล์ .md / .txt ในโฟลเดอร์ <code>workspace/inbox</code> ระบบจะดึงเข้าคิวเอง</p>
   </div>
+  {/if}
 </div>
 
 <style>
+  .tabs { display: flex; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; gap: 6px; border-bottom: 1px solid var(--line); padding-bottom: 8px; position: sticky; top: 0; z-index: 5; background: var(--bg); }
+  .tab { white-space: nowrap; flex: none; background: transparent; border: 1px solid transparent; border-radius: 8px; padding: 6px 12px; color: var(--text-2); }
+  .tab:hover { background: var(--bg-2); }
+  .tab.on { background: var(--bg-2); border-color: var(--teal); color: var(--text); font-weight: 600; }
   .logbox { max-height: 360px; overflow: auto; background: var(--bg-2); border-radius: 8px; padding: 6px 14px; }
   .wrapx { max-width: 820px; display: flex; flex-direction: column; gap: 16px; }
   .card { display: flex; flex-direction: column; gap: 10px; }

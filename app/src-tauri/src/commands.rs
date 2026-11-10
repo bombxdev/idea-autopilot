@@ -31,7 +31,7 @@ pub fn list_ideas(st: State<AppState>) -> R<Value> {
 }
 
 #[tauri::command]
-pub fn add_idea(st: State<AppState>, text: String, attachments: Option<Vec<String>>, ai: Option<crate::idea_ai::IdeaAi>) -> R<i64> {
+pub fn add_idea(st: State<AppState>, text: String, attachments: Option<Vec<String>>, ai: Option<crate::idea_ai::IdeaAi>, scope: Option<String>) -> R<i64> {
     let tokens = attachments.unwrap_or_default();
     // "/web-research the coffee market": a skill named at the start is pinned to the new idea, the rest is the idea
     let (text, skill) = match crate::skills::slash_skill(&st.db.lock(), &text)? {
@@ -42,10 +42,14 @@ pub fn add_idea(st: State<AppState>, text: String, attachments: Option<Vec<Strin
     if sync::is_follower(&st) && !tokens.is_empty() {
         return Err("เครื่องรองแนบไฟล์ไม่ได้ — จดไอเดียที่เครื่องหลักเพื่อแนบไฟล์".into());
     }
-    if let Some(r) = sync::forward(&st, "add", json!({ "text": text })) {
+    if let Some(r) = sync::forward(&st, "add", json!({ "text": text, "scope": scope })) {
         return r.map(|_| 0);
     }
-    let id = scheduler::add_idea(&st, &text).map_err(e)?;
+    if let Some(s) = &scope {
+        // the next idea starts in the same set
+        db::set_setting(&st.db.lock(), "scope_default", db::norm_scope(s)).map_err(e)?;
+    }
+    let id = scheduler::add_idea_in(&st, &text, scope.as_deref()).map_err(e)?;
     if ai.is_some() || skill.is_some() {
         let mut cfg = ai.unwrap_or_default();
         if let Some(s) = &skill {
@@ -66,6 +70,17 @@ pub fn add_idea(st: State<AppState>, text: String, attachments: Option<Vec<Strin
         workspace::append_attachment_note(&dir, &names);
     }
     Ok(id)
+}
+
+/// Move an idea between the personal and the work set.
+#[tauri::command]
+pub fn idea_scope_set(st: State<AppState>, id: i64, scope: String) -> R<()> {
+    if let Some(r) = sync::forward(&st, "scope", json!({ "id": id, "scope": scope })) {
+        return r;
+    }
+    db::set_scope(&st.db.lock(), id, &scope).map_err(e)?;
+    st.rt.lock().sync_dirty = true;
+    Ok(())
 }
 
 fn idea_dir_of(st: &AppState, id: i64) -> R<std::path::PathBuf> {
@@ -134,6 +149,7 @@ pub fn get_idea(st: State<AppState>, id: i64) -> R<Value> {
         "runs": db::runs(&c, Some(id), 0, 100).map_err(e)?,
         "questions": db::questions(&c, Some(id), false).map_err(e)?,
         "directives": db::directives(&c, id).map_err(e)?,
+        "requests": db::directive_rows(&c, id).map_err(e)?.into_iter().filter(|r| r.checklist).collect::<Vec<_>>(),
         "dir": dir,
     }))
 }
@@ -192,7 +208,11 @@ pub fn idea_action(st: State<AppState>, id: i64, action: String, text: Option<St
             let mut idea = db::get_idea(&c, id).map_err(e)?;
             match action.as_str() {
                 "stop" => idea.status = "done".into(),
-                "archive" => idea.status = "archived".into(),
+                "archive" => {
+                    idea.status = "archived".into();
+                    let _ = db::set_fixing(&c, id, false);
+                    let _ = db::set_pinned(&c, id, false);
+                }
                 "delete" => idea.status = "deleted".into(),
                 "restore" | "retry" => {
                     idea.fail_count = 0;
@@ -207,8 +227,24 @@ pub fn idea_action(st: State<AppState>, id: i64, action: String, text: Option<St
                     };
                 }
                 "urgent" => idea.priority = if idea.priority > 0 { 0 } else { 1 },
+                "pin" | "unpin" | "fixing" | "works" => {
+                    match action.as_str() {
+                        "pin" => db::set_pinned(&c, id, true),
+                        "unpin" => db::set_pinned(&c, id, false),
+                        "fixing" => db::set_fixing(&c, id, true),
+                        _ => db::set_fixing(&c, id, false),
+                    }
+                    .map_err(e)?;
+                    let what = match action.as_str() { "pin" => "ปักหมุด", "unpin" => "เลิกปักหมุด", "fixing" => "ยังต้องแก้", _ => "ใช้ได้แล้ว" };
+                    db::log_event(&c, &action, Some(id), &format!("{what}: {}", idea.title));
+                    return Ok(());
+                }
                 "run_now" => {
                     drop(c);
+                    // a paused bot stops any run within a minute: say so now instead of starting and killing it
+                    if st.rt.lock().paused {
+                        return Err("บอทถูก Pause อยู่ — กด “เล่นต่อ” ที่ปุ่ม Pause ก่อน แล้วค่อยกดทำเลย (ไม่งั้นรอบที่เริ่มจะถูกหยุดทันที)".into());
+                    }
                     st.rt.lock().force = Some(id);
                     st.wake.notify_one();
                     return Ok(());
@@ -351,10 +387,10 @@ pub fn set_day(st: State<AppState>, date: String, kind: Option<String>, note: Op
 
 const SETTING_KEYS: &[&str] = &[
     "model_default", "model_build", "model_verify", "reserve_per_hour", "autostart", "extra_inbox", "schedule",
-    "sync_dir", "brain_dir", "telegram_token", "telegram_chat", "telegram_questions",
+    "sync_dir", "brain_dir", "brain_personal", "brain_work", "brain_work_keywords", "scope_default", "telegram_token", "telegram_chat", "telegram_questions",
     // which AI works, how its quota is measured, report language, first-run flag
     "provider", "tier_models", "custom_cmd", "meter", "budget_hours_week", "budget_hours_5h", "budget_reset_day",
-    "language", "lang_follow", "quota_view", "auto_update", "session_idle_min", "power_mode", "power_ideas", "extra_models", "ss_auto", "onboarded", "effort_default", "effort_build", "effort_verify", "send_key", "grace_secs", "telegram_progress", "seen_version",
+    "language", "lang_follow", "quota_view", "auto_update", "session_idle_min", "power_mode", "power_ideas", "extra_models", "ss_auto", "onboarded", "effort_default", "effort_build", "effort_verify", "send_key", "grace_secs", "telegram_progress", "seen_version", "codex_approval",
 ];
 
 #[tauri::command]
@@ -386,6 +422,9 @@ pub fn set_setting(st: State<AppState>, key: String, value: String) -> R<()> {
     }
     if key == "autostart" {
         crate::set_autostart(value == "1")?;
+    }
+    if key == "codex_approval" {
+        crate::providers::set_codex_approval(&value);
     }
     if key == "language" {
         workspace::set_language(&value);
@@ -545,6 +584,18 @@ pub fn idea_remote(app: AppHandle, st: State<AppState>, id: i64, on: bool) -> R<
     if on { crate::remote::start(&app, id) } else { crate::remote::stop(&app, id) }
 }
 
+/// Reopen a session that looks stuck (same conversation).
+#[tauri::command]
+pub fn session_revive(app: AppHandle, id: i64) -> R<()> {
+    crate::remote::revive(&app, id)
+}
+
+/// The owner ticks a request off ("ok") or says it still does not work ("").
+#[tauri::command]
+pub fn request_set(app: AppHandle, rid: i64, state: String, note: Option<String>) -> R<()> {
+    crate::remote::set_request(&app, rid, &state, &note.unwrap_or_default(), true)
+}
+
 /// Close a session; with `summarize` the AI first writes down what was talked about and decided.
 #[tauri::command]
 pub fn session_close(app: AppHandle, id: i64, summarize: bool) -> R<()> {
@@ -563,6 +614,21 @@ pub fn session_close_all(app: AppHandle, summarize: bool) {
 #[tauri::command]
 pub fn sessions_overview(app: AppHandle) -> Value {
     crate::remote::overview(&app)
+}
+
+/// The Codex conversation of this idea (made by a bot run or by the chat), with the command that opens it in Codex itself.
+#[tauri::command]
+pub fn codex_thread(st: State<AppState>, id: i64) -> Value {
+    let saved = db::get_setting(&st.db.lock(), &format!("codex_tid_{id}"));
+    let Some((acct, tid)) = saved.as_deref().and_then(|v| v.split_once('|')).map(|(a, t)| (a.to_string(), t.to_string())) else { return Value::Null };
+    let home = crate::accounts::find(&st.db.lock(), &acct)
+        .map(|a| crate::accounts::env_with_secret(&a, &st.root))
+        .and_then(|e| e.into_iter().find(|(k, _)| k == "CODEX_HOME").map(|(_, v)| v));
+    let command = match home {
+        Some(h) if !h.is_empty() => format!("$env:CODEX_HOME='{h}'; codex resume {tid}"),
+        _ => format!("codex resume {tid}"),
+    };
+    json!({ "thread": tid, "account": acct, "command": command })
 }
 
 /// Send an instruction to the idea's Remote Control session (opens or reopens it when needed).
@@ -650,7 +716,8 @@ pub async fn test_provider(app: AppHandle, provider: Option<String>) -> R<Value>
     let out = crate::runner::run(
         crate::runner::RunSpec {
             cwd: &dir,
-            prompt: "Reply with the single word OK. Do not use any tools or read any files.".into(),
+            // no "do not read files": OpenCode and Vibe get this prompt *as a file* to read (a model told not to read guessed it was empty)
+            prompt: "Reply with the single word OK.".into(),
             provider: prov.clone(),
             model,
             effort: "low".into(),
@@ -725,6 +792,9 @@ pub fn export_brain(app: AppHandle, st: State<AppState>) -> R<String> {
 pub fn sync_status(st: State<AppState>) -> Value {
     let mut v = json!(sync::role(&st));
     v["brain_dir"] = json!(crate::brain::brain_dir(&st));
+    v["brain_personal_dir"] = json!(crate::brain::set_dir(&st, "personal"));
+    v["brain_work_dir"] = json!(crate::brain::set_dir(&st, "work"));
+    v["brain_work_keywords"] = json!(crate::brain::effective_keywords(&st));
     v["brain_exported"] = json!(db::get_setting(&st.db.lock(), "brain_exported").and_then(|x| x.parse::<i64>().ok()));
     v["stale_after"] = json!(sync::STALE_LEADER);
     v
@@ -849,6 +919,8 @@ fn login_state(a: &crate::accounts::Account) -> Option<bool> {
         "claude" => Some(if a.home.is_empty() { crate::usage::claude_dir() } else { std::path::PathBuf::from(&a.home) }.join(".credentials.json").is_file()),
         "codex" => Some(if a.home.is_empty() { home.join(".codex") } else { std::path::PathBuf::from(&a.home) }.join("auth.json").is_file()),
         "gemini" => Some(dir(".gemini", home.join(".gemini")).join("oauth_creds.json").is_file()),
+        // OpenCode 2.x keeps sign-ins in opencode.db (1.x: auth.json)
+        "opencode" => Some(crate::acct_models::opencode_signed_in(a)),
         // no reliable file to look at: the owner confirms by running a test
         _ => None,
     }
@@ -870,6 +942,10 @@ fn install_hint(kind: &str) -> &'static str {
 #[tauri::command]
 pub fn accounts_list(st: State<AppState>) -> Value {
     let list = crate::accounts::list(&st.db.lock());
+    let tests: Value = db::get_setting(&st.db.lock(), "acct_tests").and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_else(|| json!({}));
+    let budget = crate::usage::BudgetCfg::load(&st.db.lock());
+    // how far a "check now" of each account got (read before the runtime lock: it takes it too)
+    let checks: std::collections::HashMap<String, Value> = list.iter().filter_map(|a| crate::model_check::progress_json(&st, &a.id).map(|v| (a.id.clone(), v))).collect();
     let rt = st.rt.lock();
     let active = rt.account.as_ref().map(|a| a.id.clone());
     let items: Vec<Value> = list
@@ -891,6 +967,14 @@ pub fn accounts_list(st: State<AppState>) -> Value {
                 "note": rt.acct_notes.get(&a.id), "allowed": allowed.map(|x| x.0), "reason": allowed.map(|x| x.1.clone()),
                 "active": active.as_deref() == Some(a.id.as_str()),
                 "effort_supported": crate::providers::def(&a.kind).map(|d| d.effort).unwrap_or(false),
+                "last_test": tests.get(&a.id),
+                // the app's own meter (bot hours on this account against these budgets) when the provider has no readable quota
+                "budget": { "five_h": budget.hours_5h, "week_h": budget.hours_week },
+                // the limit this provider really has (5-hour/weekly windows, a free daily count, or pay per use) and its balance
+                "limit": crate::vendor_limits::json(a, rt.acct_balance.get(&a.id).map(|b| &b.1).filter(|t| !t.is_empty()), crate::db::now()),
+                // OmniRoute: the quota of the providers behind it, warnings, and why it is held (a subscription used twice)
+                "omni": if crate::omniroute::is(a) { crate::omniroute::status(&a.id) } else { None },
+                "check": checks.get(&a.id),
             })
         })
         .collect();
@@ -923,7 +1007,8 @@ pub fn account_add(st: State<AppState>, vendor: String, id: Option<String>, isol
     let key_auth = auth == "key";
     if key_auth {
         let k = key.as_deref().unwrap_or("");
-        if k.trim().is_empty() {
+        // OmniRoute on this machine answers without a key (omniroute.rs)
+        if k.trim().is_empty() && v.id != crate::omniroute::VENDOR {
             return Err("ใส่ API key / token ก่อน".into());
         }
         if v.id == "custom" && base_url.as_deref().unwrap_or("").trim().is_empty() {
@@ -939,7 +1024,7 @@ pub fn account_add(st: State<AppState>, vendor: String, id: Option<String>, isol
     } else {
         String::new()
     };
-    if key_auth {
+    if key_auth && !key.as_deref().unwrap_or("").trim().is_empty() {
         crate::accounts::set_secret(&st.root, &id, key.as_deref().unwrap_or(""))?;
     }
     // a provider reached through Claude Code needs its own model name: start from the first one it lists
@@ -989,6 +1074,29 @@ pub fn account_clear_key(st: State<AppState>, id: String) -> R<()> {
     Ok(())
 }
 
+/// Where a key-based provider lists the models of a key (all answer `{"data":[{"id":…}]}`).
+fn models_url(vendor: &str) -> Option<&'static str> {
+    match vendor {
+        "deepseek" => Some("https://api.deepseek.com/models"),
+        "moonshot" => Some("https://api.moonshot.ai/v1/models"),
+        "zhipu" => Some("https://api.z.ai/api/paas/v4/models"),
+        _ => None,
+    }
+}
+
+async fn fetch_models(url: &str, key: &str) -> Result<Vec<String>, String> {
+    let c = reqwest::Client::builder().timeout(std::time::Duration::from_secs(15)).build().map_err(|x| x.to_string())?;
+    let r = c.get(url).bearer_auth(key).send().await.map_err(|x| x.to_string())?;
+    if !r.status().is_success() {
+        return Err(format!("HTTP {}", r.status()));
+    }
+    let v: Value = r.json().await.map_err(|x| x.to_string())?;
+    let mut ids: Vec<String> = v["data"].as_array().map(|a| a.iter().filter_map(|m| m["id"].as_str().map(String::from)).collect()).unwrap_or_default();
+    ids.sort();
+    ids.dedup();
+    Ok(ids)
+}
+
 /// The models (and the effort levels) this account can use, as far as its own sign-in tells: Codex lists them itself,
 /// OpenCode lists them per provider, the others from the provider's catalog plus what already ran on this account.
 #[tauri::command]
@@ -1007,6 +1115,7 @@ pub async fn account_models(app: AppHandle, id: String) -> R<Value> {
     let ladder = ["low", "medium", "high", "xhigh"];
     let mut models: Vec<Value> = Vec::new();
     let mut source = "known";
+    let mut problem: Option<String> = None;
     match a.kind.as_str() {
         "codex" => {
             let ms = crate::providers::codex_models_in(&a.home);
@@ -1018,41 +1127,59 @@ pub async fn account_models(app: AppHandle, id: String) -> R<Value> {
                 models.push(json!({ "id": m.slug, "label": m.slug, "efforts": efforts }));
             }
         }
-        "opencode" => {
-            let env = crate::accounts::env_with_secret(&a, &st.root);
-            let prefix = vendor.filter(|v| v.id != "opencode").map(|v| format!("{}/", v.id));
-            let list = tauri::async_runtime::spawn_blocking(move || {
-                let bin = crate::providers::resolve_bin("opencode")?;
-                let mut c = std::process::Command::new(bin);
-                c.arg("models").envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
-                #[cfg(windows)]
-                {
-                    use std::os::windows::process::CommandExt;
-                    c.creation_flags(0x0800_0000);
+        k if k == "opencode" || k == "mistral" || crate::omniroute::is(&a) => {
+            // the account's own agent with its own key (acct_models.rs says why the plain call is not enough)
+            let (a2, root) = (a.clone(), st.root.clone());
+            let got = tauri::async_runtime::spawn_blocking(move || crate::acct_models::fetch(&a2, &root)).await.map_err(e)?;
+            match got {
+                Ok(list) => {
+                    source = "account";
+                    problem = crate::acct_models::note(&a.id);
+                    for m in list.into_iter().take(500) {
+                        let free = crate::catalog::is_free_model(&m);
+                        models.push(json!({ "id": m, "label": m, "efforts": [], "free": free }));
+                    }
                 }
-                let o = c.output().ok()?;
-                Some(String::from_utf8_lossy(&o.stdout).lines().map(|l| l.trim().to_string()).filter(|l| l.contains('/')).collect::<Vec<_>>())
-            })
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or_default();
-            if !list.is_empty() {
-                source = "account";
-            }
-            for m in list.into_iter().filter(|m| prefix.as_ref().map(|p| m.starts_with(p.as_str())).unwrap_or(true)).take(300) {
-                let free = crate::catalog::is_free_model(&m);
-                models.push(json!({ "id": m, "label": m, "efforts": [], "free": free }));
+                Err(why) => {
+                    // say why instead of quietly showing a short standard list
+                    problem = Some(why);
+                    for m in vendor.map(|v| v.models).unwrap_or(&[]) {
+                        models.push(json!({ "id": m, "label": m, "efforts": [] }));
+                    }
+                }
             }
         }
         _ => {
-            for m in vendor.map(|v| v.models).unwrap_or(&[]) {
+            // providers with an OpenAI-style model list: ask the provider itself, with this account's key
+            let url = vendor.and_then(|v| models_url(v.id));
+            if let Some(url) = url {
+                let env = crate::accounts::env_with_secret(&a, &st.root);
+                let key = vendor.and_then(|v| v.key_env.iter().find_map(|k| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone())));
+                if let Some(key) = key.filter(|k| !k.is_empty()) {
+                    match fetch_models(url, &key).await {
+                        Ok(list) if !list.is_empty() => {
+                            source = "account";
+                            for m in list {
+                                models.push(json!({ "id": m, "label": m, "efforts": if crate::providers::def(&a.kind).is_some_and(|d| d.effort) { ladder.to_vec() } else { vec![] } }));
+                            }
+                        }
+                        Ok(_) => problem = Some("ผู้ให้บริการตอบรายชื่อว่าง".into()),
+                        Err(why) => problem = Some(format!("อ่านรายชื่อจากผู้ให้บริการไม่ได้: {why}")),
+                    }
+                } else {
+                    problem = Some("ยังไม่มี key".into());
+                }
+            }
+            let fallback: &[&str] = if models.is_empty() { vendor.map(|v| v.models).unwrap_or(&[]) } else { &[] };
+            for m in fallback {
                 models.push(json!({ "id": m, "label": m, "efforts": if crate::providers::def(&a.kind).is_some_and(|d| d.effort) { ladder.to_vec() } else { vec![] } }));
             }
         }
     }
-    // what really ran on this account before is certainly usable on it
-    for m in seen {
+    // what really ran on this account before is usable on it — unless the agent itself just gave its full list (a name
+    // recorded before, e.g. a Mistral API name Vibe never used, would only mislead)
+    let listed_by_agent = source == "account" && (a.kind == "mistral" || a.kind == "opencode" || crate::omniroute::is(&a));
+    for m in seen.into_iter().filter(|_| !listed_by_agent) {
         if !models.iter().any(|x| x["id"] == m) {
             if source == "known" {
                 source = "history";
@@ -1061,7 +1188,54 @@ pub async fn account_models(app: AppHandle, id: String) -> R<Value> {
         }
     }
     let efforts: Vec<&str> = if crate::providers::def(&a.kind).is_some_and(|d| d.effort) { ladder.to_vec() } else { vec![] };
-    Ok(json!({ "models": models, "efforts": efforts, "source": source, "runner": a.kind }))
+    // only models that passed the bot-work check are offered; the others are listed apart, with why (model_check.rs)
+    let checks = crate::model_check::all(&st.db.lock());
+    let now = db::now();
+    let ck = crate::model_check::check_kind(&a);
+    let mut usable = vec![];
+    let mut hidden = vec![];
+    for mut m in models {
+        let id = m["id"].as_str().unwrap_or("").to_string();
+        let state = crate::model_check::state(&checks, &ck, &id, now);
+        if state == "bot" {
+            usable.push(m);
+        } else {
+            let note = checks.get(&crate::model_check::key(&ck, &id)).map(|v| v.note.clone()).unwrap_or_default();
+            m["state"] = json!(state);
+            m["note"] = json!(note);
+            hidden.push(m);
+        }
+    }
+    let counts = |s: &str| hidden.iter().filter(|m| m["state"] == s).count();
+    let summary = json!({ "chat": counts("chat"), "pending": counts("pending") + counts("retry"), "unknown": counts("unknown") });
+    Ok(json!({ "models": usable, "hidden": hidden, "hidden_counts": summary, "checking": crate::model_check::busy(), "efforts": efforts, "source": source, "runner": a.kind, "problem": problem }))
+}
+
+/// Try models of this account with the bot-work check now (all not-yet-checked ones when `models` is empty).
+#[tauri::command]
+pub fn model_check_now(st: State<AppState>, account: String, models: Option<Vec<String>>) -> R<usize> {
+    let a = crate::accounts::find(&st.db.lock(), &account).ok_or("ไม่พบบัญชี")?;
+    let list = match models.filter(|m| !m.is_empty()) {
+        Some(m) => m,
+        None => {
+            let checks = crate::model_check::all(&st.db.lock());
+            let now = db::now();
+            let ck = crate::model_check::check_kind(&a);
+            crate::acct_models::cached(&a.id).unwrap_or_default().into_iter().filter(|m| !matches!(crate::model_check::state(&checks, &ck, m, now).as_str(), "bot" | "chat")).collect()
+        }
+    };
+    // a model asked for explicitly is tried again even when it has a verdict
+    // (OmniRoute's models are filed apart from Claude's: model_check::check_kind)
+    let ck = crate::model_check::check_kind(&a);
+    for m in &list {
+        crate::model_check::retry_pending(&st.db.lock(), &crate::model_check::key(&ck, m));
+    }
+    crate::model_check::enqueue_front(&a.id, &list);
+    if !list.is_empty() {
+        crate::model_check::progress_start(&a.id, &list);
+    }
+    st.wake.notify_one();
+    Ok(list.len())
 }
 
 /// A short real run on this account (model, key and all): proves that the sign-in and the model name work.
@@ -1070,6 +1244,19 @@ pub async fn account_test(app: AppHandle, id: String) -> R<Value> {
     let st = app.state::<AppState>();
     let a = crate::accounts::find(&st.db.lock(), &id).ok_or("ไม่พบบัญชี")?;
     let model = if a.is_auto_model() { crate::providers::tier_model(&st.db.lock(), &a.kind, 0) } else { a.model.clone() };
+    // read the account's own list first so the test runs a model this account really has
+    if crate::omniroute::is(&a) {
+        // the gateway must answer first (started here when it is down) — say so plainly instead of a vague agent error
+        let a2 = a.clone();
+        tauri::async_runtime::spawn_blocking(move || crate::omniroute::ensure_running(&a2)).await.map_err(e)??;
+    }
+    if a.kind == "mistral" || crate::acct_models::opencode_prefix(&a).is_some() || crate::omniroute::is(&a) {
+        let (a2, root) = (a.clone(), st.root.clone());
+        let _ = tauri::async_runtime::spawn_blocking(move || crate::acct_models::fetch(&a2, &root)).await;
+    }
+    let checks = crate::model_check::all(&st.db.lock());
+    let (model, swapped) = crate::acct_models::fit(&a, &st.root, &model, &checks);
+    let model_used = model.clone();
     let env = crate::accounts::env_with_secret(&a, &st.root);
     let dir = st.root.join("data").join("provider-test");
     std::fs::create_dir_all(&dir).map_err(e)?;
@@ -1079,7 +1266,8 @@ pub async fn account_test(app: AppHandle, id: String) -> R<Value> {
     let out = crate::runner::run(
         crate::runner::RunSpec {
             cwd: &dir,
-            prompt: "Reply with the single word OK. Do not use any tools or read any files.".into(),
+            // no "do not read files": OpenCode and Vibe get this prompt *as a file* to read (a model told not to read guessed it was empty)
+            prompt: "Reply with the single word OK.".into(),
             provider: a.kind.clone(),
             model,
             effort: "low".into(),
@@ -1096,8 +1284,51 @@ pub async fn account_test(app: AppHandle, id: String) -> R<Value> {
     )
     .await
     .map_err(|x| format!("{x:#}"))?;
-    let seen: Vec<String> = lines.lock().iter().rev().take(5).rev().cloned().collect();
-    Ok(json!({ "ok": out.status == "ok", "status": out.status, "seconds": started.elapsed().as_secs(), "error": out.error, "lines": seen }))
+    let mut seen: Vec<String> = lines.lock().iter().rev().take(5).rev().cloned().collect();
+    if let Some(n) = swapped {
+        seen.insert(0, n);
+    }
+    let ok = out.status == "ok";
+    let mut out = out;
+    // OpenCode's own models: ask opencode.ai what is really wrong (expired sign-in, or the free tier used up and until when)
+    let own_models = a.kind == "opencode" && crate::acct_models::opencode_prefix(&a).is_none() && (model_used.is_empty() || model_used.starts_with("opencode/"));
+    if !ok && own_models {
+        if let Some((why, until)) = crate::acct_models::opencode_diagnose(&a).await {
+            out.error = Some(why.clone());
+            if let Some(t) = until {
+                // the bot waits for it instead of trying again and again
+                crate::limits::set(&st.db.lock(), &a.id, t, &why);
+            }
+        }
+    }
+    let used = if model_used.is_empty() { "ค่าเริ่มต้นของโปรแกรม".to_string() } else { model_used };
+    let res = json!({ "ok": ok, "status": out.status, "seconds": started.elapsed().as_secs(), "error": out.error, "lines": seen, "model": used, "ts": db::now() });
+    // kept, so the account list shows whether each account worked the last time it was tried
+    {
+        let c = st.db.lock();
+        let mut all: Value = db::get_setting(&c, "acct_tests").and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_else(|| json!({}));
+        all[&id] = json!({ "ok": ok, "ts": db::now(), "model": res["model"], "error": out.error });
+        let _ = db::set_setting(&c, "acct_tests", &all.to_string());
+    }
+    Ok(res)
+}
+
+/// The owner says the subscription connected in OmniRoute is another account than the one the app runs (or takes
+/// that back): the OmniRoute account is no longer held for it. Read again right away.
+#[tauri::command]
+pub async fn account_omni_dup_ok(app: AppHandle, id: String, ok: bool) -> R<Value> {
+    let st = app.state::<AppState>();
+    let (a, others, key) = {
+        let c = st.db.lock();
+        crate::db::set_setting(&c, &crate::omniroute::dup_key(&id), if ok { "1" } else { "0" }).map_err(e)?;
+        let list = crate::accounts::list(&c);
+        let a = list.iter().find(|a| a.id == id).cloned().ok_or("ไม่พบบัญชี")?;
+        (a, list, crate::accounts::secret(&st.root, &id))
+    };
+    let a2 = a.clone();
+    tauri::async_runtime::spawn_blocking(move || crate::omniroute::refresh(&a2, key.as_deref(), &others, ok)).await.map_err(e)?;
+    st.wake.notify_one();
+    Ok(crate::omniroute::status(&a.id).unwrap_or(Value::Null))
 }
 
 /// Change one account: label, enabled, model, effort (each optional).

@@ -81,7 +81,7 @@ fn short(s: &str, n: usize) -> String {
 }
 
 #[cfg(windows)]
-fn kill_tree(pid: u32) {
+pub fn kill_tree(pid: u32) {
     let mut c = std::process::Command::new("taskkill");
     c.args(["/T", "/F", "/PID", &pid.to_string()]);
     use std::os::windows::process::CommandExt;
@@ -90,7 +90,7 @@ fn kill_tree(pid: u32) {
 }
 
 #[cfg(not(windows))]
-fn kill_tree(pid: u32) {
+pub fn kill_tree(pid: u32) {
     let _ = std::process::Command::new("kill").args(["-9", &pid.to_string()]).status();
 }
 
@@ -109,8 +109,14 @@ fn quota_from_event(v: &Value) -> Option<crate::usage::Snapshot> {
     })
 }
 
-const LIMIT_WORDS: [&str; 9] = [
-    "usage limit", "rate limit", "limit reached", "hit your limit", "quota", "resource_exhausted", "429", "too many requests", "insufficient_quota",
+/// Does this text from an AI say its usage limit or quota is used up?
+pub fn looks_like_limit(text: &str) -> bool {
+    let l = text.to_lowercase();
+    LIMIT_WORDS.iter().any(|w| l.contains(w))
+}
+
+const LIMIT_WORDS: [&str; 11] = [
+    "usage limit", "rate limit", "limit reached", "hit your limit", "quota", "resource_exhausted", "429", "too many requests", "insufficient_quota", "out of credits", "refill",
 ];
 
 pub async fn run(
@@ -171,6 +177,7 @@ pub async fn run(
     let mut out = Outcome { status: "error".into(), ..Default::default() };
     let mut result_text = String::new();
     let stream = inv.claude_stream;
+    let codex_json = spec.provider == "codex";
     // other agents narrate progress on stderr (Codex) or stdout (Gemini, OpenCode): show both
     let tail = Arc::new(parking_lot::Mutex::new(String::new()));
     let (etx, mut erx) = tokio::sync::mpsc::unbounded_channel::<String>();
@@ -215,6 +222,34 @@ pub async fn run(
                     Ok(Some(l)) => {
                         let _ = log.write_all(l.as_bytes()).await;
                         let _ = log.write_all(b"\n").await;
+                        if codex_json {
+                            // `codex exec --json`: events become plain-language lines (same words as the Codex chat)
+                            if let Ok(v) = serde_json::from_str::<Value>(&l) {
+                                // the conversation id lets the owner carry on in Codex itself or in the app's chat
+                                if v.get("type").and_then(Value::as_str) == Some("thread.started") {
+                                    out.session_id = v.get("thread_id").and_then(Value::as_str).map(String::from);
+                                }
+                                if v.get("type").and_then(Value::as_str) == Some("turn.completed") {
+                                    let g = |k: &str| v.pointer(&format!("/usage/{k}")).and_then(Value::as_i64).unwrap_or(0);
+                                    out.input_tokens += g("input_tokens");
+                                    out.cache_read += g("cached_input_tokens");
+                                    out.output_tokens += g("output_tokens");
+                                    out.num_turns += 1;
+                                }
+                                match crate::codex_chat::feed_line(&v) {
+                                    Some(t) => {
+                                        if t.starts_with("⚠️") {
+                                            let mut g = tail.lock();
+                                            g.push_str(&t);
+                                            g.push('\n');
+                                        }
+                                        on_line(t);
+                                    }
+                                    None => on_line(String::new()), // heartbeat
+                                }
+                            }
+                            continue;
+                        }
                         if !stream {
                             feed(&l, &tail);
                             continue;
@@ -249,7 +284,19 @@ pub async fn run(
                 match l {
                     Some(l) => {
                         let _ = log.write_all(format!("[stderr] {l}\n").as_bytes()).await;
-                        feed(&l, &tail);
+                        if codex_json {
+                            // with --json the story is on stdout; stderr is hook/skill noise: kept for error reports only
+                            let mut g = tail.lock();
+                            g.push_str(strip_ansi(&l).trim());
+                            g.push('\n');
+                            if g.len() > 6000 {
+                                let cut = g.len() - 4000;
+                                let cut = (cut..g.len()).find(|i| g.is_char_boundary(*i)).unwrap_or(0);
+                                g.drain(..cut);
+                            }
+                        } else {
+                            feed(&l, &tail);
+                        }
                     }
                     None => stderr_open = false,
                 }

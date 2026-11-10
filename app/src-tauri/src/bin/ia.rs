@@ -30,6 +30,8 @@ const HELP: &str = r#"ia — สั่ง Idea Autopilot จาก command line
   ia ask <id> "ข้อความ"         สั่ง AI แก้/ทำต่อในไอเดียนั้น (ส่งเข้า session เดิม ถ้าไม่มีจะเปิดให้)
   ia hold <id> [off]            บอกบอทว่ากำลังคุยไอเดียนี้อยู่ (บอทจะเว้นไว้ 3 ชม.) / ปล่อยคืน
   ia note <id> "สรุป"            บันทึกความคืบหน้าลงไอเดีย (แจ้งเจ้าของทาง Telegram/แอป)
+  ia reqs <id>                  คำสั่งของเจ้าของในไอเดียนั้น (รายการที่ต้องทำให้ครบ) และสถานะ
+  ia req <เลข> done|no "รายละเอียด"  ทำคำสั่งนั้นเสร็จแล้ว (บอกว่าทำอะไร ตรวจยังไง) / ทำตามที่ขอไม่ได้ (บอกเหตุผล)
   ia models                     โมเดลที่ระบบเลือกแต่ละขั้น + สถิติที่ใช้ตัดสิน + เวอร์ชันโมเดลล่าสุด
   ia sync                       สถานะ sync หลายเครื่อง
   ia set <key> <value>          ตั้งค่า เช่น ia set sync_dir "D:\my-sync-repo" (key: sync_dir, brain_dir, extra_inbox,
@@ -245,6 +247,8 @@ fn run() -> Result<(), String> {
         "ask" => call("ask", json!({ "id": num(1)?, "text": rest(2).ok_or("ต้องมีข้อความคำสั่ง")? }))?,
         "hold" => call("hold", json!({ "id": num(1)?, "on": arg(2).map(|x| x != "off").unwrap_or(true) }))?,
         "note" => call("note", json!({ "id": num(1)?, "text": rest(2).ok_or("ต้องมีข้อความสรุป")? }))?,
+        "reqs" => call("reqs", json!({ "id": num(1)? }))?,
+        "req" => call("req", json!({ "rid": num(1)?, "state": arg(2).ok_or("ต้องระบุ done หรือ no")?, "note": rest(3).unwrap_or_default() }))?,
         "set" => call("set", json!({ "key": arg(1).ok_or("ต้องมี key")?, "value": rest(2).unwrap_or_default() }))?,
         "takeover" => call("takeover", Value::Null)?,
         "ui" => call("ui", json!({ "page": arg(1), "id": arg(2).and_then(|x| x.parse::<i64>().ok()) }))?,
@@ -365,6 +369,22 @@ fn run() -> Result<(), String> {
                 for i in b[k].as_array().into_iter().flatten() {
                     println!("  [{label}] #{} {} — {}", i["id"], s(&i["title"]), s(&i["summary"]));
                 }
+            }
+        }
+        "reqs" => {
+            let v = out.as_array().cloned().unwrap_or_default();
+            if v.is_empty() {
+                println!("ยังไม่มีคำสั่งที่ต้องติ๊ก");
+            }
+            for r in v {
+                let mark = match r["state"].as_str().unwrap_or("") {
+                    "done" => "[~] AI ว่าเสร็จ รอเจ้าของยืนยัน",
+                    "ok" => "[x] เจ้าของยืนยันแล้ว",
+                    "no" => "[!] ทำไม่ได้",
+                    _ => "[ ] รอทำ",
+                };
+                let note = r["note"].as_str().filter(|n| !n.is_empty()).map(|n| format!(" — {n}")).unwrap_or_default();
+                println!("#{} {mark}: {}{note}", r["id"], r["text"].as_str().unwrap_or(""));
             }
         }
         _ => println!("เรียบร้อย"),

@@ -1,4 +1,5 @@
 <script>
+  import Icon from "../components/Icon.svelte";
   import { onMount } from "svelte";
   import { api } from "../lib/api.js";
   import { toast } from "../lib/store.svelte.js";
@@ -25,13 +26,13 @@
   // result of the deep check, as shown next to each installed skill
   function badge(s) {
     const x = s.ss;
-    if (!x || !x.status) return { t: "🛡 ยังไม่ได้ตรวจเชิงลึก", c: "", tip: "ตรวจด้วยตัวสแกนในโปรแกรมตอนติดตั้งแล้ว แต่ SkillSpector ยังไม่ได้ตรวจสกิลนี้" };
+    if (!x || !x.status) return { t: "ยังไม่ได้ตรวจเชิงลึก", c: "", tip: "ตรวจด้วยตัวสแกนในโปรแกรมตอนติดตั้งแล้ว แต่ SkillSpector ยังไม่ได้ตรวจสกิลนี้" };
     const top = (x.issues ?? []).slice(0, 3).map((i) => `${i.severity}: ${i.pattern} (${i.category})`).join(" | ");
     const when = `ตรวจด้วย SkillSpector v${x.version} · คะแนนเสี่ยง ${x.score}/100`;
     const stale = x.current ? "" : " (ไฟล์หรือเวอร์ชันตัวตรวจเปลี่ยน — รอตรวจใหม่)";
-    if (x.status === "pass") return { t: x.current ? "🛡 ผ่านการตรวจ" : "🛡 ผ่าน (รอตรวจใหม่)", c: "teal", tip: when + stale };
-    if (x.status === "caution") return { t: "🛡 ควรระวัง", c: "amber", tip: `${when}${stale} — ${top}` };
-    return { t: "🛡 ไม่ผ่าน — ไม่ถูกเสนอให้บอท", c: "red", tip: `${when}${stale} — ${top}` };
+    if (x.status === "pass") return { t: x.current ? "ผ่านการตรวจ" : "ผ่าน (รอตรวจใหม่)", c: "teal", tip: when + stale };
+    if (x.status === "caution") return { t: "ควรระวัง", c: "amber", tip: `${when}${stale} — ${top}` };
+    return { t: "ไม่ผ่าน — ไม่ถูกเสนอให้บอท", c: "red", tip: `${when}${stale} — ${top}` };
   }
 
   // skills grouped by family: one dish, several recipes
@@ -184,8 +185,8 @@
   <SkillEngine onchange={load} />
   <div class="row wrap tabs">
     <button class="f" class:on={tab === "mine"} onclick={() => (tab = "mine")}>สกิลของฉัน ({data.skills.length})</button>
-    <button class="f" class:on={tab === "shop"} onclick={() => { tab = "shop"; if (!repos) search(); }}>🛒 ช็อปสกิล (ฟรี)</button>
-    <button class="f" class:on={tab === "write"} onclick={() => (tab = "write")}>✍️ เขียน / วางเอง</button>
+    <button class="f" class:on={tab === "shop"} onclick={() => { tab = "shop"; if (!repos) search(); }}><Icon name="cart" /> ช็อปสกิล (ฟรี)</button>
+    <button class="f" class:on={tab === "write"} onclick={() => (tab = "write")}><Icon name="pencil" /> เขียน / วางเอง</button>
   </div>
 
   {#if tab === "mine"}
@@ -195,7 +196,7 @@
     {#each groups as g (g.family || g.items[0].slug)}
       <div class="group">
         {#if g.items.length > 1}
-          <div class="gh">🍝 ตระกูล <b>{g.family}</b> · {g.items.length} สูตร — บอทเสนอทีละสูตร</div>
+          <div class="gh"><Icon name="layers" /> ตระกูล <b>{g.family}</b> · {g.items.length} สูตร — บอทเสนอทีละสูตร</div>
         {/if}
         {#each g.items as s (s.slug)}
           <div class="card sk" class:off={!s.enabled}>
@@ -203,9 +204,9 @@
               <label class="sw" title="เปิด/ปิดสกิลนี้"><input type="checkbox" checked={s.enabled} onchange={(e) => set(s.slug, "enabled", e.currentTarget.checked)} /></label>
               <b class="grow">{s.name}</b>
               <span class="chip {trust(s.trust).c}">{trust(s.trust).t}</span>
-              <span class="chip {badge(s).c}" title={badge(s).tip}>{badge(s).t}</span>
+              <span class="chip {badge(s).c}" title={badge(s).tip}><Icon name="shieldCheck" /> {badge(s).t}</span>
               {#if s.family}
-                <button class="small" class:pin={s.pinned} onclick={() => set(s.slug, "pinned", !s.pinned)} title="ปักหมุด: ใช้สูตรนี้เสมอในตระกูลนี้">{s.pinned ? "📌 ปักหมุดอยู่" : "📍 ปักหมุด"}</button>
+                <button class="small" class:pin={s.pinned} onclick={() => set(s.slug, "pinned", !s.pinned)} title="ปักหมุด: ใช้สูตรนี้เสมอในตระกูลนี้"><Icon name="pin" /> {s.pinned ? "ปักหมุดอยู่" : "ปักหมุด"}</button>
               {/if}
             </div>
             <div class="muted small">{s.description}</div>
@@ -237,7 +238,7 @@
 
   {#if tab === "shop"}
     <div class="card safe small">
-      🛡️ <b>ความปลอดภัย:</b> ดึงเฉพาะข้อความของ <code>SKILL.md</code> จาก GitHub (ผูกกับ commit และ hash เดียวกับที่คุณเปิดดู) ไม่ดาวน์โหลดสคริปต์หรือโปรแกรมใดๆ
+      <Icon name="shieldCheck" /> <b>ความปลอดภัย:</b> ดึงเฉพาะข้อความของ <code>SKILL.md</code> จาก GitHub (ผูกกับ commit และ hash เดียวกับที่คุณเปิดดู) ไม่ดาวน์โหลดสคริปต์หรือโปรแกรมใดๆ
       ผ่านตัวสแกนก่อนเสมอ ถ้าเจอของอันตรายจะติดตั้งไม่ได้ ถ้าเป็นแค่คำเตือนต้องติ๊กยืนยันหลังอ่านเนื้อหาเต็ม และ AI ติดตั้งสกิลเองไม่ได้ ตัวสแกนเป็นเพียงด่านแรก — การอ่านเนื้อหาด้วยตาคุณคือด่านจริง
     </div>
     <form class="row" onsubmit={(e) => { e.preventDefault(); search(); }}>
@@ -254,7 +255,7 @@
       {#each repos as r (r.repo)}
         <button class="card repo" onclick={() => browse(r.repo)}>
           <div class="row wrap"><b class="grow">{r.repo}</b><span class="chip {r.trust === 'known' ? 'blue' : 'amber'}">{r.trust === "known" ? "แหล่งที่รู้จัก" : "ชุมชน"}</span>
-            {#if r.stars != null}<span class="faint small">★ {r.stars}</span>{/if}{#if r.license}<span class="faint small">{r.license}</span>{/if}</div>
+            {#if r.stars != null}<span class="faint small"><Icon name="star" /> {r.stars}</span>{/if}{#if r.license}<span class="faint small">{r.license}</span>{/if}</div>
           {#if r.description}<div class="muted small">{r.description}</div>{/if}
         </button>
       {:else}
@@ -264,9 +265,9 @@
 
     {#if repo}
       <div class="row wrap">
-        <button class="small" onclick={() => { repo = null; preview = null; }}>← กลับ</button>
+        <button class="small" onclick={() => { repo = null; preview = null; }}><Icon name="arrowLeft" /> กลับ</button>
         <b>{repo.repo}</b>
-        {#if repo.stars != null}<span class="faint small">★ {repo.stars}</span>{/if}
+        {#if repo.stars != null}<span class="faint small"><Icon name="star" /> {repo.stars}</span>{/if}
         <span class="small {repo.license ? 'faint' : 'amber'}">{repo.license ? `ไลเซนส์ ${repo.license}` : "ไม่ระบุไลเซนส์ที่ระดับ repo — ตรวจในไฟล์สกิลเอง"}</span>
         {#if repo.archived}<span class="chip amber">เลิกดูแลแล้ว</span>{/if}
         <span class="faint small">commit {repo.commit.slice(0, 7)}</span>
@@ -294,7 +295,7 @@
         <div class="small faint">ที่มา <a href={preview.source} target="_blank" rel="noreferrer">{preview.source}</a> · ไลเซนส์ {preview.license || "ไม่ระบุ"} · sha256 {preview.sha256.slice(0, 12)}… · {(preview.size / 1024).toFixed(1)} KB</div>
         {#if preview.domains.length}<div class="small faint">ลิงก์ในไฟล์ไปยัง: {preview.domains.join(", ")}</div>{/if}
         {#each preview.findings as f}
-          <div class="finding {f.level}"><b>{f.level === "danger" ? "⛔" : "⚠️"} {f.what}</b><div class="small">{f.why}</div>{#if f.excerpt}<code class="small">{f.excerpt}</code>{/if}</div>
+          <div class="finding {f.level}"><b><Icon name={f.level === "danger" ? "stopSign" : "warning"} /> {f.what}</b><div class="small">{f.why}</div>{#if f.excerpt}<code class="small">{f.excerpt}</code>{/if}</div>
         {/each}
         {#if preview.similar.length}
           <div class="hint small">คล้ายกับสกิลที่มีอยู่: {preview.similar.map((x) => `“${x.name}” (${x.score}%)`).join(", ")} — ติดตั้งได้ถ้าอยากได้อีกสูตร แล้วใส่ตระกูลเดียวกันเพื่อเทียบผล</div>
@@ -322,7 +323,7 @@
     {#if checked}
       <div class="card">
         <b>{checked.name}</b> — {lv === "clean" ? "ผ่านการสแกน" : lv === "warn" ? "มีคำเตือน" : "อันตราย ติดตั้งไม่ได้"}
-        {#each checked.findings as f}<div class="finding {f.level}"><b>{f.level === "danger" ? "⛔" : "⚠️"} {f.what}</b><div class="small">{f.why}</div></div>{/each}
+        {#each checked.findings as f}<div class="finding {f.level}"><b><Icon name={f.level === "danger" ? "stopSign" : "warning"} /> {f.what}</b><div class="small">{f.why}</div></div>{/each}
         {#if checked.similar.length}<div class="hint small">คล้ายกับ {checked.similar.map((x) => `“${x.name}”`).join(", ")}</div>{/if}
         {#if checked.ss_available}<SkillCheck text={text} bind:result={deepLocal} />{/if}
         {#if lv === "warn"}<label class="small"><input type="checkbox" bind:checked={acceptLocal} /> ฉันอ่านคำเตือนแล้ว และต้องการเพิ่ม</label>{/if}

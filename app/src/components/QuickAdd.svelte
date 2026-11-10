@@ -5,19 +5,25 @@
   import Attach from "./Attach.svelte";
   import SkillMenu from "./SkillMenu.svelte";
   import IdeaAi from "./IdeaAi.svelte";
+  import Scope from "./Scope.svelte";
 
   let { autofocus = false, onadded = null } = $props();
   let text = $state("");
   let err = $state("");
   let sendKey = $state("enter"); // enter = Enter sends · ctrl_enter = Ctrl+Enter sends, Enter is a new line
-  let el;
+  let el = $state();
   let att;
   let staged = $state([]);
   let menu;
   let ai = $state({ account: "", model: "", effort: "" });
+  let scope = $state("personal"); // starts as the last set used
 
   onMount(async () => {
-    try { sendKey = (await api.settings()).send_key || "enter"; } catch {}
+    try {
+      const s = await api.settings();
+      sendKey = s.send_key || "enter";
+      scope = s.scope_default === "work" ? "work" : "personal";
+    } catch {}
   });
   $effect(() => {
     if (autofocus) el?.focus();
@@ -44,7 +50,7 @@
     }
     try {
       // files only: the idea is named after them
-      await api.addIdea(text.trim() ? text : `ไอเดียจากไฟล์แนบ: ${staged.map((s) => s.name).join(", ")}`, staged.map((s) => s.token), ai);
+      await api.addIdea(text.trim() ? text : `ไอเดียจากไฟล์แนบ: ${staged.map((s) => s.name).join(", ")}`, staged.map((s) => s.token), ai, scope);
       att?.reset();
       ai = { account: "", model: "", effort: "" };
       text = "";
@@ -70,7 +76,7 @@
 <div class="qa">
   <span class="plus">＋</span>
   <div class="tw">
-  <SkillMenu bind:text below bind:this={menu} />
+  <SkillMenu bind:text below bind:this={menu} {el} />
   <textarea
     bind:this={el}
     bind:value={text}
@@ -84,6 +90,7 @@
   ></textarea>
   </div>
   <Attach bind:this={att} bind:staged fallback priority={1} />
+  <Scope bind:value={scope} compact />
   <IdeaAi bind:value={ai} />
   {#if err}<span class="err">{err}</span>{/if}
 </div>
@@ -93,6 +100,7 @@
   .qa:focus-within { border-color: var(--teal); }
   .tw { position: relative; flex: 1; display: flex; min-width: 200px; }
   .tw textarea { flex: 1; }
+  .qa :global(.scope) { margin-top: 6px; }
   .plus { color: var(--teal); font-size: 18px; padding-top: 8px; }
   textarea { flex: 1; min-width: 200px; border: none; background: transparent; padding: 10px 0; font-size: 15px; resize: none; line-height: 1.4; max-height: 150px; font-family: inherit; }
   .err { color: var(--red); font-size: 13px; white-space: nowrap; padding-top: 10px; }

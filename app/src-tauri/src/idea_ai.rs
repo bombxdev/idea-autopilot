@@ -60,9 +60,12 @@ pub fn all_json(c: &Connection) -> Value {
     json!(load(c))
 }
 
-/// The account an idea is pinned to, when it is pinned.
+/// The account an idea is pinned to, when it is pinned — and that account is still there and switched on. A pin to an
+/// account the owner switched off (or removed) counts as no pin: the idea goes to whichever account works, instead of
+/// waiting for one that never will.
 pub fn pinned_account(c: &Connection, id: i64) -> Option<String> {
-    get(c, id).map(|a| a.account).filter(|a| !a.is_empty())
+    let want = get(c, id).map(|a| a.account).filter(|a| !a.is_empty())?;
+    crate::accounts::list(c).into_iter().find(|a| a.id == want && a.enabled).map(|a| a.id)
 }
 
 #[cfg(test)]
@@ -78,6 +81,14 @@ mod tests {
     #[test]
     fn a_choice_is_kept_per_idea_and_empty_means_automatic() {
         let c = conn();
+        let acct = |id: &str, on: bool| crate::accounts::Account {
+            id: id.into(), kind: "codex".into(), label: String::new(), enabled: on, home: String::new(), model: "auto".into(),
+            effort: "auto".into(), vendor: String::new(), auth: "login".into(), base_url: String::new(),
+        };
+        crate::accounts::save(&c, &[acct("codex01", true), acct("off01", false)]).unwrap();
+        // pinned to an account that is switched off: as if not pinned
+        set(&c, 5, &IdeaAi { account: "off01".into(), model: "auto".into(), effort: "auto".into(), skills: vec![] }).unwrap();
+        assert!(pinned_account(&c, 5).is_none());
         assert!(get(&c, 3).is_none());
         set(&c, 3, &IdeaAi { account: "codex01".into(), model: "gpt-6.1-sol".into(), effort: "high".into(), skills: vec![] }).unwrap();
         let a = get(&c, 3).unwrap();

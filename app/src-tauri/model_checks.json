@@ -1,0 +1,246 @@
+{
+  "about": "Results of the bot-work check per agent|model (model_check.rs). bot = can do the bot's work, chat = chat only.",
+  "checks": {
+    "mistral|codestral-2508": {
+      "note": "",
+      "secs": 27,
+      "ts": 1793890065,
+      "v": "bot"
+    },
+    "mistral|codestral-latest": {
+      "note": "",
+      "secs": 17,
+      "ts": 1793890084,
+      "v": "bot"
+    },
+    "mistral|deepseek-v4-1-flash-1017": {
+      "note": "",
+      "secs": 17,
+      "ts": 1793890102,
+      "v": "bot"
+    },
+    "mistral|glm-5-2": {
+      "note": "",
+      "secs": 24,
+      "ts": 1793891662,
+      "v": "bot"
+    },
+    "mistral|glm-5-3": {
+      "note": "",
+      "secs": 23,
+      "ts": 1793890415,
+      "v": "bot"
+    },
+    "mistral|magistral-medium-latest": {
+      "note": "",
+      "secs": 42,
+      "ts": 1793890497,
+      "v": "bot"
+    },
+    "mistral|magistral-small-latest": {
+      "note": "",
+      "secs": 21,
+      "ts": 1793890518,
+      "v": "bot"
+    },
+    "mistral|ministral-14b-2512": {
+      "note": "",
+      "secs": 29,
+      "ts": 1793891629,
+      "v": "bot"
+    },
+    "mistral|ministral-14b-latest": {
+      "note": "",
+      "secs": 23,
+      "ts": 1793890593,
+      "v": "bot"
+    },
+    "mistral|ministral-3b-2512": {
+      "note": "",
+      "secs": 26,
+      "ts": 1793890626,
+      "v": "bot"
+    },
+    "mistral|ministral-3b-latest": {
+      "note": "",
+      "secs": 22,
+      "ts": 1793890650,
+      "v": "bot"
+    },
+    "mistral|ministral-8b-2512": {
+      "note": "",
+      "secs": 34,
+      "ts": 1793890689,
+      "v": "bot"
+    },
+    "mistral|ministral-8b-latest": {
+      "note": "",
+      "secs": 24,
+      "ts": 1793890720,
+      "v": "bot"
+    },
+    "mistral|mistral-code-fim-latest": {
+      "note": "",
+      "secs": 36,
+      "ts": 1793890764,
+      "v": "bot"
+    },
+    "mistral|mistral-code-latest": {
+      "note": "",
+      "secs": 16,
+      "ts": 1793890780,
+      "v": "bot"
+    },
+    "mistral|mistral-large-2512": {
+      "note": "",
+      "secs": 40,
+      "ts": 1793890825,
+      "v": "bot"
+    },
+    "mistral|mistral-large-4": {
+      "note": "",
+      "secs": 27,
+      "ts": 1793890853,
+      "v": "bot"
+    },
+    "mistral|mistral-large-4-0": {
+      "note": "",
+      "secs": 28,
+      "ts": 1793890881,
+      "v": "bot"
+    },
+    "mistral|mistral-large-4-0-3": {
+      "note": "",
+      "secs": 26,
+      "ts": 1793890991,
+      "v": "bot"
+    },
+    "mistral|mistral-large-latest": {
+      "note": "",
+      "secs": 30,
+      "ts": 1793891022,
+      "v": "bot"
+    },
+    "mistral|mistral-medium": {
+      "note": "",
+      "secs": 23,
+      "ts": 1793891046,
+      "v": "bot"
+    },
+    "mistral|mistral-medium-2604": {
+      "note": "",
+      "secs": 20,
+      "ts": 1793891069,
+      "v": "bot"
+    },
+    "mistral|mistral-medium-3": {
+      "note": "",
+      "secs": 37,
+      "ts": 1793891113,
+      "v": "bot"
+    },
+    "mistral|mistral-medium-3-5": {
+      "note": "",
+      "secs": 32,
+      "ts": 1793891146,
+      "v": "bot"
+    },
+    "mistral|mistral-medium-3.5": {
+      "note": "",
+      "secs": 34,
+      "ts": 1793891180,
+      "v": "bot"
+    },
+    "mistral|mistral-medium-latest": {
+      "note": "",
+      "secs": 29,
+      "ts": 1793891215,
+      "v": "bot"
+    },
+    "mistral|mistral-small-2603": {
+      "note": "",
+      "secs": 23,
+      "ts": 1793891252,
+      "v": "bot"
+    },
+    "mistral|mistral-small-latest": {
+      "note": "",
+      "secs": 18,
+      "ts": 1793891271,
+      "v": "bot"
+    },
+    "mistral|mistral-vibe-cli-fast": {
+      "note": "",
+      "secs": 17,
+      "ts": 1793891288,
+      "v": "bot"
+    },
+    "mistral|mistral-vibe-cli-latest": {
+      "note": "",
+      "secs": 24,
+      "ts": 1793891313,
+      "v": "bot"
+    },
+    "mistral|mistral-vibe-cli-with-tools": {
+      "note": "",
+      "secs": 46,
+      "ts": 1793891363,
+      "v": "bot"
+    },
+    "mistral|voxtral-small-2507": {
+      "note": "",
+      "secs": 39,
+      "ts": 1793891405,
+      "v": "bot"
+    },
+    "mistral|voxtral-small-latest": {
+      "note": "",
+      "secs": 28,
+      "ts": 1793891434,
+      "v": "bot"
+    },
+    "mistral|zai-glm-5": {
+      "note": "",
+      "secs": 15,
+      "ts": 1793891679,
+      "v": "bot"
+    },
+    "mistral|zai-glm-5-2": {
+      "note": "",
+      "secs": 34,
+      "ts": 1793891714,
+      "v": "bot"
+    },
+    "mistral|zai-glm-5-3": {
+      "note": "",
+      "secs": 18,
+      "ts": 1793891733,
+      "v": "bot"
+    },
+    "mistral|zai-glm-5-3-flash": {
+      "note": "",
+      "secs": 21,
+      "ts": 1793891760,
+      "v": "bot"
+    },
+    "mistral|zai-glm-latest": {
+      "note": "",
+      "secs": 30,
+      "ts": 1793891795,
+      "v": "bot"
+    },
+    "opencode|openrouter/cohere/north-mini-code:free": {
+      "note": "ไม่ผ่าน 2 ครั้ง: ไม่ได้เขียน answer.txt · ✓ จบขั้น / 💬 If you have a specific task in mind, I'd be happy to help you with it directly, or we can create the content in the `logs/",
+      "secs": 55,
+      "ts": 1793891596,
+      "v": "chat"
+    },
+    "opencode|openrouter/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free": {
+      "note": "ไม่ผ่าน 2 ครั้ง: ไม่ได้เขียน answer.txt · ✓ จบขั้น / 💬 The file `logs/prompt.md` appears to be empty, so there is no task described. Could you please provide the task details or",
+      "secs": 12,
+      "ts": 1793891519,
+      "v": "chat"
+    }
+  },
+  "version": 1
+}

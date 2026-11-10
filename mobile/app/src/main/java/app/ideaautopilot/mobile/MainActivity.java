@@ -8,6 +8,8 @@ import android.os.Build;
 import android.os.Bundle;
 import android.view.WindowInsets;
 import android.widget.FrameLayout;
+import android.webkit.ValueCallback;
+import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -16,6 +18,9 @@ import android.webkit.WebViewClient;
 /** A WebView shell around assets/index.html; all logic lives in the page. */
 public class MainActivity extends Activity {
     private WebView web;
+    private static final int PICK_FILES = 7;
+    /** the page's <input type=file> waiting for the gallery / file picker */
+    private ValueCallback<Uri[]> pending;
 
     @Override
     protected void onCreate(Bundle state) {
@@ -33,6 +38,26 @@ public class MainActivity extends Activity {
                 if ("file".equals(u.getScheme())) return false;
                 // links in reports open in the browser, not inside the app
                 startActivity(new Intent(Intent.ACTION_VIEW, u));
+                return true;
+            }
+        });
+        // <input type=file accept="image/*"> → the system picker (gallery, photos, files); without this nothing opens
+        web.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> cb, FileChooserParams params) {
+                if (pending != null) pending.onReceiveValue(null);
+                pending = cb;
+                Intent pick = new Intent(Intent.ACTION_GET_CONTENT);
+                pick.addCategory(Intent.CATEGORY_OPENABLE);
+                String[] types = params.getAcceptTypes();
+                pick.setType(types != null && types.length > 0 && !types[0].isEmpty() ? types[0] : "*/*");
+                pick.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, params.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE);
+                try {
+                    startActivityForResult(Intent.createChooser(pick, "เลือกรูป"), PICK_FILES);
+                } catch (Exception e) {
+                    pending = null;
+                    return false;
+                }
                 return true;
             }
         });
@@ -54,6 +79,24 @@ public class MainActivity extends Activity {
         setContentView(root);
         if (state != null) web.restoreState(state);
         else web.loadUrl("file:///android_asset/index.html");
+    }
+
+    @Override
+    protected void onActivityResult(int request, int result, Intent data) {
+        super.onActivityResult(request, result, data);
+        if (request != PICK_FILES || pending == null) return;
+        Uri[] picked = null;
+        if (result == RESULT_OK && data != null) {
+            if (data.getClipData() != null) {
+                int n = data.getClipData().getItemCount();
+                picked = new Uri[n];
+                for (int i = 0; i < n; i++) picked[i] = data.getClipData().getItemAt(i).getUri();
+            } else if (data.getData() != null) {
+                picked = new Uri[] { data.getData() };
+            }
+        }
+        pending.onReceiveValue(picked);
+        pending = null;
     }
 
     @Override

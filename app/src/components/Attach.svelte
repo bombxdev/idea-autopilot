@@ -1,5 +1,6 @@
 <script>
-  // Attach pictures/files to an idea or an instruction: 📎 button, Ctrl+V (a screenshot in the clipboard,
+  import Icon from "./Icon.svelte";
+  // Attach pictures/files to an idea or an instruction: the paperclip button, Ctrl+V (a screenshot in the clipboard,
   // or files copied in Explorer) and drag & drop. Files are staged on the backend right away; the parent
   // sends the tokens in `staged` together with its text.
   import { onMount } from "svelte";
@@ -25,7 +26,7 @@
     });
   });
 
-  const ICON = { image: "🖼", pdf: "📄", audio: "🎵", video: "🎞", text: "📃", office: "📊", other: "📎" };
+  const ICON = { image: "image", pdf: "file", audio: "music", video: "film", text: "doc", office: "chart", other: "paperclip" };
   const mb = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
 
   function room(n) {
@@ -96,7 +97,7 @@
 
 <span class="att" bind:this={root} class:hover={hovering}>
   <button type="button" class="clip" title="แนบรูป/ไฟล์ (หรือกด Ctrl+V วางภาพที่แคปไว้ หรือลากไฟล์มาวาง)"
-    onclick={() => { onpick?.(true); input.click(); }}>📎{#if busy}<span class="spin">…</span>{/if}</button>
+    onclick={() => { onpick?.(true); input.click(); }}><Icon name="paperclip" />{#if busy}<span class="spin">…</span>{/if}</button>
   <input bind:this={input} type="file" multiple hidden onchange={picked} oncancel={() => onpick?.(false)} />
 </span>
 {#if hovering}<div class="drop">ปล่อยไฟล์ตรงนี้เพื่อแนบ</div>{/if}
@@ -104,10 +105,10 @@
   <div class="chips">
     {#each staged as s (s.token)}
       <span class="chipf" class:warn={unsupported(s)} title={unsupported(s) ? `${info.label} อาจเปิดไฟล์ชนิดนี้ตรงๆ ไม่ได้ — ไฟล์จะถูกเก็บไว้ แต่บอทอาจอ่านไม่ได้` : s.name}>
-        {#if s.thumb}<img src={s.thumb} alt="" />{:else}<span>{ICON[s.kind] ?? "📎"}</span>{/if}
+        {#if s.thumb}<img src={s.thumb} alt="" />{:else}<span><Icon name={ICON[s.kind] ?? "paperclip"} /></span>{/if}
         <span class="nm">{s.name}</span><span class="faint">{mb(s.size)}</span>
-        {#if unsupported(s)}<span class="w">⚠</span>{/if}
-        <button type="button" class="x" aria-label="เอาออก" onclick={() => remove(s)}>✕</button>
+        {#if unsupported(s)}<span class="w"><Icon name="warning" /></span>{/if}
+        <button type="button" class="x" aria-label="เอาออก" onclick={() => remove(s)}><Icon name="close" /></button>
       </span>
     {/each}
   </div>

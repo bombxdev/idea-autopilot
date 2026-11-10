@@ -26,6 +26,15 @@ SKIP_RS = ("prompts.rs", "workspace.rs", "chat.rs", "agents.rs", "bin")
 def norm(s):
     return re.sub(r"\s+", " ", s).strip()
 
+# Emoji that the interface draws as its own icons (EMOJI in app/src/lib/icons.js): <IconText> shows the icon apart
+# from the words, so a template is the words alone.
+_ICONS = open(os.path.join(SRC, "lib", "icons.js"), encoding="utf-8").read()
+_EMOJI = sorted(re.findall(r'"([^"\w\s]{1,4})": "\w+"', _ICONS.split("export const EMOJI", 1)[1].split("};", 1)[0]), key=len, reverse=True)
+ICON_RE = re.compile("(" + "|".join(map(re.escape, _EMOJI)) + ")️?")
+
+def strip_icons(s):
+    return ICON_RE.sub("", s)
+
 def balanced(s, i):
     """index just after the {...} that starts at s[i]"""
     d = 0
@@ -159,7 +168,7 @@ def main():
     # the stage names of prompts.rs are interface text; the rest of that file is the AI's instructions
     found.update(m for m in re.findall(r'label: "([^"]*[\u0E00-\u0E7F][^"]*)"', open(os.path.join(RUST, "prompts.rs"), encoding="utf-8").read()))
     # a template with nothing but placeholders and punctuation is not text
-    keep = sorted({norm(t) for t in found if len(THAI.findall(t)) >= 1 and norm(t)})
+    keep = sorted({norm(strip_icons(t)) for t in found if len(THAI.findall(t)) >= 1 and norm(strip_icons(t))})
     os.makedirs(OUT, exist_ok=True)
     old = []
     p = os.path.join(OUT, "source.json")

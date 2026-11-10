@@ -1,4 +1,5 @@
 <script>
+  import Icon from "./components/Icon.svelte";
   import { onMount } from "svelte";
   import { api, listen } from "./lib/api.js";
   import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -67,13 +68,13 @@
 
 <div class="cap" class:done>
   <div class="row top">
-    <span class="logo">◐</span>
+    <span class="logo"><Icon name="logo" /></span>
     <span class="faint small grow">{sendKey === "enter" ? "จดไอเดีย — Enter บันทึก · Shift+Enter ขึ้นบรรทัด · Esc ปิด" : "จดไอเดีย — Ctrl+Enter บันทึก · Enter ขึ้นบรรทัด · Esc ปิด"}</span>
     <span class="faint small">! ด่วน · ? research</span>
     <Attach bind:this={att} bind:staged priority={1} fallback onpick={(v) => (picking = v)} />
   </div>
   {#if done}
-    <div class="ok">✓ จดแล้ว — ไปทำอย่างอื่นได้เลย</div>
+    <div class="ok"><Icon name="check" /> จดแล้ว — ไปทำอย่างอื่นได้เลย</div>
   {:else}
     <textarea bind:this={el} bind:value={text} oninput={() => (err = "")} onkeydown={key} onpaste={(e) => att?.paste(e)} rows="2"
       placeholder="เช่น อยากรู้ว่าทำแอปจองคิวร้านตัดผมขายได้ไหม"></textarea>

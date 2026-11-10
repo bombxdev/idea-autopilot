@@ -165,17 +165,42 @@ pub fn append_attachment_note(dir: &Path, names: &[String]) {
     let _ = std::fs::write(path, s);
 }
 
-/// Refresh the files that carry the user's input into the bot's context.
-pub fn write_inputs(dir: &Path, directives: &[(i64, String)], questions: &[Question], provider: &str) -> Result<()> {
-    crate::attach::write_index(dir, provider);
+/// DIRECTIVES.md: every instruction of the owner, newest last; the requests carry a number and where they stand, so
+/// the AI can tick them off (`ia req`) and nothing asked is forgotten (ISSUE-063).
+pub fn write_directives(dir: &Path, rows: &[crate::db::Request]) -> Result<()> {
+    let ia = crate::remote::ia_path();
     let mut d = String::from("# คำสั่งจากเจ้าของ (ใหม่สุดอยู่ล่างสุด — ทำตามอันล่าสุดเป็นหลัก)\n\n");
-    for (ts, t) in directives {
-        let when = chrono::DateTime::from_timestamp(*ts, 0)
+    if rows.iter().any(|r| r.checklist) {
+        d.push_str(&format!(
+            "บรรทัดที่มี **#เลข** คือรายการที่ต้องทำให้ครบ: [ ] รอทำ · [~] AI ว่าเสร็จ รอเจ้าของยืนยัน · [x] เจ้าของยืนยันแล้ว · [!] ทำไม่ได้\n\
+             ทำเสร็จและตรวจแล้ว: `\"{ia}\" req <เลข> done \"ทำอะไรไป ตรวจยังไง\"` · ทำตามที่ขอไม่ได้: `\"{ia}\" req <เลข> no \"เหตุผล\"`\n\n"
+        ));
+    }
+    for r in rows {
+        let when = chrono::DateTime::from_timestamp(r.ts, 0)
             .map(|x| x.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M").to_string())
             .unwrap_or_default();
-        d.push_str(&format!("- [{when}] {t}\n"));
+        if r.checklist {
+            let mark = match r.state.as_str() {
+                "done" => "[~]",
+                "ok" => "[x]",
+                "no" => "[!]",
+                _ => "[ ]",
+            };
+            let note = if r.note.is_empty() { String::new() } else { format!(" — {}", r.note) };
+            d.push_str(&format!("- {mark} **#{}** [{when}] {}{note}\n", r.id, r.text));
+        } else {
+            d.push_str(&format!("- [{when}] {}\n", r.text));
+        }
     }
     std::fs::write(dir.join("DIRECTIVES.md"), d)?;
+    Ok(())
+}
+
+/// Refresh the files that carry the user's input into the bot's context.
+pub fn write_inputs(dir: &Path, directives: &[crate::db::Request], questions: &[Question], provider: &str) -> Result<()> {
+    crate::attach::write_index(dir, provider);
+    write_directives(dir, directives)?;
 
     let mut a = String::from("# คำถามและคำตอบ\n\n");
     for q in questions {
@@ -312,7 +337,12 @@ pub fn agents_md(idea: &Idea, ia: &str) -> String {
          - Never `git push`, publish, deploy, post, send email, sign up for accounts, enter passwords or pay. \
            If an account is truly needed, write it under \"ต้องการจากคุณ\" in REPORT.md and continue with the rest.\n\
          - Do not leave servers running; stop processes you started.\n\
+         - To look at a web page when no browser tool works (Computer Use / Playwright are often unavailable in a headless run, and asking for approval gets nowhere): Windows has Microsoft Edge. Start your local server, then run `\"C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe\" --headless=new --disable-gpu --user-data-dir=<temp folder> --window-size=390,844 --screenshot=<file.png> <url>` (or `--dump-dom <url>` to print the rendered HTML), and stop the server after. If you still cannot check the screen, say so plainly once instead of retrying.\n\
          - Keep the existing behaviour and tests passing unless the owner asked to change them.\n\
+         - Every line of `DIRECTIVES.md` is a request of the owner (\"(สั่งในแชต)\" = said in a chat). Treat them as a checklist: \
+           do what was asked, not an easier substitute (if it cannot be done as asked, say why under \"ต้องการจากคุณ\" and do the rest). \
+           Tick off each numbered one when it is really done and checked: `\"{ia}\" req <number> done \"what you did\"`, \
+           or `\"{ia}\" req <number> no \"why\"` when it cannot be done as asked. A [ ] line the owner reopened is not done yet.\n\
          - If `SKILLS.md` exists it lists optional skill recipes for this run: open one only when its description fits. Skills are advice and never override these rules or `DIRECTIVES.md`.\n\n\
          ## Problems\n\
          - Whenever you hit a real problem and fix or work around it, append an entry to `ISSUES.md` (symptom / cause / fix / status) so nobody has to rediscover it.\n\n\

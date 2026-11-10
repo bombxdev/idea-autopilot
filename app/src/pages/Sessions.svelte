@@ -1,4 +1,5 @@
 <script>
+  import IconText from "../components/IconText.svelte";
   // Sessions the app keeps open with Claude (Remote Control, one per idea): who is connected, what state it is in,
   // and the buttons to disconnect — so finished conversations do not pile up in the Claude app. A closed session can be
   // reconnected at any time and the conversation continues where it stopped.
@@ -34,6 +35,15 @@
     error: ["มีปัญหา / Problem", "red"],
   };
   const mins = (s) => (s < 60 ? "<1" : Math.floor(s / 60));
+  // what a session of each AI is, in one line: where else it shows up, and how it carries on after it is closed
+  const AGENT = {
+    claude: { name: "Claude", note: "Remote Control — เห็นและคุยต่อในแอป Claude / claude.ai/code ได้ด้วย · ตัดแล้ว “ต่อกลับมา” ได้จากรายการด้านล่าง" },
+    codex: { name: "Codex", note: "คุยในแอปนี้ ใช้บทสนทนาเดียวกับ Codex — เปิดต่อใน Codex เองได้ด้วยคำสั่ง codex resume (มีปุ่มคัดลอกในหน้าไอเดีย) · ไม่ขึ้นในแอป Claude" },
+    gemini: { name: "Gemini", note: "คุยในแอปนี้เท่านั้น — แต่ละข้อความรัน Gemini หนึ่งรอบพร้อมบทสนทนาก่อนหน้า · ไม่มีในแอปของ Google · ตัดแล้วส่งข้อความใหม่ได้เลย บทสนทนาเดิมยังอยู่" },
+    opencode: { name: "OpenCode", note: "คุยในแอปนี้เท่านั้น — แต่ละข้อความรัน OpenCode หนึ่งรอบพร้อมบทสนทนาก่อนหน้า (ใช้ได้กับบัญชี OpenRouter และค่ายอื่นที่ผ่าน OpenCode) · ตัดแล้วส่งข้อความใหม่ได้เลย บทสนทนาเดิมยังอยู่" },
+    mistral: { name: "Mistral", note: "คุยในแอปนี้เท่านั้น — แต่ละข้อความรัน Mistral Vibe หนึ่งรอบพร้อมบทสนทนาก่อนหน้า · ตัดแล้วส่งข้อความใหม่ได้เลย บทสนทนาเดิมยังอยู่" },
+  };
+  const ag = (s) => AGENT[s.agent] ?? AGENT.claude;
 
   async function run(key, job, ok) {
     busy = key;
@@ -60,12 +70,17 @@
 <div class="wrapx">
   <h1>เซสชัน · Sessions</h1>
   <p class="muted small">
-    เมื่อคุณคุยกับ AI ในไอเดียหนึ่ง แอปจะเปิด session ของ Claude (Remote Control) ให้หนึ่งอัน เห็นได้ในแอป Claude / claude.ai/code ด้วย
-    หน้านี้บอกว่าตอนนี้ต่ออยู่กี่อัน สถานะเป็นอย่างไร และให้ <b>ตัดการเชื่อมต่อ</b> เมื่อคุยจบ เพื่อไม่ให้ session ค้างรกอยู่ในแอปของผู้ให้บริการ —
-    ต้องการคุยต่อค่อย <b>ต่อกลับมา</b> บทสนทนาจะต่อจากเดิม และสิ่งที่คุยกันถูกเก็บไว้กับไอเดีย (บันทึกสรุป + <code>CHAT-LOG.md</code>)
+    เมื่อคุณคุยกับ AI ในช่อง “สั่ง AI แก้ / ทำต่อ” ของไอเดีย แอปจะเปิด session ให้ไอเดียละหนึ่งอัน หน้านี้บอกว่าตอนนี้ต่ออยู่กี่อัน สถานะเป็นอย่างไร
+    และให้ <b>ตัดการเชื่อมต่อ</b> เมื่อคุยจบ (ก่อนตัด AI สรุปสิ่งที่คุยกันเก็บไว้กับไอเดียให้ได้ทุกค่าย)
   </p>
+  <div class="card small legend">
+    <b>AI แต่ละค่ายทำได้ไม่เท่ากัน</b>
+    <div class="lg"><span class="chip">Claude</span><span>เปิดเป็น Remote Control — เห็นในแอป Claude / claude.ai/code ด้วย และตัดแล้ว <b>ต่อกลับมา</b> ได้ (เฉพาะ Claude)</span></div>
+    <div class="lg"><span class="chip">Codex</span><span>คุยในแอปนี้ บทสนทนาเดียวกับ Codex — เปิดต่อใน Codex เองได้ด้วย <code>codex resume</code></span></div>
+    <div class="lg"><span class="chip">Gemini · OpenCode · Mistral</span><span>คุยในแอปนี้เท่านั้น — แต่ละข้อความรันหนึ่งรอบพร้อมบทสนทนาก่อนหน้า ไม่ต้องต่อกลับ ส่งข้อความใหม่ได้เลย</span></div>
+  </div>
   {#if !data.has_claude}
-    <div class="card amber small">ยังไม่พบ Claude Code ในเครื่องนี้ — session แบบนี้ใช้ได้กับ Claude เท่านั้น (AI ค่ายอื่นเปิดผ่าน Orca / terminal จากปุ่มส่งงานในหน้าไอเดีย)</div>
+    <div class="card amber small">ยังไม่พบ Claude Code ในเครื่องนี้ — Remote Control และ “ต่อกลับมา” ใช้ไม่ได้ แต่คุยกับ AI ค่ายอื่นในหน้าไอเดียได้ตามปกติ</div>
   {/if}
 
   <section>
@@ -77,6 +92,7 @@
       <div class="card sess">
         <div class="row wrap">
           <b class="grow">#{s.idea_id} {title(s.idea_id)}</b>
+          <span class="chip" title={ag(s).note}>{ag(s).name}</span>
           <span class="chip {STATUS[s.status]?.[1] ?? 'muted'}">
             {#if s.status === "working" || s.status === "starting"}<i class="pulse"></i>{/if}{STATUS[s.status]?.[0] ?? s.status}
           </span>
@@ -85,8 +101,9 @@
           ชื่อ session: {s.name} · เปิดมา {mins(now - s.started)} นาที · ไม่มีความเคลื่อนไหว {mins(s.idle_secs)} นาที
           {#if data.idle_min > 0 && s.status === "idle"} · จะตัดเองเมื่อเงียบครบ {data.idle_min} นาที{/if}
         </div>
+        <div class="small faint">{ag(s).note}</div>
         {#if s.feed?.length}
-          <div class="feed">{#each s.feed as f}<div class="small">{f.text}</div>{/each}</div>
+          <div class="feed">{#each s.feed as f}<div class="small"><IconText text={f.text} /></div>{/each}</div>
         {/if}
         <div class="row wrap">
           <button class="small primary" disabled={busy === `c${s.idea_id}`} onclick={() => closeSum(s)} title="ให้ AI สรุปสิ่งที่คุยกันและบันทึกไว้กับไอเดีย แล้วปิด session">สรุปแล้วตัดการเชื่อมต่อ</button>
@@ -100,7 +117,8 @@
   </section>
 
   <section>
-    <h2>เคยคุยไว้ — ต่อกลับมาได้ ({data.resumable.length})</h2>
+    <h2>เคยคุยไว้ — ต่อกลับมาได้ ({data.resumable.length}) <span class="chip">เฉพาะ Claude</span></h2>
+    <p class="faint small">Codex และค่ายอื่นไม่ต้องต่อกลับ — ส่งข้อความใหม่ในหน้าไอเดียได้เลย บทสนทนาเดิมถูกส่งต่อให้เอง</p>
     {#each data.resumable.slice(0, 20) as r (r.idea_id)}
       <div class="card row wrap sess2">
         <span class="grow"><b>#{r.idea_id}</b> {r.title}</span>
@@ -137,5 +155,8 @@
   .pulse { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: currentColor; margin-right: 6px; animation: pulse 1.2s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: 0.25; } }
   .faint { color: var(--text-3); }
+  .legend { display: flex; flex-direction: column; gap: 6px; }
+  .lg { display: flex; gap: 8px; align-items: baseline; }
+  .lg .chip { flex: none; }
   .amber { color: var(--amber); }
 </style>

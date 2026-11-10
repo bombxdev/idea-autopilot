@@ -1,4 +1,6 @@
 <script>
+  import IconText from "./components/IconText.svelte";
+  import Icon from "./components/Icon.svelte";
   import { onMount } from "svelte";
   import ConfirmHost from "./components/ConfirmHost.svelte";
   import { store, start, refresh, toast } from "./lib/store.svelte.js";
@@ -21,14 +23,14 @@
   import WhatsNew from "./components/WhatsNew.svelte";
 
   const NAV = [
-    { key: "morning", icon: "☀️" },
-    { key: "board", icon: "🗂" },
-    { key: "quota", icon: "⛽" },
-    { key: "library", icon: "📚" },
-    { key: "skills", icon: "🧰" },
-    { key: "sessions", icon: "🔗" },
-    { key: "activity", icon: "📜" },
-    { key: "settings", icon: "⚙️" },
+    { key: "morning", icon: "sun" },
+    { key: "board", icon: "board" },
+    { key: "quota", icon: "gauge" },
+    { key: "library", icon: "book" },
+    { key: "skills", icon: "toolbox" },
+    { key: "sessions", icon: "link" },
+    { key: "activity", icon: "list" },
+    { key: "settings", icon: "gear" },
   ];
 
   let paletteOpen = $state(false);
@@ -77,7 +79,7 @@
     if (!s) return { cls: "idle", text: "กำลังโหลด…" };
     if (s.role === "follower") return { cls: "idle", text: "เครื่องรอง · บอทรันที่เครื่องหลัก" };
     if (s.paused) return { cls: "paused", text: "พักบอทอยู่" };
-    if (s.current) return { cls: "run", text: `${s.current.power ? "🚀 " : ""}กำลังทำ · ${s.current.title}`, step: s.current.stage_total ? `(ขั้น ${s.current.stage_no}/${s.current.stage_total})` : "" };
+    if (s.current) return { cls: "run", power: s.current.power, text: `กำลังทำ · ${s.current.title}`, step: s.current.stage_total ? `(ขั้น ${s.current.stage_no}/${s.current.stage_total})` : "" };
     if (d?.allow) return { cls: "ready", text: "พร้อมทำงาน · คิวว่าง" };
     return { cls: "idle", text: d?.reason ?? "รอ" };
   });
@@ -93,7 +95,7 @@
   <div class="other upd">
     <b>มีเวอร์ชันใหม่ v{upd.latest}</b>
     <UpdateCard compact />
-    <button class="small ghost" onclick={() => (updHidden = true)} aria-label="ซ่อน">✕</button>
+    <button class="small ghost" onclick={() => (updHidden = true)} aria-label="ซ่อน"><Icon name="close" /></button>
   </div>
 {/if}
 {#if other}
@@ -107,7 +109,7 @@
 <div class="shell">
   <aside>
     <div class="brand">
-      <div class="logo">◐</div>
+      <div class="logo"><Icon name="logo" size="22" /></div>
       <div>
         <div class="name">Idea Autopilot</div>
         <div class="faint small">ตื่นมาเจอคำตอบ</div>
@@ -116,7 +118,7 @@
     <nav>
       {#each NAV as n}
         <button class="nav" class:on={store.page === n.key} onclick={() => (store.page = n.key)}>
-          <span class="ico">{n.icon}</span>{t("nav_" + n.key, store.lang)}
+          <span class="ico"><Icon name={n.icon} /></span>{t("nav_" + n.key, store.lang)}
           {#if n.key === "morning" && openQ > 0}<span class="badge">{openQ}</span>{/if}
         </button>
       {/each}
@@ -131,7 +133,7 @@
         </div>
       {/if}
       <button class="ghost small kbd" onclick={() => (paletteOpen = true)}>ค้นหา / สั่งงาน <kbd>Ctrl K</kbd></button>
-      <button class="ghost small ver" onclick={() => (store.page = "settings")} title="ดูประวัติเวอร์ชัน / อัปเดต">v{s?.version ?? ""}{#if upd} <span class="newdot" title="มีเวอร์ชันใหม่ v{upd.latest}">● ใหม่ v{upd.latest}</span>{/if}</button>
+      <button class="ghost small ver" onclick={() => { store.settingsTab = "about"; store.page = "settings"; }} title="ดูประวัติเวอร์ชัน / อัปเดต">v{s?.version ?? ""}{#if upd} <span class="newdot" title="มีเวอร์ชันใหม่ v{upd.latest}"><Icon name="dot" size="0.8em" /> ใหม่ v{upd.latest}</span>{/if}</button>
     </div>
   </aside>
 
@@ -139,7 +141,7 @@
     <header>
       <QuickAdd />
       <button class="status {botState.cls}" onclick={togglePause} title="คลิกเพื่อ พัก / ทำต่อ">
-        <span class="dot"></span><span class="ellipsis">{botState.text}{#if botState.step} <span>{botState.step}</span>{/if}</span>
+        <span class="dot"></span><span class="ellipsis">{#if botState.power}<Icon name="rocket" /> {/if}{botState.text}{#if botState.step} <span>{botState.step}</span>{/if}</span>
       </button>
     </header>
     <section class="page">
@@ -161,7 +163,7 @@
 {#if paletteOpen}<Palette close={() => (paletteOpen = false)} />{/if}
 <ConfirmHost />
 {#if store.toast}
-  {#key store.toast.id}<div class="toast {store.toast.kind}">{store.toast.text}</div>{/key}
+  {#key store.toast.id}<div class="toast {store.toast.kind}"><IconText text={store.toast.text} /></div>{/key}
 {/if}
 
 <style>

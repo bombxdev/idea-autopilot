@@ -1,11 +1,12 @@
 <script>
+  import Icon from "./Icon.svelte";
   import { intentMeta } from "../lib/api.js";
   let { intents = [] } = $props();
 </script>
 
 {#each intents as k}
   {@const m = intentMeta(k)}
-  <span class="chip c-{m.color}">{m.icon} {m.label}</span>
+  <span class="chip c-{m.color}"><Icon name={m.icon} /> {m.label}</span>
 {/each}
 
 <style>

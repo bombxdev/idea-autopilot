@@ -31,3 +31,7 @@ workspace/REMOTE_BRIEF.md
 # promo material for Facebook: kept locally, never published
 docs/PROMO-facebook.md
 docs/img/facebook-post*.png
+
+# local-only: scratch logs and skills installed for this machine's Claude Code
+logs/
+.claude/skills/

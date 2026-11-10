@@ -1,4 +1,6 @@
 <script>
+  import IconText from "../components/IconText.svelte";
+  import Icon from "../components/Icon.svelte";
   import { onMount } from "svelte";
   import { store, refresh, toast, stageLabel } from "../lib/store.svelte.js";
   import { api, pct, clock } from "../lib/api.js";
@@ -49,7 +51,7 @@
       };
       return [{ key: "all", title: `รวม ${shownAccts.length} บัญชี (ค่าเฉลี่ยของแต่ละบัญชี)`, d: merged, snap: shownAccts[0].snap, shared: shownAccts.some((a) => a.shared), userShare, lines: shownAccts.map((a) => `${a.label}: ${Math.round(a.decision.week_pct)}% ของสัปดาห์ · ${a.decision.allow ? "ทำงานได้" : "รอ"}`) }];
     }
-    return shownAccts.map((a) => ({ key: a.id, title: shownAccts.length > 1 || accts.length > 1 ? a.label : "", d: a.decision, snap: a.snap, shared: a.shared, userShare: a.shared ? userShare : 0, lines: [] }));
+    return shownAccts.map((a) => ({ key: a.id, title: shownAccts.length > 1 || accts.length > 1 ? a.label : "", d: a.decision, snap: a.snap, shared: a.shared, userShare: a.shared ? userShare : 0, lines: [], limit: a.limit ?? "window" }));
   });
 
   // ring segments: user, bot, reserve, available
@@ -86,21 +88,21 @@
 <div class="wrapx">
   <div class="row head">
     <div class="grow"><h1>โควต้า</h1><p class="muted small">แผนการใช้ให้ครบ 100% ก่อนรีเซ็ต โดยกันส่วนของงานคุณไว้ก่อนเสมอ</p></div>
-    <button class="small" onclick={() => { api.refreshUsage(); toast("กำลังอ่านโควต้าใหม่"); }}>↻ อ่านใหม่</button>
+    <button class="small" onclick={() => { api.refreshUsage(); toast("กำลังอ่านโควต้าใหม่"); }}><Icon name="refresh" /> อ่านใหม่</button>
   </div>
 
-  {#if s?.snap_note}<div class="warn small">⚠ {s.snap_note}</div>{/if}
+  {#if s?.snap_note}<div class="warn small"><Icon name="warning" /> <IconText text={s.snap_note} /></div>{/if}
 
   <QuotaPick accounts={accts} />
   <div class="row wrap small ctrl">
-    <button class:primary={!s?.paused} onclick={async () => { await api.setPaused(!s?.paused); refresh(); }}>{s?.paused ? "▶ ให้บอททำต่อ" : "⏸ พักบอท"}</button>
+    <button class:primary={!s?.paused} onclick={async () => { await api.setPaused(!s?.paused); refresh(); }}><Icon name={s?.paused ? "play" : "pause"} /> {s?.paused ? "ให้บอททำต่อ" : "พักบอท"}</button>
     {#if s?.turbo_until}<button onclick={() => turbo(0)}>ปิด Turbo</button>{:else}
-      <button onclick={() => turbo(2)}>⚡ Turbo 2 ชม.</button>
-      <button onclick={() => turbo(8)}>⚡ Turbo ทั้งคืน</button>{/if}
+      <button onclick={() => turbo(2)}><Icon name="bolt" /> Turbo 2 ชม.</button>
+      <button onclick={() => turbo(8)}><Icon name="bolt" /> Turbo ทั้งคืน</button>{/if}
     <span class="faint">กันให้งาน/ชม. {(s?.reserve_per_hour ?? 0).toFixed(2)}% {s?.reserve_learned ? "(เรียนรู้จากสถิติ)" : "(ค่าเริ่มต้น)"} · คุณกำลังใช้ Claude: {s?.user_active ? "ใช่" : "ไม่"}</span>
   </div>
   <div class="plans" class:single={cards.length === 1}>
-    {#each cards as c (c.key)}<PlanCard title={c.title} d={c.d} snap={c.snap} shared={c.shared} userShare={c.userShare} lines={c.lines} />{/each}
+    {#each cards as c (c.key)}<PlanCard title={c.title} d={c.d} snap={c.snap} shared={c.shared} userShare={c.userShare} lines={c.lines} limit={c.limit ?? "window"} />{/each}
   </div>
 
   <section>
@@ -130,7 +132,7 @@
   <section>
     <div class="row"><h2 class="grow">ย้อนหลัง</h2>
       <select bind:value={days} onchange={load}><option value={7}>7 วัน</option><option value={28}>28 วัน</option><option value={90}>90 วัน</option></select>
-      <button class="small" onclick={() => api.exportCsv().then(() => toast("ส่งออก CSV แล้ว"))}>⬇ CSV</button></div>
+      <button class="small" onclick={() => api.exportCsv().then(() => toast("ส่งออก CSV แล้ว"))}><Icon name="download" /> CSV</button></div>
 
     {#if rep}
       <div class="card">

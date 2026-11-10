@@ -1,4 +1,5 @@
 <script>
+  import Icon from "./Icon.svelte";
   // Files attached to an idea (in its folder `attachments/`): thumbnails and delete.
   import { api } from "../lib/api.js";
   import { store, toast } from "../lib/store.svelte.js";
@@ -7,7 +8,7 @@
   let { id } = $props();
   let items = $state([]);
   let thumbs = $state({});
-  const ICON = { image: "🖼", pdf: "📄", audio: "🎵", video: "🎞", text: "📃", office: "📊", other: "📎" };
+  const ICON = { image: "image", pdf: "file", audio: "music", video: "film", text: "doc", office: "chart", other: "paperclip" };
   const mb = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
 
   async function load() {
@@ -45,14 +46,14 @@
 
 {#if items.length}
   <div class="al">
-    <div class="small faint">📎 ไฟล์แนบ ({items.length}) — บอทอ่านจากโฟลเดอร์ของไอเดียนี้</div>
+    <div class="small faint"><Icon name="paperclip" /> ไฟล์แนบ ({items.length}) — บอทอ่านจากโฟลเดอร์ของไอเดียนี้</div>
     <div class="grid">
       {#each items as it (it.name)}
         <div class="it" title={it.name}>
-          {#if thumbs[it.name]}<img src={thumbs[it.name]} alt={it.name} />{:else}<span class="ic">{ICON[it.kind] ?? "📎"}</span>{/if}
+          {#if thumbs[it.name]}<img src={thumbs[it.name]} alt={it.name} />{:else}<span class="ic"><Icon name={ICON[it.kind] ?? "paperclip"} /></span>{/if}
           <span class="nm">{it.name}</span>
           <span class="faint small">{mb(it.size)}</span>
-          <button class="x" aria-label="ลบ" onclick={() => remove(it)}>✕</button>
+          <button class="x" aria-label="ลบ" onclick={() => remove(it)}><Icon name="close" /></button>
         </div>
       {/each}
     </div>

@@ -1,11 +1,12 @@
 <script>
-  // Type "/" at the start of a chat box and the skills of the library are listed; each letter narrows the list
-  // ("/r" → the skills starting with r). ↑ ↓ choose, Enter or Tab inserts "/name ", Esc closes. What you type after
-  // the name is the request: the app sends the skill's text together with it to whichever AI is chatting.
-  import { onMount } from "svelte";
+  // Type "/" anywhere in a chat box (at the start, or after a space or a new line) and the skills of the library are
+  // listed; each letter narrows the list ("/r" → the skills starting with r). ↑ ↓ choose, Enter or Tab puts "/name "
+  // where the cursor is, Esc closes. The rest of the text is the request: the app sends the skill's text together with
+  // it to whichever AI is chatting (ISSUE-066: it used to work only at the very start).
+  import { onMount, tick } from "svelte";
   import { api } from "../lib/api.js";
 
-  let { text = $bindable(""), below = false } = $props();
+  let { text = $bindable(""), below = false, el = null } = $props();
   let skills = $state([]);
   let idx = $state(0);
   let closed = $state(false);
@@ -15,7 +16,19 @@
   }
   onMount(load);
 
-  const q = $derived(/^\/([\w-]*)$/.exec(text)?.[1]?.toLowerCase() ?? null);
+  // where the cursor is (without the box: the end of the text)
+  let caret = $state(0);
+  $effect(() => {
+    if (!el) return;
+    const at = () => (caret = el.selectionStart ?? text.length);
+    const evs = ["input", "keyup", "click", "select", "focus"];
+    evs.forEach((ev) => el.addEventListener(ev, at));
+    return () => evs.forEach((ev) => el.removeEventListener(ev, at));
+  });
+  const pos = $derived(el ? Math.min(caret, text.length) : text.length);
+  // the word being typed right before the cursor, when it is "/…" starting the text or after a space
+  const m = $derived(/(^|\s)\/([\w-]*)$/.exec(text.slice(0, pos)));
+  const q = $derived(m ? m[2].toLowerCase() : null);
   const items = $derived.by(() => {
     if (q === null) return [];
     // only names that START with what was typed, narrowing with every letter
@@ -30,8 +43,19 @@
     if (q !== null) load();
   });
 
-  function accept(s) {
-    text = `/${s.slug} `;
+  async function accept(s) {
+    const start = pos - m[2].length - 1;
+    // the rest of a name the cursor sits inside is replaced too
+    const after = text.slice(pos).replace(/^[\w-]+/, "");
+    const ins = `/${s.slug}` + (/^\s/.test(after) ? "" : " ");
+    text = text.slice(0, start) + ins + after;
+    const at = start + ins.length;
+    caret = at;
+    await tick();
+    if (el) {
+      el.focus();
+      el.setSelectionRange(at, at);
+    }
   }
 
   /** Call from the box's keydown: true = the key was used by the menu. */

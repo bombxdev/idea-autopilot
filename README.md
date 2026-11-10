@@ -34,6 +34,8 @@
 2. **Installer:** download `IdeaAutopilot-<version>-Setup.exe` from [Releases](https://github.com/bombxdev/idea-autopilot/releases) and double-click.
 3. **Portable:** download `IdeaAutopilot-<version>-portable.zip`, right-click it → Properties → tick **Unblock** → Extract, then run `bin\idea-autopilot.exe`.
 
+4. **Android companion app:** download `IdeaAutopilot-mobile.apk` from Releases (allow installing unknown apps). It talks to your own private GitHub sync repo with a token you create; see the multi-device section.
+
 Windows may show a SmartScreen warning for the installer (not signed yet): More info → Run anyway. You also need git and one logged-in AI agent (see the first-run steps below).
 
 Build: `cd app && npm install && npm run build`, then `cd src-tauri && cargo build --release --features tauri/custom-protocol`. Installer + portable zip: `powershell -ExecutionPolicy Bypass -File scripts\package.ps1`. Not code-signed yet, so Windows SmartScreen may warn (More info → Run anyway) — see `docs/SIGNING.md`. Signing policy and privacy: `docs/CODE_SIGNING_POLICY.md`.
@@ -215,7 +217,7 @@ bin\ia.exe help
 
 - สร้างไฟล์ด้วย `powershell -ExecutionPolicy Bypass -File scripts\package.ps1` ได้ตัวติดตั้งและ zip ใน `dist/` ส่งไฟล์นี้ให้เพื่อน (ไม่ต้องส่ง source หรือโฟลเดอร์ของคุณ) เพื่อนแตกไฟล์แล้วเปิด `bin/idea-autopilot.exe` ได้เลย
 - **ไม่มีข้อมูลของคุณติดไป:** zip มีแค่โปรแกรม, `ia.exe`, README และโฟลเดอร์ `data` ว่าง ทุกอย่างอื่น (กฎของบอท ไฟล์ไอเดีย ตารางงาน) สร้างใหม่ตอนเพื่อนเปิดใช้ครั้งแรก สคริปต์แพ็กจะรัน `scripts\privacy-check.ps1` ตรวจก่อนทุกครั้งว่าไม่มีชื่อผู้ใช้ path ในเครื่อง ชื่อบริษัท หรือไอเดียของคุณหลุดเข้าไป ถ้าเจอจะไม่สร้าง zip (ใส่คำที่อยากให้ตรวจเพิ่มไว้ใน `scripts\privacy-words.txt` ซึ่งไม่ถูก commit)
-- แอปมือถือ (`dist/IdeaAutopilot-mobile.apk`) ไม่รวมใน zip เพราะผูกกับเครื่องของคุณ
+- แอปมือถือ Android (`IdeaAutopilot-mobile.apk`) แยกไฟล์ต่างหาก ไม่อยู่ใน zip: โหลดจากหน้า Releases แล้วติดตั้ง (ต้องอนุญาต "ติดตั้งแอปที่ไม่รู้จัก") แอปไม่มีข้อมูลของใครติดมา ตอนเปิดครั้งแรกจะให้ใส่ GitHub private repo ที่ใช้เป็นโฟลเดอร์ sync ของคุณเอง และ fine-grained token (สิทธิ์ Contents: Read and write) token เก็บในมือถือและส่งไปที่ api.github.com เท่านั้น
 - เพื่อนต้องมี Windows 10/11, git และ AI agent อย่างน้อย 1 ตัว (ดูหัวข้อ "เริ่มใช้ครั้งแรก") และตั้งเวลางานของตัวเองตอนเปิดครั้งแรก
 - ถ้าจะแชร์ source ผ่าน git: `.gitignore` กันข้อมูลส่วนตัว (`data/`, `workspace/ideas/`, `brain/`) ไว้แล้ว แต่ประวัติ commit เก่าอาจมีไฟล์ที่เคยถูก commit ไว้ ให้ตรวจก่อน หรือแชร์เป็น zip แทน
 

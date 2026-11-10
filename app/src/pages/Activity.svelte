@@ -1,4 +1,6 @@
 <script>
+  import IconText from "../components/IconText.svelte";
+  import Icon from "../components/Icon.svelte";
   import { locale } from "../lib/i18n.js";
   import { ui } from "../lib/uilang.svelte.js";
   import { onMount } from "svelte";
@@ -211,7 +213,7 @@
               <span class="time">{hm(r.started)}<span class="faint">–{r.ended ? hm(r.ended) : "…"}</span></span>
               <span class="dot" style="background:{color(r.idea_id)}"></span>
               <span class="grow ellipsis"><b>#{r.idea_id} {r.title}</b> · {stageLabel(r.stage)}</span>
-              <span class="chip" title={r.reason ?? ""}>{r.power ? "🚀 " : ""}{r.model_label || r.model}{r.effort ? ` · ${r.effort}` : ""}</span>
+              <span class="chip" title={r.reason ?? ""}>{#if r.power}<Icon name="rocket" /> {/if}{r.model_label || r.model}{r.effort ? ` · ${r.effort}` : ""}</span>
               <span class="chip st-{r.status}">{STATUS[r.status] ?? r.status}</span>
               <span class="faint small w80">{dur(r.secs)}</span>
               <span class="faint small w80">{(r.tokens / 1000).toFixed(0)}k tok</span>
@@ -222,7 +224,7 @@
             {#if open[r.id]}
               <div class="log">
                 {#if r.reason}<div class="faint">เลือกโมเดลเพราะ: {r.reason}</div>{/if}
-                {#each open[r.id] as l}<div class:tool={isStep(l)}>{l}</div>{:else}<div class="faint">ไม่มี log</div>{/each}
+                {#each open[r.id] as l}<div class:tool={isStep(l)}><IconText text={l} /></div>{:else}<div class="faint">ไม่มี log</div>{/each}
               </div>
             {/if}
           </div>
@@ -233,7 +235,7 @@
         <div class="ev row small">
           <span class="time">{new Date(ev.ts * 1000).toLocaleString(locale(ui.lang), { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
           <span class="chip">{ev.kind}</span>
-          <span class="grow">{ev.text}</span>
+          <span class="grow"><IconText text={ev.text} /></span>
           {#if ev.idea_id}<button class="ghost small" onclick={() => (store.openIdea = ev.idea_id)}>เปิด</button>{/if}
         </div>
       {:else}<div class="faint">ไม่มีกิจกรรม</div>{/each}
