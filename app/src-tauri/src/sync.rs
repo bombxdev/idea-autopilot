@@ -415,6 +415,8 @@ pub fn tick(app: &AppHandle) -> Result<()> {
             let log: Vec<String> = st.rt.lock().live_log.iter().rev().take(25).rev().cloned().collect();
             v["live_log"] = json!(log);
             v["open_questions"] = json!(db::questions(&st.db.lock(), None, true).map(|q| q.len()).unwrap_or(0));
+            // the skills the phone may call with /name (ISSUE-073)
+            v["slash"] = json!(crate::skills::slash_list(&st.db.lock()));
             let sessions: String = st.rt.lock().sessions.values().map(|s| format!("{}:{}:{}:{};", s.idea_id, s.status, s.feed.last().map(|f| f.ts).unwrap_or(0), s.ai)).collect();
             let sig = format!(
                 "{}|{}|{}|{}|{}|{}",

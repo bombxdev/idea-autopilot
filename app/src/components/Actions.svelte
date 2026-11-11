@@ -55,12 +55,15 @@
     {#if idea.status === "failed"}
       <button onclick={() => act("retry")}><Icon name="refresh" /> ลองใหม่</button>
     {/if}
-    <button onclick={() => act("go")} title="เห็นด้วย ทำขั้นถัดไปต่อ (ถ้าน่าทำก็วางแผนและสร้างเลย) — เข้าคิวรอโควต้าว่าง"><Icon name="arrowRight" /> ไปต่อ</button>
-    <button onclick={() => act("deeper")} title="ให้หาข้อมูลจริงเพิ่มในประเด็นที่ยังไม่ชัด — เข้าคิวรอโควต้าว่าง"><Icon name="search" /> ขุดลึก</button>
-    <button onclick={() => act("alt")} title="ลองอีกแนวทางที่ต่างจากเดิมแล้วเทียบกัน — เข้าคิวรอโควต้าว่าง"><Icon name="fork" /> ลองอีกแนว</button>
+    <!-- the bot carries on by itself while an idea is in progress: "go on" only matters once it has stopped (ISSUE-072) -->
+    {#if idea.status === "done" || idea.status === "ready"}
+      <button onclick={() => act("go")} title="ไอเดียนี้จบแล้ว — ให้ทำต่ออีกขั้น (ถ้าน่าทำก็วางแผนและสร้างต่อ) เข้าคิวรอโควต้าว่าง"><Icon name="arrowRight" /> ไปต่อ</button>
+    {/if}
+    <button onclick={() => act("deeper")} title="รอบถัดไปให้หาข้อมูลจริงเพิ่มในประเด็นที่ยังไม่ชัด — เข้าคิวรอโควต้าว่าง (กด “ทำเลยตอนนี้” ถ้าไม่อยากรอ)"><Icon name="search" /> ขุดลึก</button>
+    <button onclick={() => act("alt")} title="รอบถัดไปให้ลองแนวทางที่ต่างจากเดิมแล้วเทียบกัน — เข้าคิวรอโควต้าว่าง (กด “ทำเลยตอนนี้” ถ้าไม่อยากรอ)"><Icon name="fork" /> ลองอีกแนว</button>
     {#if !compact}
       {#if !finished}<button onclick={() => act("stop")} title="หยุดไอเดียนี้ ไม่ทำต่อ (งานที่ได้แล้วยังอยู่)"><Icon name="scissors" /> พอแค่นี้</button>{/if}
-      <button onclick={() => act("run_now")} title="ข้ามการรอโควต้า/ช่วงพัก เริ่มทันที ถ้ามีงานอื่นรันอยู่จะเป็นคิวถัดไป (การ์ดจะขึ้น “คิวถัดไป” / “กำลังทำ”)"><Icon name="bolt" /> ทำเลยตอนนี้</button>
+      {#if !finished}<button onclick={() => act("run_now")} title="ไม่รอโควต้า/ช่วงพัก — เริ่มงานถัดไปของไอเดียนี้ทันที (รวมสิ่งที่เพิ่งกดขุดลึก/ลองอีกแนว/สั่งไว้) ถ้ามีงานอื่นรันอยู่จะเป็นคิวถัดไป"><Icon name="bolt" /> ทำเลยตอนนี้</button>{/if}
     {/if}
     <button class="ghost" onclick={() => (sayOpen = !sayOpen)} title="พิมพ์คำสั่งเพิ่มเอง เช่น เน้นตลาดไทย — บอทอ่านตอนรอบงานถัดไป"><Icon name="chat" /> สั่งสั้นๆ</button>
   </div>

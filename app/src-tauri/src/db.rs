@@ -755,7 +755,7 @@ mod board_tests {
     use super::*;
 
     #[test]
-    fn the_owners_requests_are_a_checklist_in_directives_md() {
+    fn the_owners_requests_are_listed_in_directives_md() {
         let dir = std::env::temp_dir().join(format!("ia_req_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
         let _ = std::fs::create_dir_all(&dir);
         let c = open(&dir.join("t.db")).unwrap();
@@ -768,8 +768,9 @@ mod board_tests {
         assert!(set_request(&c, 99999, "done", "").is_err());
         crate::workspace::write_directives(&dir, &directive_rows(&c, id).unwrap()).unwrap();
         let md = std::fs::read_to_string(dir.join("DIRECTIVES.md")).unwrap();
-        assert!(md.contains(&format!("- [~] **#{r}**")) && md.contains("ทดสอบบนมือถือแล้ว") && md.contains("req <เลข> done"));
-        assert!(md.contains("] ไปต่อได้เลย") && !md.contains("[ ] **#") );
+        // every order is listed for later runs, without a checklist for the owner to tick (ISSUE-070)
+        assert!(md.contains("] (สั่งในแชต) login ผ่าน claude เองบนมือถือ") && md.contains("] ไปต่อได้เลย"));
+        assert!(!md.contains("**#") && !md.contains("req <"));
     }
 
     #[test]

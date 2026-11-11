@@ -51,6 +51,9 @@ pub struct RemoteInfo {
     pub screen: String,
     /// which AI is talking here: "account · model", the model read from the conversation itself once it answers (ISSUE-065)
     pub ai: String,
+    /// a one-message-at-a-time AI (Codex, Vibe, Gemini…) is still on a reply: since when, and how many messages wait
+    pub busy_since: i64,
+    pub waiting: usize,
 }
 
 /// "claude01 · Opus 5.5": the account (or the program, for the default login) and the model in plain words.
@@ -96,7 +99,7 @@ struct Pty {
 /// The last lines each session's console showed (for explaining a session that never got ready).
 static CONSOLE: LazyLock<Mutex<HashMap<i64, String>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 /// What the owner chose for this chat: an account, a model, an effort ("" = automatic).
-#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ChatAi {
     #[serde(default)]
     pub account: String,
@@ -529,11 +532,16 @@ or from the Claude app through Remote Control. This is not the overnight bot. Re
   - give every shell command a short {lang} `description`;
   - keep it lean: no long recaps, no repeating file contents, finish with 1-3 lines of what changed.
 - Ask the owner directly when a decision is needed. Keep REPORT.md / PROGRESS.md accurate.
-- Every request of the owner (this chat and DIRECTIVES.md, newest last) is a checklist item. Do what was asked,
-  not an easier substitute; if it cannot be done as asked, say so and ask before doing something else.
-  When you finish, list each request of this conversation as done / not done (and why) — never call it done unchecked.
-  The numbered ones in DIRECTIVES.md (`"{ia}" reqs {id}` lists them): tick each off when really done and checked with
-  `"{ia}" req <number> done "what you did, how you checked"`, or `"{ia}" req <number> no "why"` if it cannot be done as asked.
+- Never wait for the owner inside a step (no loop, timer or tool waiting for their answer, a code or a human check on
+  a website): nothing the owner types reaches you until your reply ends, so such a step waits forever. Ask with
+  `"{ia}" question {id} "<question>" "<option 1>|<option 2>"` (a tap-to-answer question on their phone), say so,
+  and END your reply; the answer comes back to you as the next message.
+- Do what the owner asked (this chat and DIRECTIVES.md, newest last), not an easier substitute; if it cannot be done
+  as asked, say so and ask before doing something else.
+- YOU check your own work: the owner usually cannot test what you did behind the scenes. Before saying something works,
+  try it for real the way it will be used (run it, sign up, open the page). End with a short, honest result:
+  works (how you checked) / works partly / does not work (why, and what would make it possible). Never ask the owner
+  to check something you can check yourself, and never call it done unchecked.
 - After each meaningful chunk of work and before finishing, report progress back (1-3 lines, {lang}):
   "{ia}" note {id} "<summary>"
   It is saved on the idea, logged, and sent to the owner's Telegram / phone app.
@@ -676,6 +684,33 @@ pub fn hold(app: &AppHandle, id: i64, on: bool) -> Result<(), String> {
     st.wake.notify_one();
     changed(app);
     Ok(())
+}
+
+/// The AI an open session was started with (to reopen it the same way after the PC was off).
+pub fn open_ai(id: i64) -> ChatAi {
+    OPEN_AI.lock().get(&id).cloned().unwrap_or_default()
+}
+
+/// A Claude Code conversation (can be reopened with --resume), not Codex or another AI's one-message chat.
+pub fn is_claude_sid(sid: &str) -> bool {
+    sid != "codex" && !crate::agent_chat::KINDS.contains(&sid)
+}
+
+/// A message from the app to whichever chat is open on the idea, with the AI that chat uses.
+pub fn tell_open(app: &AppHandle, id: i64, text: &str) -> Result<(), String> {
+    if crate::agent_chat::active(app, id) {
+        let k = crate::agent_chat::agent_of(id).unwrap_or_default();
+        return crate::agent_chat::ask(app, id, &k, text, &crate::agent_chat::last_ai(id));
+    }
+    if crate::codex_chat::active(app, id) {
+        return crate::codex_chat::ask(app, id, text, &crate::codex_chat::last_ai(id));
+    }
+    send(app, id, text, &open_ai(id), false)
+}
+
+/// The app's own message to a session (opened first when needed): not an owner's request.
+pub fn tell(app: &AppHandle, id: i64, text: &str, ai: &ChatAi) -> Result<(), String> {
+    send(app, id, text, ai, false)
 }
 
 pub fn start(app: &AppHandle, id: i64) -> Result<(), String> {
@@ -983,7 +1018,8 @@ fn send(app: &AppHandle, id: i64, text: &str, ai: &ChatAi, owner: bool) -> Resul
         return Err("พิมพ์สิ่งที่อยากให้ AI ทำก่อน".into());
     }
     // asking a chat to change something that was ready/done: the board shows it as being fixed
-    if owner {
+    // "carry on with what I asked" (↻ button) is not a new order: it must not pile up in DIRECTIVES.md
+    if owner && !text.starts_with('↻') {
         let st = app.state::<AppState>();
         let c = st.db.lock();
         db::mark_fixing(&c, id);
@@ -1220,9 +1256,26 @@ pub fn revive(app: &AppHandle, id: i64) -> Result<(), String> {
 }
 
 /// Called from the scheduler: close sessions of archived/deleted ideas, and idle ones nobody is using any more.
+/// The owner cuts in on a one-message-at-a-time AI: stop its running reply so the waiting message goes now.
+pub fn cut_in(app: &AppHandle, id: i64) -> Result<(), String> {
+    if crate::agent_chat::cut_in(id) || crate::codex_chat::cut_in(id) {
+        push_feed(app, id, "✋ กำลังหยุดรอบที่ทำอยู่ตามที่คุณสั่ง…".into(), None);
+        Ok(())
+    } else {
+        Err("ตอนนี้ไม่มีรอบที่กำลังทำอยู่".into())
+    }
+}
+
 pub fn tick(app: &AppHandle) {
     let st = app.state::<AppState>();
     let ids: Vec<i64> = st.rt.lock().sessions.keys().copied().collect();
+    // one-message-at-a-time AIs: show how long the running reply has gone on and what waits behind it
+    for id in &ids {
+        let b = crate::agent_chat::busy(*id).or_else(|| crate::codex_chat::busy(*id));
+        if let Some(s) = st.rt.lock().sessions.get_mut(id) {
+            (s.busy_since, s.waiting) = b.unwrap_or((0, 0));
+        }
+    }
     let limit = idle_limit_min(&st) * 60;
     for id in ids {
         let gone = db::get_idea(&st.db.lock(), id).map(|i| i.status == "archived" || i.status == "deleted").unwrap_or(true);

@@ -12,6 +12,8 @@
   const commands = [
     { icon: "pause", label: "พักบอท", run: () => api.setPaused(true) },
     { icon: "play", label: "ให้บอททำต่อ", run: () => api.setPaused(false) },
+    { icon: "pause", label: "พักทั้งหมด — ปิดเครื่องได้เลย", run: () => api.pauseAll() },
+    { icon: "play", label: "ทำต่อจากที่พักไว้", run: () => api.resumeAll() },
     { icon: "bolt", label: "Turbo 2 ชั่วโมง", run: () => api.setTurbo(2) },
     { icon: "bolt", label: "Turbo ทั้งคืน (8 ชม.)", run: () => api.setTurbo(8) },
     { icon: "refresh", label: "อ่านโควต้าใหม่", run: () => api.refreshUsage() },

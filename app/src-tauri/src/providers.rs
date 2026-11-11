@@ -451,6 +451,45 @@ pub fn codex_models_in(home: &str) -> Vec<ModelInfo> {
     parse_codex_cache(&raw)
 }
 
+/// How old the model list of a Codex login is (None = there is none yet). Codex writes `models_cache.json` only after
+/// it has run once, so a login made from the app had no list at all (ISSUE-069).
+pub fn codex_cache_age(home: &str) -> Option<Duration> {
+    let dir = if home.is_empty() { std::env::var("CODEX_HOME").map(PathBuf::from).ok().or_else(|| dirs::home_dir().map(|h| h.join(".codex"))) } else { Some(PathBuf::from(home)) };
+    std::fs::metadata(dir?.join("models_cache.json")).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok())
+}
+
+/// Ask Codex itself for the model list of the login in `home` (`codex debug models`; it also refreshes the cache).
+pub fn codex_models_refresh(home: &str) -> Result<Vec<ModelInfo>, String> {
+    let bin = resolve_bin("codex").ok_or("ไม่พบ Codex ในเครื่องนี้")?;
+    let mut c = std::process::Command::new(bin);
+    c.args(["debug", "models"]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+    if !home.is_empty() {
+        c.env("CODEX_HOME", home);
+    }
+    hidden(&mut c);
+    let child = c.spawn().map_err(|e| format!("เรียก Codex ไม่ได้: {e}"))?;
+    let pid = child.id();
+    // never hang the settings page: give it a minute
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(child.wait_with_output());
+    });
+    let out = match rx.recv_timeout(Duration::from_secs(60)) {
+        Ok(r) => r.map_err(|e| e.to_string())?,
+        Err(_) => {
+            crate::runner::kill_tree(pid);
+            return Err("Codex ตอบช้าเกิน 1 นาที — ลองกด “อ่านรายชื่อโมเดลใหม่” อีกครั้ง".into());
+        }
+    };
+    let list = parse_codex_cache(&String::from_utf8_lossy(&out.stdout));
+    if list.is_empty() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        let why = err.lines().map(str::trim).filter(|l| !l.is_empty()).last().unwrap_or("ไม่ได้รายชื่อกลับมา").chars().take(200).collect::<String>();
+        return Err(format!("อ่านรายชื่อโมเดลจาก Codex ไม่ได้: {why} (ล็อกอินบัญชีนี้แล้วหรือยัง?)"));
+    }
+    Ok(list)
+}
+
 fn codex_models() -> Vec<ModelInfo> {
     let home = std::env::var("CODEX_HOME").map(PathBuf::from).ok().or_else(|| dirs::home_dir().map(|h| h.join(".codex")));
     let Some(raw) = home.and_then(|h| std::fs::read_to_string(h.join("models_cache.json")).ok()) else { return vec![] };

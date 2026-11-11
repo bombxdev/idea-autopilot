@@ -149,13 +149,12 @@ pub fn get_idea(st: State<AppState>, id: i64) -> R<Value> {
         "runs": db::runs(&c, Some(id), 0, 100).map_err(e)?,
         "questions": db::questions(&c, Some(id), false).map_err(e)?,
         "directives": db::directives(&c, id).map_err(e)?,
-        "requests": db::directive_rows(&c, id).map_err(e)?.into_iter().filter(|r| r.checklist).collect::<Vec<_>>(),
         "dir": dir,
     }))
 }
 
 #[tauri::command]
-pub fn answer_question(st: State<AppState>, id: i64, answer: String) -> R<()> {
+pub fn answer_question(app: AppHandle, st: State<AppState>, id: i64, answer: String) -> R<()> {
     if let Some(r) = sync::forward(&st, "answer", json!({ "id": id, "answer": answer })) {
         return r;
     }
@@ -171,6 +170,11 @@ pub fn answer_question(st: State<AppState>, id: i64, answer: String) -> R<()> {
     if guess.as_deref() != Some(answer.as_str()) && (idea.status == "done" || idea.status == "ready") {
         scheduler::steer(&st, idea_id, &format!("เจ้าของตอบคำถาม \"{q}\" ว่า \"{answer}\" (ต่างจากที่เดาไว้) — ปรับงานให้ตรงกับคำตอบนี้"))
             .map_err(e)?;
+    }
+    // a chat is open on this idea: its AI asked (ia question) and ended its reply to wait — hand it the answer (ISSUE-068)
+    if st.rt.lock().sessions.contains_key(&idea_id) {
+        let _ = crate::remote::tell_open(&app, idea_id, &format!("The owner answered your question \"{q}\": {answer}
+Carry on with the task."));
     }
     st.wake.notify_one();
     Ok(())
@@ -282,6 +286,33 @@ pub fn set_paused(app: AppHandle, st: State<AppState>, paused: bool) -> R<()> {
     db::set_setting(&st.db.lock(), "paused", if paused { "1" } else { "0" }).map_err(e)?;
     st.wake.notify_one();
     crate::tray::refresh(&app);
+    Ok(())
+}
+
+/// Stop everything and remember it, so the PC can be switched off at once (ISSUE-067).
+#[tauri::command]
+pub fn pause_all(app: AppHandle, st: State<AppState>) -> R<Value> {
+    if let Some(r) = sync::forward(&st, "pause_all", Value::Null) {
+        return r.map(|_| Value::Null);
+    }
+    crate::pausing::pause_all(&app).map(|s| json!(s))
+}
+
+/// Reopen what was paused and carry on.
+#[tauri::command]
+pub fn resume_all(app: AppHandle, st: State<AppState>) -> R<usize> {
+    if let Some(r) = sync::forward(&st, "resume_all", Value::Null) {
+        return r.map(|_| 0);
+    }
+    crate::pausing::resume_all(&app)
+}
+
+#[tauri::command]
+pub fn shelf_dismiss(app: AppHandle, st: State<AppState>) -> R<()> {
+    if let Some(r) = sync::forward(&st, "shelf_dismiss", Value::Null) {
+        return r;
+    }
+    crate::pausing::dismiss(&app);
     Ok(())
 }
 
@@ -582,6 +613,12 @@ pub fn idea_remote(app: AppHandle, st: State<AppState>, id: i64, on: bool) -> R<
         return r;
     }
     if on { crate::remote::start(&app, id) } else { crate::remote::stop(&app, id) }
+}
+
+/// Stop the reply a one-message-at-a-time AI is on, so the owner's waiting message goes now (ISSUE-068).
+#[tauri::command]
+pub fn session_cut_in(app: AppHandle, id: i64) -> R<()> {
+    crate::remote::cut_in(&app, id)
 }
 
 /// Reopen a session that looks stuck (same conversation).
@@ -1118,7 +1155,16 @@ pub async fn account_models(app: AppHandle, id: String) -> R<Value> {
     let mut problem: Option<String> = None;
     match a.kind.as_str() {
         "codex" => {
-            let ms = crate::providers::codex_models_in(&a.home);
+            let mut ms = crate::providers::codex_models_in(&a.home);
+            // none yet (a fresh login never ran Codex) or a day old: ask Codex itself (ISSUE-069)
+            if ms.is_empty() || crate::providers::codex_cache_age(&a.home).is_none_or(|d| d.as_secs() > 24 * 3600) {
+                let home = a.home.clone();
+                match tauri::async_runtime::spawn_blocking(move || crate::providers::codex_models_refresh(&home)).await.map_err(e)? {
+                    Ok(list) => ms = list,
+                    Err(why) if ms.is_empty() => problem = Some(why),
+                    Err(_) => {}
+                }
+            }
             if !ms.is_empty() {
                 source = "account";
             }

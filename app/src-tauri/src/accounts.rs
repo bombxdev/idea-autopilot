@@ -189,6 +189,9 @@ pub(crate) fn secret(root: &Path, id: &str) -> Option<String> {
 /// Everything a run of this account needs in its environment: its own login folder, and its key when it signs in with one.
 pub fn env_with_secret(a: &Account, root: &Path) -> Vec<(String, String)> {
     let mut env = env_for(a);
+    if a.kind == "codex" && !a.home.is_empty() {
+        codex_home_ready(Path::new(&a.home));
+    }
     if crate::omniroute::is(a) {
         // the gateway on this machine: start it when it is down; a key is optional there
         if let Err(why) = crate::omniroute::ensure_running(a) {
@@ -203,6 +206,39 @@ pub fn env_with_secret(a: &Account, root: &Path) -> Vec<(String, String)> {
         }
     }
     env
+}
+
+/// A Codex login of its own (CODEX_HOME) starts with no config.toml, so Codex had its Windows sandbox "disabled",
+/// fell back to read-only and refused to start any command: the AI could not even read SESSION.md (ISSUE-071).
+/// The machine's own Codex has `[windows] sandbox = "elevated"`, which needs a one-time admin setup per home; the
+/// unelevated sandbox needs none and still keeps the AI inside its folder.
+pub fn codex_home_ready(home: &Path) {
+    #[cfg(windows)]
+    {
+        let cfg = home.join("config.toml");
+        let text = std::fs::read_to_string(&cfg).unwrap_or_default();
+        if !codex_has_windows_sandbox(&text) {
+            let _ = std::fs::create_dir_all(home);
+            let sep = if text.is_empty() || text.ends_with('\n') { "" } else { "\n" };
+            let _ = std::fs::write(&cfg, format!("{text}{sep}\n[windows]\nsandbox = \"unelevated\"\n"));
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = home;
+}
+
+fn codex_has_windows_sandbox(toml: &str) -> bool {
+    let mut in_windows = false;
+    for l in toml.lines().map(str::trim) {
+        if l.starts_with('[') {
+            in_windows = l == "[windows]";
+        } else if in_windows && l.starts_with("sandbox") && l.contains('=') {
+            return true;
+        } else if l.starts_with("windows.sandbox") {
+            return true;
+        }
+    }
+    false
 }
 
 /// What to type in a terminal to log this account in (shown in a window the owner finishes in the browser).
@@ -243,6 +279,20 @@ mod tests {
         assert!(env_for(&acc("a", "claude", "")).is_empty());
         assert_eq!(env_for(&acc("a", "claude", "D:/h"))[0], ("CLAUDE_CONFIG_DIR".into(), "D:/h".into()));
         assert_eq!(env_for(&acc("a", "codex", "D:/h"))[0].0, "CODEX_HOME");
+        // a Codex login of its own gets a Windows sandbox, or Codex runs read-only (ISSUE-071)
+        assert!(!codex_has_windows_sandbox("model = \"x\"\n[features]\nsandbox = 1\n"));
+        assert!(codex_has_windows_sandbox("[windows]\nsandbox = \"elevated\"\n"));
+        #[cfg(windows)]
+        {
+            let h = std::env::temp_dir().join(format!("ia-codexhome-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&h);
+            codex_home_ready(&h);
+            codex_home_ready(&h);
+            let t = std::fs::read_to_string(h.join("config.toml")).unwrap();
+            assert_eq!(t.matches("[windows]").count(), 1);
+            assert!(t.contains("sandbox = \"unelevated\""));
+            let _ = std::fs::remove_dir_all(&h);
+        }
         assert_eq!(env_for(&acc("a", "mistral", "D:/h"))[0].0, "VIBE_HOME");
         assert_eq!(env_for(&acc("a", "gemini", "D:/h"))[0].0, "GEMINI_CLI_HOME");
         assert_eq!(env_for(&acc("a", "opencode", "D:/h")).len(), 2);

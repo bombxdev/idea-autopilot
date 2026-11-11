@@ -78,6 +78,47 @@ fn short(s: &str, n: usize) -> String {
     }
 }
 
+/// Like `short`, but a message with a ``` code block keeps its lines (and gets more room): flattened, a command to
+/// copy became one long unreadable line in the feed (ISSUE-073).
+pub fn tidy(s: &str, n: usize) -> String {
+    if !s.contains("```") {
+        return short(s, n);
+    }
+    let mut out: Vec<&str> = Vec::new();
+    for l in s.trim().lines().map(str::trim_end) {
+        if l.is_empty() && out.last().is_some_and(|p| p.is_empty()) {
+            continue;
+        }
+        out.push(l);
+    }
+    let all = out.join("\n");
+    let max = n.max(1500);
+    if all.chars().count() > max {
+        format!("{}…", all.chars().take(max).collect::<String>())
+    } else {
+        all
+    }
+}
+
+/// A whole message for the feed: its lines kept (blank runs squeezed), up to WHOLE_MAX characters. The feed shows a
+/// few lines and expands in place to the rest, so it is no longer cut to 300-700 characters (ISSUE-074).
+pub const WHOLE_MAX: usize = 3000;
+pub fn whole(s: &str) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    for l in s.trim().lines().map(str::trim_end) {
+        if l.is_empty() && out.last().is_some_and(|p| p.is_empty()) {
+            continue;
+        }
+        out.push(l);
+    }
+    let all = out.join("\n");
+    if all.chars().count() > WHOLE_MAX {
+        format!("{}…", all.chars().take(WHOLE_MAX).collect::<String>())
+    } else {
+        all
+    }
+}
+
 fn host(url: &str) -> String {
     url.split("//").nth(1).unwrap_or(url).split('/').next().unwrap_or(url).trim_start_matches("www.").to_string()
 }
@@ -124,7 +165,7 @@ pub fn assistant(parts: &[Value], lang: &str) -> Vec<String> {
             Some("text") => {
                 let t = p.get("text").and_then(Value::as_str).unwrap_or("").trim();
                 if !t.is_empty() {
-                    out.push(if crate::lang::is_in(t, lang) { format!("💬 {}", short(t, 400)) } else { tr(lang, "saying", "") });
+                    out.push(if crate::lang::is_in(t, lang) { format!("💬 {}", whole(t)) } else { tr(lang, "saying", "") });
                 }
             }
             Some("thinking") => {
@@ -167,7 +208,7 @@ pub fn user(v: &Value, lang: &str) -> Option<String> {
     if t.is_empty() || t.starts_with('<') || t.starts_with("[Request interrupted") {
         return None;
     }
-    Some(tr(lang, "you", &short(t, 300)))
+    Some(tr(lang, "you", &whole(t)))
 }
 
 /// What the owner actually wrote: Claude Code wraps a long message in <pasted_content>, and a /skill message carries
@@ -205,6 +246,17 @@ pub fn had_error(v: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_code_block_keeps_its_lines_in_the_feed() {
+        let t = "Run this:\n```powershell\ncd D:/x\n\n\nnode a.mjs\n```\ndone";
+        assert_eq!(tidy(t, 50), "Run this:\n```powershell\ncd D:/x\n\nnode a.mjs\n```\ndone");
+        assert_eq!(tidy("a\n  b", 50), "a b");
+        // the feed keeps a whole message (it expands in place), lines and all (ISSUE-074)
+        let long = "x".repeat(900);
+        assert_eq!(whole(&format!("{long}\n\n\nend")), format!("{long}\n\nend"));
+        assert!(whole(&"y".repeat(WHOLE_MAX + 50)).ends_with('…'));
+    }
 
     #[test]
     fn a_skill_message_from_the_phone_shows_the_owners_own_words() {

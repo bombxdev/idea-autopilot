@@ -71,6 +71,7 @@ async fn tick(app: &AppHandle) -> anyhow::Result<()> {
     crate::model_check::tick(app);
     import_inbox(app);
     crate::remote::tick(app);
+    crate::pausing::keep(app);
     crate::naming::tick(app);
 
     let cal = calendar(&st);
@@ -1223,6 +1224,7 @@ pub fn state_json(st: &AppState) -> serde_json::Value {
     let providers = crate::providers::summary(&st.db.lock());
     let onboarded = db::get_setting(&st.db.lock(), "onboarded").as_deref() == Some("1");
     let seen_version = db::get_setting(&st.db.lock(), "seen_version");
+    let shelf = crate::pausing::get(&st.db.lock());
     let (power_mode, power_ideas, agents, idea_ai, usable, limits) = {
         let c = st.db.lock();
         (crate::power::mode(&c), crate::power::ideas(&c), crate::agents::list(&c), crate::idea_ai::all_json(&c), crate::accounts::usable(&c), crate::limits::all_json(&c, db::now()))
@@ -1237,6 +1239,8 @@ pub fn state_json(st: &AppState) -> serde_json::Value {
         "account": rt.account.as_ref().map(|a| serde_json::json!({ "id": a.id, "label": a.title(), "kind": a.kind })),
         "power": { "allow": rt.power_decision.allow, "reason": rt.power_decision.reason, "mode": power_mode, "ideas": power_ideas },
         "paused": rt.paused,
+        // paused before switching the PC off (or left open by a PC that went off): offered to carry on
+        "shelf": shelf,
         "turbo_until": rt.turbo_until,
         "user_active": rt.user_active,
         "reserve_per_hour": rt.reserve_per_hour,

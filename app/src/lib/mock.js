@@ -78,10 +78,10 @@ const state = {
   current: { run_id: 9, idea_id: 1, stage: "verdict", title: "เกมการ์ดเล่นสั้นบนเว็บ", started: now - 640, forced: false, deadline: now + 1400, stage_no: 2, stage_total: 5, last_activity: now - 25, last_line: "🌐 ค้นเว็บ: ตลาดเกมการ์ดสั้นบนเว็บ", lang: "th", provider: "Claude Code", model: "Opus 5.5", account: "claude01" },
   paused: false, turbo_until: 0, user_active: false, reserve_per_hour: 1.5, reserve_learned: false, cooldown_until: 0,
   agents: [{ id: "claude", label: "Claude", via: "app", hint: "หลัก" }, { id: "codex", label: "Codex (OpenAI)", via: "orca", hint: "งานโค้ด/ขัดเกลาหน้าตา · ใช้โควต้า OpenAI · เปิดใน Orca" }],
-  sessions: [{ idea_id: 5, name: "Idea#5 : กาแฟเย็นทำให้ง่วงจริงไหม", status: "working", started: now - 300, pid: 1, note: "", sid: "x", ai: "Claude Code · Opus 5.5", quiet: 420, screen: "● Read(t2.png)\n  ⎿  Reading…", feed: [
+  sessions: [{ idea_id: 5, name: "Idea#5 : กาแฟเย็นทำให้ง่วงจริงไหม", status: "working", started: now - 300, pid: 1, note: "", sid: "x", ai: "Claude Code · Opus 5.5", busy_since: now - 47 * 60, waiting: 1, quiet: 420, screen: "● Read(t2.png)\n  ⎿  Reading…", feed: [
     { ts: now - 290, text: "⏳ กำลังเปิด session…" }, { ts: now - 284, text: "🛰 พร้อมแล้ว — เปิดดูในแอป Claude ได้" },
-    { ts: now - 280, text: "🙋 คุณ: เพิ่มตารางเปรียบเทียบปริมาณน้ำตาลของกาแฟเย็นแต่ละร้าน" },
-    { ts: now - 270, text: "💬 จะอ่านรายงานเดิมก่อน เพื่อดูว่ามีข้อมูลน้ำตาลอะไรอยู่แล้วบ้าง" },
+    { ts: now - 280, text: "🙋 คุณ: เพิ่มตารางเปรียบเทียบปริมาณน้ำตาลของกาแฟเย็นแต่ละร้าน" }, { ts: now - 278, text: "🙋 คุณ: At line:1 char:207\n+ ... ore } from './agent/keystore.mjs'; const p = wincredKeystore().get('g ...\n+ ~\nAn expression was expected after '('.\nAt line:1 char:244\n+ ... st p = wincredKeystore().get('goatcounter/password'); if (!p) throw n ...\n+ ~\nMissing statement block after if ( condition ).\n+ CategoryInfo : ParserError: (:) [], ParentContainsErrorRecordException\n+ FullyQualifiedErrorId : ExpectedExpression" },
+    { ts: now - 270, text: "💬 จะอ่านรายงานเดิมก่อน เพื่อดูว่ามีข้อมูลน้ำตาลอะไรอยู่แล้วบ้าง" }, { ts: now - 265, text: "💬 ลองรันนี้ใน PowerShell:\n```powershell\ncd D:/x\nnode a.mjs | Set-Clipboard\n```\nแล้วกด **Ctrl+V** หรือล้างด้วย `Set-Clipboard -Value ''`" },
     { ts: now - 265, text: "📖 อ่านไฟล์ REPORT.md" }, { ts: now - 240, text: "🌐 ค้นเว็บ: ปริมาณน้ำตาล กาแฟเย็น Amazon Café" },
     { ts: now - 200, text: "💬 ได้ข้อมูล 5 ร้านแล้ว จะทำเป็นตารางและใส่แหล่งอ้างอิงท้ายตาราง" },
     { ts: now - 190, text: "✏️ แก้ไฟล์ REPORT.md" }] }],
@@ -194,7 +194,6 @@ const handlers = {
     idea: ideas.find((i) => i.id === id), files: { report: md, idea: "# ไอเดีย\n\nข้อความเดิมของคุณ" },
     runs: [{ id: 9, stage: "research", status: "ok", started: now - 3 * H, input_tokens: 2e4, output_tokens: 9e3, cache_write: 6e4, week_before: 52, week_after: 55.5 }],
     questions: questions.filter((q) => q.idea_id === id), directives: [[now - 2 * H, "เน้นตลาดไทย"]], dir: "",
-    requests: mockReqs,
   }),
   get_digest: () => ({ ts: now - 2 * H, body: { since: now - 20 * H, headline: "1 พร้อมลองเล่น · 2 เสร็จ · 2 คำถามรอคุณ · บอทใช้ไป 18% ของสัปดาห์", runs: 7, bot_pct: 18.2, needs: [{ id: 4, title: ideas[3].title, needs: ideas[3].needs }] } }),
   make_digest: () => handlers.get_digest(),
@@ -220,22 +219,19 @@ const handlers = {
   get_events: () => [],
 };
 
-const mockReqs = [
-  { id: 41, ts: now - 5 * H, text: "(สั่งในแชต) ทำจอลอยให้เล็กที่สุด และย้ายไปมาได้", state: "ok", note: "", checklist: true },
-  { id: 42, ts: now - 3 * H, text: "(สั่งในแชต) ปุ่มคำแปลไทยกดแล้วหุบขึ้นบน", state: "done", note: "ปุ่มหุบได้แล้ว ทดสอบบนมือถือจริงผ่าน", checklist: true },
-  { id: 43, ts: now - 2 * H, text: "(สั่งในแชต) login ผ่าน claude เองบนมือถือ ไม่ต้องผ่านคอมฯ", state: "no", note: "Claude ยังไม่เปิดให้แอปอื่นใช้ login ของผู้ใช้ — ต้องใช้ API key", checklist: true },
-  { id: 44, ts: now - H, text: "(สั่งในแชต) ให้คะแนนประโยคที่พิมพ์ และเสนอประโยคที่เป็นธรรมชาติกว่า", state: "", note: "", checklist: true },
-];
-
 export async function mockInvoke(cmd, args = {}) {
   await new Promise((r) => setTimeout(r, 60));
   const h = handlers[cmd];
   if (h) return structuredClone(h(args));
-  if (cmd === "request_set") {
-    const r = mockReqs.find((x) => x.id === args.rid);
-    if (r) { r.state = args.state; if (args.state === "") r.note = "เจ้าของลองแล้วยังไม่ได้"; }
-    return null;
+  if (cmd === "session_cut_in") { const x = state.sessions.find((s) => s.idea_id === args.id); if (x) { x.busy_since = 0; x.waiting = 0; } return null; }
+  if (cmd === "pause_all") {
+    state.shelf = { ts: now, by_owner: true, was_paused: false, run: state.current ? [state.current.idea_id, state.current.title, state.current.stage] : null,
+      sessions: state.sessions.map((x) => ({ id: x.idea_id, title: x.name.split(": ")[1] ?? x.name, working: x.status === "working", ai: {} })) };
+    state.paused = true; state.current = null; state.sessions = [];
+    return state.shelf;
   }
+  if (cmd === "resume_all") { const n = state.shelf?.sessions.length ?? 0; state.shelf = null; state.paused = false; return n; }
+  if (cmd === "shelf_dismiss") { state.shelf = null; state.paused = false; return null; }
   if (cmd === "idea_action") {
     const i = ideas.find((x) => x.id === args.id);
     if (i && ["pin", "unpin"].includes(args.action)) i.pinned = args.action === "pin";

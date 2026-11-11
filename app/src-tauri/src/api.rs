@@ -126,11 +126,14 @@ pub fn dispatch(app: &AppHandle, cmd: &str, a: Value) -> Result<Value, String> {
                     ans = o.clone();
                 }
             }
-            unit(commands::answer_question(st(), qid, ans))
+            unit(commands::answer_question(app.clone(), st(), qid, ans))
         }
         "action" => unit(commands::idea_action(st(), id(&a)?, text(&a, "action").ok_or("ต้องมี action")?, text(&a, "text"), None)),
         "pause" => unit(commands::set_paused(app.clone(), st(), true)),
         "resume" => unit(commands::set_paused(app.clone(), st(), false)),
+        "pause_all" => commands::pause_all(app.clone(), st()),
+        "resume_all" => commands::resume_all(app.clone(), st()).map(|n| json!(n)),
+        "shelf_dismiss" => unit(commands::shelf_dismiss(app.clone(), st())),
         "turbo" => unit(commands::set_turbo(st(), a.get("hours").and_then(Value::as_f64).unwrap_or(2.0))),
         "stop" => unit(commands::stop_current(st())),
         "refresh" => unit(commands::refresh_usage(st())),
@@ -166,6 +169,23 @@ pub fn dispatch(app: &AppHandle, cmd: &str, a: Value) -> Result<Value, String> {
         }
         "note" => unit(commands::idea_note(app.clone(), st(), id(&a)?, text(&a, "text").unwrap_or_default())),
         "reqs" => crate::remote::requests(&st(), id(&a)?),
+        "cut_in" => unit(crate::remote::cut_in(app, id(&a)?)),
+        // the AI asks the owner something mid-work: a tap-to-answer question on the PC and the phone (ISSUE-068)
+        "question" => {
+            let idea = id(&a)?;
+            let q = text(&a, "text").filter(|t| !t.trim().is_empty()).ok_or("ต้องมีคำถาม")?;
+            let opts: Vec<String> = text(&a, "options").unwrap_or_default().split('|').map(|o| o.trim().to_string()).filter(|o| !o.is_empty()).collect();
+            {
+                let s = st();
+                let c = s.db.lock();
+                crate::db::insert_question(&c, idea, q.trim(), &opts, None).map_err(|e| e.to_string())?;
+                crate::db::log_event(&c, "question", Some(idea), &format!("AI ถาม: {}", q.trim()));
+            }
+            st().rt.lock().sync_dirty = true;
+            crate::scheduler::notify_idea(app, idea, "AI ถามคุณ", q.trim());
+            let _ = app.emit("state-changed", ());
+            Ok(Value::Null)
+        }
         "req" => unit(crate::remote::set_request(app, a.get("rid").and_then(Value::as_i64).ok_or("ต้องระบุเลขคำสั่ง")?, &text(&a, "state").unwrap_or_default(), &text(&a, "note").unwrap_or_default(), false)),
         "ui" => {
             crate::show_main(app, None);

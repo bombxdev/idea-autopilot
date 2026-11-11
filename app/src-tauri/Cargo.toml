@@ -1,6 +1,6 @@
 [package]
 name = "idea-autopilot"
-version = "0.5.0"
+version = "0.5.1"
 description = "Idea Autopilot — let an AI agent of your choice work through your ideas while you are away"
 license = "GPL-3.0-or-later"
 authors = ["bombxdev"]

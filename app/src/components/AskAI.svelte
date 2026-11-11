@@ -1,5 +1,5 @@
 <script>
-  import IconText from "./IconText.svelte";
+  import FeedText from "./FeedText.svelte";
   import Icon from "./Icon.svelte";
   // สั่ง AI แก้/ทำต่อในไอเดีย: ส่งข้อความเข้า Remote Control session "Idea#<id>" (มีอยู่แล้วส่งเข้าอันเดิม)
   // แล้วแสดงว่า AI กำลังทำอะไรเป็นภาษาคน (แปลงจาก transcript ด้วยกฎ ไม่ใช้ token เพิ่ม)
@@ -60,7 +60,20 @@
     }
   }
   let full = $state(false); // feed shown over the whole window
-  const feed = $derived((s?.feed ?? []).slice(full ? -200 : -30));
+  // AIs that print line by line (Vibe, Gemini…) split a ``` block over several feed lines: join them back into one
+  function joinFences(list) {
+    const out = [];
+    for (const f of list) {
+      const prev = out[out.length - 1];
+      if (prev && (prev.text.match(/\x60{3}/g) ?? []).length % 2 === 1) prev.text += "\n" + f.text.replace(/^💬\s?/u, "");
+      else out.push({ ...f });
+    }
+    return out;
+  }
+  const feed = $derived(joinFences((s?.feed ?? []).slice(full ? -200 : -30)));
+  // a long message shows a few lines; "ดูเต็ม" opens it right there and "ย่อ" folds it back (ISSUE-074)
+  let opened = $state({});
+  const isLong = (t) => t.length > 280 || t.split("\n").length > 4;
   const STATUS = {
     starting: { label: "กำลังเปิด", cls: "amber" },
     working: { label: "AI กำลังทำ", cls: "teal" },
@@ -70,6 +83,21 @@
   const st = $derived(s ? STATUS[s.status] ?? STATUS.idle : null);
   // "working" yet nothing has moved for minutes: say so instead of a cheerful "working" (ISSUE-063)
   const quietMin = $derived(s && s.status === "working" && (s.quiet ?? 0) >= 180 ? Math.floor(s.quiet / 60) : 0);
+  // a one-message-at-a-time AI (Vibe, Codex…) still on a long reply: what you send waits until it ends (ISSUE-068)
+  const busyMin = $derived(s?.busy_since ? Math.max(0, Math.floor((store.now - s.busy_since) / 60)) : -1);
+  let cutting = $state(false);
+  async function cutIn() {
+    cutting = true;
+    try {
+      await api.sessionCutIn(id);
+      toast(s?.waiting ? "หยุดรอบเดิมแล้ว — ข้อความของคุณจะถึง AI ทันที" : "หยุดรอบที่ทำอยู่แล้ว");
+    } catch (e) {
+      toast(String(e), "err");
+    } finally {
+      cutting = false;
+      refresh();
+    }
+  }
   let reviving = $state(false);
   async function revive() {
     reviving = true;
@@ -114,6 +142,13 @@
       sending = false;
     }
   }
+  // after a crash or a bug: carry on with the last request without typing it again (ISSUE-072)
+  const CARRY = "↻ ทำต่อจากคำสั่งล่าสุดของผมที่ยังไม่เสร็จ (ในบทสนทนานี้และ DIRECTIVES.md) — รอบก่อนติดปัญหาของโปรแกรม ไม่ต้องให้ผมพิมพ์ซ้ำ ทำได้เลย แล้วบอกผลว่าใช้ได้จริงไหม";
+  const canCarry = $derived(picked?.via === "app" && (!s || s.status === "idle" || s.status === "error"));
+  async function carryOn() {
+    text = CARRY;
+    await send();
+  }
   // open the conversation without sending anything: to carry on in the Claude app yourself. What is said there
   // comes back to the idea (notes + CHAT-LOG.md), and the Sessions page can disconnect it when you are done.
   async function openOnly() {
@@ -154,6 +189,15 @@
     {/if}
   </div>
 
+  {#if busyMin >= 5 || (busyMin >= 0 && s.waiting)}
+    <div class="quiet small">
+      <div class="row wrap">
+        <span class="grow">AI ยังทำรอบนี้อยู่ {busyMin} นาที{#if s.waiting}<span class="sep">· ข้อความของคุณ {s.waiting} ข้อความรอให้รอบนี้จบก่อน (AI ตัวนี้รับทีละข้อความ)</span>{/if}</span>
+        <button class="small" disabled={cutting} onclick={cutIn} title="หยุดสิ่งที่ AI ทำอยู่ (ไฟล์ที่ทำไปแล้วยังอยู่) แล้วส่งข้อความที่รอให้ทันที">{s.waiting ? "หยุดรอบนี้ แล้วส่งข้อความเลย" : "หยุดรอบนี้"}</button>
+      </div>
+    </div>
+  {/if}
+
   {#if quietMin}
     <div class="quiet small">
       <div class="row wrap">
@@ -181,6 +225,9 @@
     </div>
     <div class="bar">
       <Attach bind:this={att} bind:staged priority={3} zone={() => askEl} />
+      {#if canCarry && !text.trim()}
+        <button class="ghost small" disabled={sending} onclick={carryOn} title="รอบก่อนพัง ค้าง หรือโปรแกรมติดบั๊ก: ให้ AI ทำคำสั่งล่าสุดที่ยังไม่เสร็จต่อเลย ไม่ต้องพิมพ์ซ้ำ (มันเห็นบทสนทนาเดิมและคำสั่งทั้งหมดของไอเดียนี้)"><Icon name="refresh" /> ทำต่อจากที่สั่งไว้</button>
+      {/if}
       <span class="grow"></span>
       <button class="primary send" onclick={send} disabled={sending || (!text.trim() && !staged.length)}>{sending ? "กำลังส่ง…" : `ส่งให้ ${sendTo}`}</button>
     </div>
@@ -207,8 +254,10 @@
         <button type="button" class="ghost small" onclick={() => (full = !full)} title={full ? "ย่อกลับ (Esc)" : "ขยายเต็มจอ"}><Icon name={full ? "collapse" : "expand"} /> {full ? "ย่อ" : "ขยาย"}</button>
       </div>
       <div class="feed" bind:this={feedEl}>
-        {#each feed as f}
-          <div class="line {kind(f.text)}"><span class="t">{hhmm(f.ts)}</span><span class="x"><IconText text={f.text} /></span></div>
+        {#each feed as f, i (f.ts + ":" + i)}
+          {@const k = f.ts + ":" + f.text.length}
+          {@const long = isLong(f.text)}
+          <div class="line {kind(f.text)}"><span class="t">{hhmm(f.ts)}</span><div class="x"><div class="body" class:clamp={long && !opened[k]}><FeedText text={f.text} /></div>{#if long}<button type="button" class="more" onclick={() => (opened[k] = !opened[k])}>{opened[k] ? "ย่อ ▴" : "ดูเต็ม ▾"}</button>{/if}</div></div>
         {/each}
       </div>
     </div>
@@ -225,6 +274,7 @@
   .badge.amber { color: var(--amber); }
   .quiet { border: 1px solid var(--amber); background: var(--amber-bg); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
   .quiet .row { gap: 8px; align-items: center; }
+  .quiet .sep { margin-inline-start: 0.35em; }
   .quiet pre { margin: 0; max-height: 120px; overflow: auto; white-space: pre-wrap; font-size: 11px; background: var(--card); border-radius: 6px; padding: 6px 8px; }
   .badge.red { color: var(--red); }
   .badge.muted { color: var(--text-2); }
@@ -239,7 +289,10 @@
   .feed { max-height: min(46vh, 420px); overflow: auto; display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; background: var(--bg); border-radius: 8px; font-size: 13px; line-height: 1.5; }
   .line { display: flex; gap: 8px; }
   .line .t { color: var(--text-3); font-variant-numeric: tabular-nums; flex: none; }
-  .line .x { overflow-wrap: anywhere; }
+  .line .x { overflow-wrap: anywhere; min-width: 0; flex: 1; }
+  .line .body { white-space: pre-line; }
+  .line .body.clamp { display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .line .more { border: none; background: transparent; padding: 0; margin-top: 1px; font-size: 12px; color: var(--teal); }
   .line.step .x { color: var(--text-2); }
   .line.say .x { color: var(--text); }
   .line.me .x { color: var(--teal); font-weight: 500; }

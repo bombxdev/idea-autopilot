@@ -23,6 +23,7 @@ mod modelname;
 mod economics;
 mod power;
 mod naming;
+mod pausing;
 mod narrate;
 mod prompts;
 mod providers;
@@ -262,6 +263,8 @@ pub fn run() {
             std::fs::create_dir_all(root.join("data"))?;
             let conn = db::open(&root.join("data").join("quota.db"))?;
             db::recover_runs(&conn)?;
+            // chats left open by a PC switched off while working: offer to carry on (ISSUE-067)
+            pausing::on_start(&conn);
             // A brand-new install starts empty and shows the setup screen. An install that
             // already has ideas keeps the schedule and behaviour it had before those settings existed.
             if !db::is_fresh(&conn) {
@@ -407,6 +410,10 @@ pub fn run() {
             commands::list_days,
             commands::idea_remote,
             commands::session_revive,
+            commands::session_cut_in,
+            commands::pause_all,
+            commands::resume_all,
+            commands::shelf_dismiss,
             commands::request_set,
             commands::idea_ask,
             commands::codex_thread,
@@ -478,6 +485,8 @@ pub fn run() {
         .run(|app, ev| {
             if let tauri::RunEvent::Exit = ev {
                 // don't leave remote sessions running without the app that manages them
+                // (still written down as open: the next start offers to carry on with them)
+                pausing::EXITING.store(true, std::sync::atomic::Ordering::Relaxed);
                 remote::stop_all(app);
             }
         });

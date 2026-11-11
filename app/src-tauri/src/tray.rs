@@ -24,9 +24,11 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
     let capture = MenuItem::with_id(app, "capture", format!("จดไอเดีย…   {}", hotkey.to_uppercase()), true, None::<&str>)?;
     let pause = CheckMenuItem::with_id(app, "pause", "พักบอท (Pause)", true, false, None::<&str>)?;
     let turbo = MenuItem::with_id(app, "turbo", "Turbo 2 ชั่วโมง", true, None::<&str>)?;
+    // stop everything and remember it, so the PC can be switched off at once (ISSUE-067)
+    let shelve = MenuItem::with_id(app, "pause_all", "พักทั้งหมด — ปิดเครื่องได้เลย", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "ออกจากโปรแกรม", true, None::<&str>)?;
     let sep = || PredefinedMenuItem::separator(app);
-    let menu = Menu::with_items(app, &[&status, &sep()?, &open, &capture, &sep()?, &pause, &turbo, &sep()?, &quit])?;
+    let menu = Menu::with_items(app, &[&status, &sep()?, &open, &capture, &sep()?, &pause, &turbo, &shelve, &sep()?, &quit])?;
 
     TrayIconBuilder::with_id("main")
         .icon(Image::from_bytes(ICON_IDLE)?)
@@ -50,6 +52,9 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
                 st.wake.notify_one();
             }
             "quit" => app.exit(0),
+            "pause_all" => {
+                let _ = crate::pausing::pause_all(app);
+            }
             _ => {}
         })
         .on_tray_icon_event(|tray, ev| {

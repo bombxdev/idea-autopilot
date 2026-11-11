@@ -21,6 +21,10 @@ const TURN_TIMEOUT_SECS: u64 = 30 * 60;
 const HISTORY_CHARS: usize = 7000;
 const REPLY_KEEP: usize = 2500;
 
+/// Never wait for the owner inside a reply: what the owner writes reaches you only after the reply ends, so a step that
+/// waits for their answer waits forever (a sign-up tool waited 4 hours for a reply typed in this chat — ISSUE-068).
+pub const WAIT_RULE: &str = "\nWhen you need something from the owner (an answer, a choice, a code, a human check on a website): do NOT wait for it inside this reply (no loop or timer waiting for an answer: the owner's messages reach you only after your reply ends). Ask with the app's question command (`ia question <idea id> \"question\" \"option 1|option 2\"`: it goes to the owner's phone as a tap-to-answer question), say so in your reply, and END the reply. The answer comes back to you as the next message.\n";
+
 /// The AIs this chat can drive.
 pub const KINDS: [&str; 3] = ["gemini", "opencode", "mistral"];
 
@@ -31,6 +35,12 @@ struct Chat {
     running: bool,
     child: Option<Arc<Mutex<Child>>>,
     stopped: bool,
+    /// when the reply now running started (0 = none)
+    since: i64,
+    /// the AI the owner's last message chose (an answer to the AI's question goes the same way)
+    last_ai: ChatAi,
+    /// the owner cut in: the running reply was stopped on purpose, go on with the next message
+    cut: bool,
 }
 
 static CHATS: LazyLock<Mutex<HashMap<i64, Chat>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -38,6 +48,37 @@ static CHATS: LazyLock<Mutex<HashMap<i64, Chat>>> = LazyLock::new(|| Mutex::new(
 /// Is a chat of this kind open for this idea?
 pub fn active(app: &AppHandle, id: i64) -> bool {
     CHATS.lock().contains_key(&id) && app.state::<AppState>().rt.lock().sessions.contains_key(&id)
+}
+
+pub fn last_ai(id: i64) -> ChatAi {
+    CHATS.lock().get(&id).map(|c| c.last_ai.clone()).unwrap_or_default()
+}
+
+/// A reply is running: (since when, messages waiting behind it).
+pub fn busy(id: i64) -> Option<(i64, usize)> {
+    CHATS.lock().get(&id).filter(|c| c.child.is_some() && c.since > 0).map(|c| (c.since, c.queue.len()))
+}
+
+/// The owner cuts in: stop the reply that is running (and everything it started), keep the waiting messages, which
+/// then go at once. Returns false when nothing was running (ISSUE-068).
+pub fn cut_in(id: i64) -> bool {
+    let child = {
+        let mut m = CHATS.lock();
+        let Some(c) = m.get_mut(&id) else { return false };
+        let Some(ch) = c.child.clone() else { return false };
+        c.cut = true;
+        ch
+    };
+    kill(&child);
+    true
+}
+
+/// Stop an agent and everything it started: killing only the launcher (vibe.cmd, a Python shim) left its children
+/// holding the output open, so a reply "stopped" after 30 minutes ran on for hours (ISSUE-068).
+fn kill(child: &Arc<Mutex<Child>>) {
+    let mut c = child.lock();
+    crate::runner::kill_tree(c.id());
+    let _ = c.kill();
 }
 
 pub fn agent_of(id: i64) -> Option<String> {
@@ -101,7 +142,9 @@ fn build_prompt(id: i64, title: &str, past: &str, text: &str) -> String {
         p.push_str(past.trim());
         p.push('\n');
     }
-    p.push_str("\nNow do what the owner asks. Answer briefly in the owner's language, then say what you changed.\n\nOwner: ");
+    p.push_str("\nNow do what the owner asks. Answer briefly in the owner's language, then say what you changed.\n");
+    p.push_str(WAIT_RULE);
+    p.push_str("\nOwner: ");
     p.push_str(text);
     p.push('\n');
     p
@@ -167,6 +210,7 @@ pub fn ask(app: &AppHandle, id: i64, agent: &str, text: &str, ai: &ChatAi) -> Re
         c.agent = agent.to_string();
         c.stopped = false;
         c.queue.push_back((text.to_string(), ai.clone()));
+        c.last_ai = ai.clone();
         let go = !c.running;
         c.running = true;
         go
@@ -250,6 +294,8 @@ fn turn(app: &AppHandle, id: i64, agent: &str, text: &str, ai: &ChatAi) -> Resul
     let shared = Arc::new(Mutex::new(child));
     if let Some(c) = CHATS.lock().get_mut(&id) {
         c.child = Some(shared.clone());
+        c.since = db::now();
+        c.cut = false;
     }
     let watch = shared.clone();
     let started = std::time::Instant::now();
@@ -259,7 +305,7 @@ fn turn(app: &AppHandle, id: i64, agent: &str, text: &str, ai: &ChatAi) -> Resul
         while !done2.load(std::sync::atomic::Ordering::Relaxed) {
             std::thread::sleep(std::time::Duration::from_secs(5));
             if started.elapsed().as_secs() > TURN_TIMEOUT_SECS {
-                let _ = watch.lock().kill();
+                kill(&watch);
                 break;
             }
         }
@@ -295,15 +341,29 @@ fn turn(app: &AppHandle, id: i64, agent: &str, text: &str, ai: &ChatAi) -> Resul
     let status = shared.lock().wait().ok();
     done.store(true, std::sync::atomic::Ordering::Relaxed);
     let _ = err_thread.join();
-    if let Some(c) = CHATS.lock().get_mut(&id) {
-        c.child = None;
+    let cut = {
+        let mut m = CHATS.lock();
+        m.get_mut(&id).map(|c| {
+            c.child = None;
+            c.since = 0;
+            std::mem::take(&mut c.cut)
+        })
     }
+    .unwrap_or(false);
+    let timed_out = started.elapsed().as_secs() > TURN_TIMEOUT_SECS;
     let ok = status.map(|s| s.success()).unwrap_or(false);
     // keep the end of the reply: that is where the agent says what it did
     let n = reply.chars().count();
     let kept: String = if n > REPLY_KEEP { reply.chars().skip(n - REPLY_KEEP).collect() } else { reply.clone() };
     if !kept.trim().is_empty() {
         remember(&dir, label(agent), &kept);
+    }
+    if cut {
+        feed(app, id, "✋ หยุดรอบนี้ตามที่คุณสั่ง — ส่งข้อความของคุณต่อเลย".into(), None);
+        return Ok(());
+    }
+    if timed_out {
+        return Err(format!("{} ทำรอบนี้นานเกิน {} นาที จึงหยุดไว้ — สั่งต่อได้เลย (มันอ่านบทสนทนาเดิมและไฟล์ในโฟลเดอร์ต่อ)", label(agent), TURN_TIMEOUT_SECS / 60));
     }
     if !ok {
         let tail = err_tail.lock().join("\n");
@@ -335,7 +395,7 @@ pub fn stop(id: i64) {
         c.child.take()
     };
     if let Some(ch) = child {
-        let _ = ch.lock().kill();
+        kill(&ch);
     }
     CHATS.lock().remove(&id);
 }
@@ -348,6 +408,8 @@ mod tests {
     fn the_prompt_carries_the_conversation_and_the_new_message() {
         let p = build_prompt(7, "Demo", "## Owner\nhello\n\n## Gemini\nhi", "make it blue");
         assert!(p.contains("SESSION.md") && p.contains("## Gemini") && p.trim_end().ends_with("Owner: make it blue"));
+        // never wait for the owner inside a reply: ask with ia question and end it (ISSUE-068)
+        assert!(p.contains("ia question") && p.contains("END the reply"));
         assert!(!build_prompt(7, "Demo", "", "x").contains("conversation so far"));
     }
 

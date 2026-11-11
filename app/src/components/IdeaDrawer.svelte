@@ -7,7 +7,6 @@
   import Question from "./Question.svelte";
   import Actions from "./Actions.svelte";
   import AskAI from "./AskAI.svelte";
-  import Requests from "./Requests.svelte";
   import AttachList from "./AttachList.svelte";
   import IdeaAi from "./IdeaAi.svelte";
   import Scope from "./Scope.svelte";
@@ -196,7 +195,6 @@
       {/if}
       <AttachList {id} />
       <AskAI {id} />
-      <Requests requests={data.requests ?? []} onchange={load} />
       {#if openQs.length}<div class="qs">{#each openQs as q (q.id)}<Question {q} />{/each}</div>{/if}
       {#if idea.needs.length}
         <div class="needs small"><b>ต้องการจากคุณ</b><ul>{#each idea.needs as n}<li>{n}</li>{/each}</ul></div>

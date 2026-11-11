@@ -56,6 +56,16 @@ nav button.on { color: var(--text); background: var(--card); }
 .log { background: var(--bg2); border-radius: 12px; padding: 10px 12px; font-size: 12.5px; line-height: 1.5; margin-top: 12px; max-height: 210px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
 .ask textarea { margin: 10px 0 8px; }
 .feed div { white-space: normal; } .feed .faint { font-weight: 400; } .feed .say { color: var(--text); } .feed .me { color: var(--teal); font-weight: 600; } .feed .done { color: var(--teal); } .feed .warn { color: var(--amber); } .feed .step { color: var(--text2, var(--text3)); }
+.feed .fb { white-space: pre-line; }
+.feed .fb.clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.feed button.more { display: block; border: none; background: transparent; padding: 0; margin: 1px 0 0; font-size: 12px; color: var(--teal); width: auto; }
+.feed pre.code { margin: 4px 0; padding: 6px 8px; background: var(--card, var(--bg)); border: 1px solid var(--line, #333); border-radius: 8px; white-space: pre-wrap; word-break: break-all; font: 11.5px/1.45 ui-monospace, monospace; color: var(--text); }
+.feed code { font: 11.5px ui-monospace, monospace; background: var(--bg); border-radius: 4px; padding: 0 4px; }
+.skillmenu { display: none; margin: -4px 0 8px; border: 1px solid var(--teal); border-radius: 10px; max-height: 190px; overflow: auto; background: var(--bg2); }
+.skillmenu.on { display: block; }
+.skillmenu button { display: block; width: 100%; text-align: left; border: none; border-radius: 0; background: transparent; padding: 8px 12px; font-size: 13px; }
+.skillmenu button b { color: var(--teal); }
+.skillmenu .d { display: block; color: var(--text3); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .log .tool { color: var(--text3); font-family: ui-monospace, monospace; font-size: 11.5px; }
 .kv { display: flex; justify-content: space-between; font-size: 13px; margin: 8px 0 4px; }
 .run { display: flex; gap: 10px; padding: 9px 0; border-top: 1px solid var(--line); }
@@ -319,6 +329,10 @@ function renderNow(L, d, stale) {
   const queue = data.ideas.filter((i) => ["active", "inbox"].includes(i.status) && i.id !== cur?.idea_id).slice(0, 3);
   const runs = data.runs.slice(0, 6);
   $("#tab-now").innerHTML = `
+    ${L.shelf ? `<div class="card" style="border-color:var(--teal)"><b>⏸ ${L.shelf.by_owner ? `พักงานไว้ตั้งแต่ ${hm(L.shelf.ts)}` : "ครั้งก่อนคอมฯ ปิดไปตอนที่ AI ยังทำงานอยู่"}</b>
+      <div class="muted small">${(L.shelf.sessions || []).map((x) => `#${x.id} ${esc(x.title)} — ${x.working ? "AI ทำค้างอยู่" : "แชตเปิดอยู่"}`).join(" · ")}${L.shelf.run ? `${(L.shelf.sessions || []).length ? " · " : ""}บอททำ #${L.shelf.run[0]} ค้างไว้` : ""}</div>
+      <div class="faint small">เปิดคอมฯ แล้วกดทำต่อ — AI จะคุยต่อในบทสนทนาเดิมและทำต่อจากที่ค้าง</div>
+      <div class="acts" style="margin-bottom:0"><button class="primary" data-cmd="resume_all">▶ ทำต่อ</button><button data-cmd="shelf_dismiss">ไม่ต้อง</button></div></div>` : ""}
     ${stale ? `<div class="card" style="border-color:var(--amber)"><b>ไม่ได้ข่าวจากคอมฯ นานแล้ว</b><div class="muted small">คอมฯ อาจปิด หลับ หรือไม่ได้ต่อเน็ต — ข้อมูลด้านล่างคือข้อมูลล่าสุดที่มี</div></div>` : ""}
     <div class="card">
       <div class="status"><span class="pulse ${cls}"></span><div style="flex:1;min-width:0">${head}</div></div>
@@ -327,6 +341,7 @@ function renderNow(L, d, stale) {
       <div class="acts" style="margin-bottom:0">
         <button data-cmd="${L.paused ? "resume" : "pause"}">${L.paused ? "▶ ให้บอททำต่อ" : "⏸ พักบอท"}</button>
         ${cur ? `<button data-open="${cur.idea_id}">ดูไอเดียนี้</button>` : ""}
+        ${!L.shelf && (cur || (L.sessions || []).length) ? `<button data-cmd="pause_all" title="หยุดบอทและแชตที่ AI ทำอยู่ แล้วจำไว้ — ปิดคอมฯ ได้เลย">⏸ พักทั้งหมด</button>` : ""}
       </div>
     </div>
     <div class="card">
@@ -442,7 +457,7 @@ async function openIdea(id) {
     ${aiCard(i)}
     <div class="acts">
       ${["done", "ready"].includes(i.status) ? "" : `<button data-act="run_now" data-id="${id}" class="primary">⚡ ทำเลยตอนนี้</button>`}
-      <button data-act="go" data-id="${id}">👍 ไปต่อ</button><button data-act="deeper" data-id="${id}">🔍 ขุดลึก</button>
+      ${["done", "ready"].includes(i.status) ? `<button data-act="go" data-id="${id}">👍 ไปต่อ</button>` : ""}<button data-act="deeper" data-id="${id}">🔍 ขุดลึก</button>
       <button data-act="alt" data-id="${id}">🔀 ลองอีกแนว</button>${["done", "ready"].includes(i.status) ? "" : `<button data-act="stop" data-id="${id}">✂️ พอแค่นี้</button>`}
     </div>
     ${remoteCard(i)}
@@ -479,25 +494,83 @@ function aiCard(i) {
 }
 let pendingAsk = {}; // idea id -> instruction sent from the phone, until the PC shows it
 // how a sent instruction is spotted in the feed: without a leading /skill (the PC shows "[skill name] …") and spaces
+// a feed line: ``` blocks as code boxes, `code` and **bold** (ISSUE-073); AIs that print line by line split a block
+// over several lines, so those are joined back first
+const moreOpen = new Set(); // feed messages opened in full (ISSUE-074)
+function joinFences(list) {
+  const out = [];
+  for (const f of list) {
+    const prev = out[out.length - 1];
+    if (prev && ((prev.text.match(/```/g) || []).length % 2 === 1)) prev.text += "\n" + f.text.replace(/^💬\s?/u, "");
+    else out.push({ ...f });
+  }
+  return out;
+}
+function fmtInline(t) {
+  return esc(t).replace(/`([^`\n]+)`/g, "<code>$1</code>").replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>");
+}
+function fmtFeed(text) {
+  let html = "", last = 0, m;
+  const re = /```([\w+-]*)[ \t]*\n?([\s\S]*?)(?:```|$)/g;
+  while ((m = re.exec(text)) && m[0].length) {
+    html += fmtInline(text.slice(last, m.index)) + `<pre class="code">${esc(m[2].replace(/\s+$/, ""))}</pre>`;
+    last = re.lastIndex;
+  }
+  return html + fmtInline(text.slice(last));
+}
+// "/" in the instruction box lists the skills (the PC sends them in live.json); tap one to put "/name " there
+function skillMenu() {
+  const box = $("#ask-text"), menu = $("#skill-menu");
+  if (!box || !menu) return;
+  const m = /(^|\s)\/([\w-]*)$/.exec(box.value.slice(0, box.selectionStart ?? box.value.length));
+  const all = data.live?.slash || [];
+  const q = m ? m[2].toLowerCase() : null;
+  const items = q === null ? [] : all.filter((s) => s.slug.startsWith(q) || String(s.name || "").toLowerCase().startsWith(q)).slice(0, 30);
+  menu.classList.toggle("on", q !== null);
+  menu.innerHTML = q === null ? "" : items.length
+    ? items.map((s) => `<button data-skill="${esc(s.slug)}"><b>/${esc(s.slug)}</b><span class="d">${esc(s.description || s.name || "")}</span></button>`).join("")
+    : `<div class="faint small" style="padding:8px 12px">${all.length ? "ไม่มีสกิลที่ขึ้นต้นด้วยคำนี้" : "ยังไม่มีรายชื่อสกิลจากคอมฯ (เปิดสกิลที่หน้าสกิลในคอมฯ)"}</div>`;
+}
+function putSkill(slug) {
+  const box = $("#ask-text");
+  if (!box) return;
+  const at = box.selectionStart ?? box.value.length;
+  const m = /(^|\s)\/([\w-]*)$/.exec(box.value.slice(0, at));
+  if (!m) return;
+  const start = at - m[2].length - 1;
+  const after = box.value.slice(at).replace(/^[\w-]+/, "");
+  const ins = `/${slug}` + (/^\s/.test(after) ? "" : " ");
+  box.value = box.value.slice(0, start) + ins + after;
+  const pos = start + ins.length;
+  box.focus();
+  box.setSelectionRange(pos, pos);
+  skillMenu();
+}
+const CARRY = "↻ ทำต่อจากคำสั่งล่าสุดของผมที่ยังไม่เสร็จ (ในบทสนทนานี้และ DIRECTIVES.md) — รอบก่อนติดปัญหาของโปรแกรม ไม่ต้องให้ผมพิมพ์ซ้ำ ทำได้เลย แล้วบอกผลว่าใช้ได้จริงไหม";
 const squash = (t) => String(t || "").replace(/\s+/g, "");
 const askKey = (t) => squash(String(t).replace(/(^|\s)\/[\w-]+(?=\s|$)/g, " ")).slice(0, 25);
 function remoteCard(i) {
   const r = sessionOf(i.id);
   const pend = pendingAsk[i.id];
   const st = r ? SESS[r.status] || SESS.idle : null;
-  const feed = (r?.feed || []).slice(-10);
+  const feed = (r?.feed || []).slice(-14);
   const msg = pend ? "ส่งแล้ว — คอมฯ จะรับภายใน ~30 วินาที แล้ว AI จะเริ่มทำ"
     : r ? `ส่งเข้า session เดิม “${r.name}” · อัปเดตทุก ~15 วินาที`
     : `จะเปิด session “Idea#${i.id} : …” ให้ (คุยต่อจากครั้งก่อน ถ้าเคยเปิด)`;
   return `<div class="card ask" style="${r ? "border-color:var(--teal)" : ""}">
     <div style="display:flex;gap:8px;align-items:center"><b style="flex:1">🛠 สั่ง AI แก้ / ทำต่อ</b>${st ? `<span class="chip ${st[1]}">${st[0]}</span>` : ""}</div>
     ${r?.ai ? `<div class="faint small" style="margin:-2px 0 6px">🤖 คุยกับ ${esc(r.ai)}</div>` : ""}
-    <textarea id="ask-text" rows="3" placeholder="บอกสิ่งที่อยากให้แก้ เช่น “ทำปุ่มให้ใหญ่ขึ้น และเพิ่มโหมดมืด”"></textarea>
+    ${r?.busy_since && (r.waiting || Date.now() / 1000 - r.busy_since > 300) ? `<div class="small" style="margin:0 0 8px;color:var(--amber)">AI ยังทำรอบนี้อยู่ ${Math.floor((Date.now() / 1000 - r.busy_since) / 60)} นาที${r.waiting ? ` · ข้อความของคุณ ${r.waiting} ข้อความรอให้รอบนี้จบก่อน` : ""}
+      <button data-cut="${i.id}" style="width:100%;margin-top:6px">${r.waiting ? "หยุดรอบนี้ แล้วส่งข้อความเลย" : "หยุดรอบนี้"}</button></div>` : ""}
+    <textarea id="ask-text" rows="3" placeholder="บอกสิ่งที่อยากให้แก้ เช่น “ทำปุ่มให้ใหญ่ขึ้น และเพิ่มโหมดมืด” · พิมพ์ / เพื่อเรียกสกิล"></textarea>
+    <div id="skill-menu" class="skillmenu"></div>
     ${photoRow(i.id)}
     ${accts().length > 1 ? `<select id="ask-acct" data-sendto="1" style="width:100%;margin-bottom:8px"><option value="">AI ของไอเดียนี้ (${esc(acctName(aiOf(i.id).account) || "อัตโนมัติ")})</option>${accts().map((a) => `<option value="${esc(a.id)}">${esc(a.label)}${a.program && a.program.toLowerCase() !== a.label.toLowerCase() ? ` (ผ่าน ${esc(a.program)})` : ""}</option>`).join("")}</select>` : ""}
     <button class="primary" id="ask-btn" data-ask="${i.id}" style="width:100%">ส่งให้ ${esc(sendTo(aiOf(i.id).account))}</button>
+    ${!r || r.status === "idle" || r.status === "error" ? `<button data-carry="${i.id}" style="width:100%;margin-top:6px" title="รอบก่อนพังหรือค้าง: ให้ AI ทำคำสั่งล่าสุดต่อโดยไม่ต้องพิมพ์ซ้ำ">↻ ทำต่อจากที่สั่งไว้</button>` : ""}
     <div class="faint small" style="margin-top:6px">${esc(msg)}</div>
-    ${feed.length ? `<div class="log feed">${feed.map((f) => `<div class="${feedKind(f.text)}"><span class="faint">${hm(f.ts)}</span> ${esc(f.text)}</div>`).join("")}</div>` : ""}
+    ${feed.length ? `<div class="log feed">${joinFences(feed).map((f) => { const k = f.ts + ":" + f.text.length, long = f.text.length > 200 || f.text.split("\n").length > 4;
+      return `<div class="${feedKind(f.text)}"><span class="faint">${hm(f.ts)}</span> <span class="fb${long && !moreOpen.has(k) ? " clamp" : ""}">${fmtFeed(f.text)}</span>${long ? `<button class="more" data-more="${esc(k)}">${moreOpen.has(k) ? "ย่อ ▴" : "ดูเต็ม ▾"}</button>` : ""}</div>`; }).join("")}</div>` : ""}
     ${r ? `<div class="acts" style="margin:10px 0 0"><button data-url="https://claude.ai/code">เปิดในแอป Claude</button><button data-remote="${i.id}" data-on="0">ปิด session</button></div>` : ""}
   </div>`;
 }
@@ -555,8 +628,23 @@ document.addEventListener("click", async (e) => {
   } else if (t.dataset.act) {
     try { await send("action", { id: Number(t.dataset.id), action: t.dataset.act }); toast(t.dataset.act === "run_now" ? "ส่งแล้ว — คอมฯ จะเริ่มทำทันทีที่รับคำสั่ง (~1-5 นาที)" : "ส่งคำสั่งแล้ว — คอมฯ จะทำภายใน ~5 นาที"); closeOverlay(); }
     catch (err) { toast(err.message); }
+  } else if (t.dataset.more) {
+    const k = t.dataset.more, open = !moreOpen.has(k);
+    if (open) moreOpen.add(k); else moreOpen.delete(k);
+    t.previousElementSibling?.classList.toggle("clamp", !open);
+    t.textContent = open ? "ย่อ ▴" : "ดูเต็ม ▾";
+  } else if (t.dataset.skill) {
+    putSkill(t.dataset.skill);
+  } else if (t.dataset.carry) {
+    // after a crash or a bug: carry on with the last request without typing it again (ISSUE-072)
+    const box = $("#ask-text");
+    if (box) { box.value = CARRY; $("#ask-btn")?.click(); }
+  } else if (t.dataset.cut) {
+    try { await send("cut_in", { id: Number(t.dataset.cut) }); toast("ส่งคำสั่งหยุดรอบแล้ว — ข้อความที่รอจะถึง AI ทันทีที่คอมฯ รับ (~30 วินาที)"); }
+    catch (err) { toast(err.message); }
   } else if (t.dataset.cmd) {
-    try { await send(t.dataset.cmd, null); toast(t.dataset.cmd === "pause" ? "ส่งคำสั่งพักบอทแล้ว" : "ส่งคำสั่งให้ทำต่อแล้ว"); }
+    const said = { pause: "ส่งคำสั่งพักบอทแล้ว", pause_all: "ส่งคำสั่งพักทั้งหมดแล้ว — คอมฯ จะหยุดและจำไว้ภายใน ~30 วินาที แล้วปิดคอมฯ ได้", resume_all: "ส่งคำสั่งทำต่อแล้ว — คอมฯ จะเปิดแชตเดิมให้ AI ทำต่อ", shelf_dismiss: "ไม่ทำต่อแล้ว" };
+    try { await send(t.dataset.cmd, null); toast(said[t.dataset.cmd] || "ส่งคำสั่งให้ทำต่อแล้ว"); }
     catch (err) { toast(err.message); }
   } else if (t.dataset.ask) {
     const id = Number(t.dataset.ask), v = $("#ask-text")?.value.trim();
@@ -625,7 +713,7 @@ document.addEventListener("click", async (e) => {
     if (confirm("ล้าง repo และ token ที่บันทึกไว้?")) { localStorage.clear(); location.reload(); }
   } else if (t.id === "f-go") connect();
 });
-document.addEventListener("input", (e) => { if (e.target.id === "idea-text") $("#idea-err").textContent = ""; });
+document.addEventListener("input", (e) => { if (e.target.id === "idea-text") $("#idea-err").textContent = ""; if (e.target.id === "ask-text") skillMenu(); });
 // redraw the idea sheet without losing what was typed in the chat box
 function redrawIdea(id) {
   const txt = $("#ask-text")?.value;

@@ -27,6 +27,36 @@ struct Chat {
     running: bool,
     child: Option<Arc<Mutex<Child>>>,
     stopped: bool,
+    since: i64,
+    /// the AI the owner's last message chose (an answer to the AI's question goes the same way)
+    last_ai: ChatAi,
+    cut: bool,
+}
+
+pub fn last_ai(id: i64) -> ChatAi {
+    CHATS.lock().get(&id).map(|c| c.last_ai.clone()).unwrap_or_default()
+}
+
+/// A reply is running: (since when, messages waiting behind it).
+pub fn busy(id: i64) -> Option<(i64, usize)> {
+    CHATS.lock().get(&id).filter(|c| c.child.is_some() && c.since > 0).map(|c| (c.since, c.queue.len()))
+}
+
+/// The owner cuts in: stop the running reply, keep the waiting messages (ISSUE-068).
+pub fn cut_in(id: i64) -> bool {
+    let child = {
+        let mut m = CHATS.lock();
+        let Some(c) = m.get_mut(&id) else { return false };
+        let Some(ch) = c.child.clone() else { return false };
+        c.cut = true;
+        ch
+    };
+    kill(&child);
+    true
+}
+
+fn take_cut(id: i64) -> bool {
+    CHATS.lock().get_mut(&id).map(|c| std::mem::take(&mut c.cut)).unwrap_or(false)
 }
 
 static CHATS: LazyLock<Mutex<HashMap<i64, Chat>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -81,7 +111,7 @@ pub fn feed_line(ev: &Value) -> Option<String> {
     match (kind, itype) {
         ("item.completed", "agent_message") => {
             let t = item?.get("text")?.as_str()?.trim();
-            (!t.is_empty()).then(|| format!("💬 {}", short(t, 700)))
+            (!t.is_empty()).then(|| format!("💬 {}", crate::narrate::whole(t)))
         }
         ("item.started", "command_execution") => Some(format!("⚙️ รันคำสั่ง: {}", command_text(item?.get("command")?.as_str()?))),
         ("item.completed", "command_execution") => {
@@ -172,6 +202,7 @@ pub fn ask(app: &AppHandle, id: i64, text: &str, ai: &ChatAi) -> Result<(), Stri
         let c = m.entry(id).or_default();
         c.stopped = false;
         c.queue.push_back((text.to_string(), ai.clone()));
+        c.last_ai = ai.clone();
         let go = !c.running;
         c.running = true;
         go
@@ -304,6 +335,10 @@ fn turn(app: &AppHandle, id: i64, text: &str, ai: &ChatAi) -> Result<(), String>
     if stopped(id) {
         return Ok(());
     }
+    if take_cut(id) {
+        feed(app, id, "✋ หยุดรอบนี้ตามที่คุณสั่ง — ส่งข้อความของคุณต่อเลย".into(), None);
+        return Ok(());
+    }
     // the account hit its usage limit: remember until when, like the bot's own runs do
     if !account_id.is_empty() && crate::runner::looks_like_limit(&f.why) {
         let snap = st.rt.lock().acct_snaps.get(&account_id).cloned();
@@ -359,6 +394,7 @@ fn run_once(app: &AppHandle, id: i64, mut cmd: Command, prompt: &str, account_id
     let shared = Arc::new(Mutex::new(child));
     if let Some(c) = CHATS.lock().get_mut(&id) {
         c.child = Some(shared.clone());
+        c.since = db::now();
     }
     // a turn that runs far too long is stopped (the whole tree: a leftover codex.exe would keep the thread locked)
     let watch = shared.clone();
@@ -414,6 +450,7 @@ fn run_once(app: &AppHandle, id: i64, mut cmd: Command, prompt: &str, account_id
     let _ = err_thread.join();
     if let Some(c) = CHATS.lock().get_mut(&id) {
         c.child = None;
+        c.since = 0;
     }
     if completed {
         return Ok(());

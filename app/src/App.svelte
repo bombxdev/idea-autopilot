@@ -18,6 +18,7 @@
   import IdeaDrawer from "./components/IdeaDrawer.svelte";
   import Palette from "./components/Palette.svelte";
   import QuickAdd from "./components/QuickAdd.svelte";
+  import Shelf from "./components/Shelf.svelte";
   import Setup from "./components/Setup.svelte";
   import UpdateCard from "./components/UpdateCard.svelte";
   import WhatsNew from "./components/WhatsNew.svelte";
@@ -84,6 +85,18 @@
     return { cls: "idle", text: d?.reason ?? "รอ" };
   });
 
+  // something is running: one press stops it all and remembers it, so the PC can be switched off (ISSUE-067)
+  const busyNow = $derived(!!s && s.role !== "follower" && !s.shelf && ((s.sessions ?? []).length > 0 || !!s.current));
+  async function pauseAll() {
+    try {
+      await api.pauseAll();
+      toast("พักทั้งหมดแล้ว — ปิดเครื่องได้เลย · กลับมากด ▶ ทำต่อ", "ok", 6000);
+    } catch (e) {
+      toast(String(e), "err");
+    }
+    refresh();
+  }
+
   async function togglePause() {
     await api.setPaused(!s?.paused);
     toast(s?.paused ? "บอทกลับมาทำงาน" : "พักบอทแล้ว");
@@ -143,8 +156,14 @@
       <button class="status {botState.cls}" onclick={togglePause} title="คลิกเพื่อ พัก / ทำต่อ">
         <span class="dot"></span><span class="ellipsis">{#if botState.power}<Icon name="rocket" /> {/if}{botState.text}{#if botState.step} <span>{botState.step}</span>{/if}</span>
       </button>
+      {#if busyNow}
+        <button class="ghost small shelve" onclick={pauseAll} title="หยุดบอทและปิดแชตที่ AI กำลังทำ แล้วจำไว้ — ปิดเครื่องได้ทันที กลับมากด ▶ ทำต่อ แล้ว AI จะทำต่อจากเดิม">
+          <Icon name="pause" /> พักทั้งหมด · ปิดเครื่องได้
+        </button>
+      {/if}
     </header>
     <section class="page">
+      <Shelf />
       {#if store.page === "morning"}<Morning />
       {:else if store.page === "board"}<Board />
       {:else if store.page === "quota"}<Quota />
@@ -193,6 +212,7 @@
   main { display: flex; flex-direction: column; min-width: 0; height: 100vh; }
   header { display: flex; gap: 12px; align-items: center; padding: 14px 28px; border-bottom: 1px solid var(--line); }
   .page { flex: 1; overflow: auto; padding: 24px 28px 60px; }
+  .shelve { white-space: nowrap; flex: none; }
   .status { display: flex; align-items: center; gap: 8px; max-width: 360px; border-radius: 999px; padding: 6px 14px; font-size: 13px; color: var(--text-2); }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); flex: none; }
   .status.run .dot { background: var(--teal); animation: pulse 1.4s infinite; }
