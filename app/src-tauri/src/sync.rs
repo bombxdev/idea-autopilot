@@ -24,7 +24,7 @@ use crate::state::AppState;
 
 const TABLES: &[&str] = &["ideas", "questions", "directives", "runs", "calendar_overrides", "digests", "settings"];
 /// settings that belong to one machine and must not travel
-const LOCAL_SETTINGS: &[&str] = &["autostart", "hotkey", "sync_dir", "brain_dir", "brain_personal", "brain_work", "extra_inbox", "digest_day", "seen_version"];
+const LOCAL_SETTINGS: &[&str] = &["autostart", "hotkey", "sync_dir", "brain_dir", "brain_personal", "brain_work", "extra_inbox", "digest_day", "seen_version", "workspace_windows"];
 
 /// Settings that stay on this machine: machine paths, plus every secret (bot tokens, chat ids…).
 fn is_local_setting(key: &str) -> bool {
@@ -257,6 +257,13 @@ pub fn restore_state(c: &Connection, dir: &Path, keep_local_settings: bool) -> R
 // ---------- folder mirroring ----------
 
 /// Copy new/changed files from `src` to `dst`, skipping heavy build folders.
+/// CON, NUL, COM1… (with or without an extension): reserved by Windows, not real files.
+fn is_device_name(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or("").trim_end().to_ascii_uppercase();
+    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || ((stem.starts_with("COM") || stem.starts_with("LPT")) && stem.len() == 4 && stem.as_bytes()[3].is_ascii_digit())
+}
+
 pub fn mirror(src: &Path, dst: &Path) -> Result<usize> {
     let mut n = 0;
     let Ok(entries) = std::fs::read_dir(src) else { return Ok(0) };
@@ -270,13 +277,19 @@ pub fn mirror(src: &Path, dst: &Path) -> Result<usize> {
             }
             n += mirror(&sp, &dp)?;
         } else {
+            // a file named like a Windows device ("nul" from an AI's `2>nul` in bash) cannot be copied (ISSUE-079)
+            if is_device_name(&name) {
+                continue;
+            }
             let same = std::fs::metadata(&dp)
                 .map(|d| d.len() == meta.len() && d.modified().ok() >= meta.modified().ok())
                 .unwrap_or(false);
             if !same && meta.len() < 50 * 1024 * 1024 {
                 std::fs::create_dir_all(dst)?;
-                std::fs::copy(&sp, &dp)?;
-                n += 1;
+                // one bad file must not stop the whole sync (the phone then sees nothing new at all)
+                if std::fs::copy(&sp, &dp).is_ok() {
+                    n += 1;
+                }
             }
         }
     }
@@ -506,6 +519,12 @@ pub fn ensure_layout(dir: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn device_named_files_are_skipped_not_fatal() {
+        assert!(is_device_name("nul") && is_device_name("NUL.txt") && is_device_name("com1") && is_device_name("lpt9.log"));
+        assert!(!is_device_name("null.md") && !is_device_name("console.js") && !is_device_name("com10") && !is_device_name("auxiliary"));
+    }
 
     #[test]
     fn state_roundtrip() {

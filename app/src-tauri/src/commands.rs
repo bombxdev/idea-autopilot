@@ -83,6 +83,46 @@ pub fn idea_scope_set(st: State<AppState>, id: i64, scope: String) -> R<()> {
     Ok(())
 }
 
+/// A deleted idea's folder leaves `ideas/` at once: it goes to `workspace/.deleted/` (kept 30 days, so a slip can
+/// still be undone by hand) and its copy in the sync folder is removed (ISSUE-086). The bot's run is stopped just
+/// before, so the move is retried for a while in case that process still holds a file.
+fn remove_idea_folder(st: &AppState, slug: &str) {
+    if slug.trim().is_empty() || slug.contains(['/', '\\']) || slug.starts_with('.') {
+        return;
+    }
+    let src = workspace::idea_dir(&st.ws, slug);
+    let bin = st.ws.join(".deleted");
+    let dst = bin.join(format!("{slug}-{}", db::now()));
+    if let Some(sync) = sync::sync_dir(st) {
+        let _ = std::fs::remove_dir_all(sync.join("workspace").join("ideas").join(slug));
+    }
+    std::thread::spawn(move || {
+        purge_deleted(&bin, 30 * 86400);
+        if !src.exists() {
+            return;
+        }
+        let _ = std::fs::create_dir_all(&bin);
+        for _ in 0..20 {
+            if std::fs::rename(&src, &dst).is_ok() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(3));
+        }
+    });
+}
+
+/// Folders in `.deleted/` older than `max_age` seconds are removed for good.
+fn purge_deleted(bin: &std::path::Path, max_age: i64) {
+    let Ok(entries) = std::fs::read_dir(bin) else { return };
+    let now = std::time::SystemTime::now();
+    for e in entries.flatten() {
+        let old = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| now.duration_since(t).ok()).is_some_and(|d| d.as_secs() as i64 > max_age);
+        if old {
+            let _ = std::fs::remove_dir_all(e.path());
+        }
+    }
+}
+
 fn idea_dir_of(st: &AppState, id: i64) -> R<std::path::PathBuf> {
     let idea = db::get_idea(&st.db.lock(), id).map_err(e)?;
     Ok(workspace::idea_dir(&st.ws, &idea.slug))
@@ -257,6 +297,19 @@ pub fn idea_action(st: State<AppState>, id: i64, action: String, text: Option<St
             }
             db::save_idea(&c, &idea).map_err(e)?;
             db::log_event(&c, &action, Some(id), &format!("{action}: {}", idea.title));
+            drop(c);
+            // deleting (or putting away) the idea the bot is working on stops that run too (ISSUE-083)
+            if action == "delete" || action == "archive" {
+                let rt = st.rt.lock();
+                if rt.current.as_ref().is_some_and(|r| r.idea_id == id) {
+                    if let Some(cn) = rt.cancel.clone() {
+                        cn.notify_one();
+                    }
+                }
+            }
+            if action == "delete" {
+                remove_idea_folder(&st, &idea.slug);
+            }
             Ok(())
         }
     }
@@ -422,6 +475,8 @@ const SETTING_KEYS: &[&str] = &[
     // which AI works, how its quota is measured, report language, first-run flag
     "provider", "tier_models", "custom_cmd", "meter", "budget_hours_week", "budget_hours_5h", "budget_reset_day",
     "language", "lang_follow", "quota_view", "auto_update", "session_idle_min", "power_mode", "power_ideas", "extra_models", "ss_auto", "onboarded", "effort_default", "effort_build", "effort_verify", "send_key", "grace_secs", "telegram_progress", "seen_version", "codex_approval",
+    // the ideas open as windows on the Workspace page (ISSUE-087)
+    "workspace_windows",
 ];
 
 #[tauri::command]
@@ -1455,4 +1510,21 @@ pub fn account_login(st: State<AppState>, id: String) -> R<()> {
 pub fn accounts_series(st: State<AppState>, days: i64) -> Value {
     let since = db::now() - days.clamp(1, 60) * 86400;
     json!(db::account_series(&st.db.lock(), since))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deleted_idea_folders_are_cleared_only_when_old() {
+        let bin = std::env::temp_dir().join(format!("ia-deleted-{}", std::process::id()));
+        std::fs::create_dir_all(bin.join("idea-0001-x-1")).unwrap();
+        std::fs::write(bin.join("idea-0001-x-1").join("REPORT.md"), "x").unwrap();
+        purge_deleted(&bin, 30 * 86400);
+        assert!(bin.join("idea-0001-x-1").exists(), "a fresh folder stays");
+        purge_deleted(&bin, -1);
+        assert!(!bin.join("idea-0001-x-1").exists(), "an old one goes");
+        let _ = std::fs::remove_dir_all(&bin);
+    }
 }

@@ -151,6 +151,40 @@ export function clock(ts) {
   return `${day} ${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
 }
 
+// ---- day dividers for time lists (chat feed, run history): ISSUE-075 ----
+const dayKey = (ts) => {
+  const d = new Date(ts * 1000);
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+};
+/** "วันนี้" / "เมื่อวาน" / "พ. 11 พ.ย." (with the year when it is not this year) */
+export function dayName(ts) {
+  const d = new Date(ts * 1000);
+  const now = new Date();
+  const y = new Date(now);
+  y.setDate(now.getDate() - 1);
+  const same = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  const full = d.toLocaleDateString(locale(ui.lang), { weekday: "short", day: "numeric", month: "short", ...(d.getFullYear() !== now.getFullYear() ? { year: "numeric" } : {}) });
+  if (same(d, now)) return `วันนี้ · ${full}`;
+  if (same(d, y)) return `เมื่อวาน · ${full}`;
+  return full;
+}
+/** The day label to show above item i of a time-ordered list, or "" when it is the same day as the one before.
+ *  A list that is all today gets no label at all (nothing to tell apart). */
+export function dayBreak(list, i, tsOf = (x) => x.ts) {
+  const ts = tsOf(list[i]);
+  if (!ts) return "";
+  if (i === 0) {
+    const allToday = list.every((x) => !tsOf(x) || dayKey(tsOf(x)) === dayKey(Date.now() / 1000));
+    return allToday ? "" : dayName(ts);
+  }
+  const prev = tsOf(list[i - 1]);
+  return prev && dayKey(prev) === dayKey(ts) ? "" : dayName(ts);
+}
+/** "14:05" */
+export function hm(ts) {
+  return ts ? new Date(ts * 1000).toLocaleTimeString(locale(ui.lang), { hour: "2-digit", minute: "2-digit" }) : "—";
+}
+
 export function pct(v, d = 0) {
   return v == null ? "—" : `${Number(v).toFixed(d)}%`;
 }

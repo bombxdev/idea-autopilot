@@ -452,7 +452,8 @@ pub fn insert_question(c: &Connection, idea_id: i64, q: &str, options: &[String]
 pub fn questions(c: &Connection, idea_id: Option<i64>, only_open: bool) -> Result<Vec<Question>> {
     let sql = format!(
         "SELECT id,idea_id,question,options,guess,answer,created FROM questions WHERE (?1 IS NULL OR idea_id=?1) {} ORDER BY id",
-        if only_open { "AND answer IS NULL" } else { "" }
+        // an open question of an idea that was deleted or put away is no longer asked (ISSUE-088)
+        if only_open { "AND answer IS NULL AND idea_id NOT IN (SELECT id FROM ideas WHERE status IN ('deleted','archived'))" } else { "" }
     );
     let mut st = c.prepare(&sql)?;
     let v = st

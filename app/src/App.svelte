@@ -15,6 +15,8 @@
   import Settings from "./pages/Settings.svelte";
   import Activity from "./pages/Activity.svelte";
   import Sessions from "./pages/Sessions.svelte";
+  import Workspace from "./pages/Workspace.svelte";
+  import QuotaMini from "./components/QuotaMini.svelte";
   import IdeaDrawer from "./components/IdeaDrawer.svelte";
   import Palette from "./components/Palette.svelte";
   import QuickAdd from "./components/QuickAdd.svelte";
@@ -26,6 +28,7 @@
   const NAV = [
     { key: "morning", icon: "sun" },
     { key: "board", icon: "board" },
+    { key: "workspace", icon: "windows" },
     { key: "quota", icon: "gauge" },
     { key: "library", icon: "book" },
     { key: "skills", icon: "toolbox" },
@@ -61,7 +64,9 @@
       refresh();
     });
     const onKey = (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+      // Ctrl+F opens the search (ISSUE-090). By the key's place, not its letter: with the Thai layout on, e.key is a
+      // Thai character, which is why Ctrl+K never worked. Ctrl+K still opens it too.
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.code === "KeyF" || e.code === "KeyK")) {
         e.preventDefault();
         paletteOpen = !paletteOpen;
       } else if (e.key === "Escape") {
@@ -69,8 +74,9 @@
         else store.openIdea = null;
       }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    // capture: ahead of the web view's own Ctrl+F (find in page)
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   });
 
   const s = $derived(store.state);
@@ -119,7 +125,8 @@
     <button class="small" onclick={() => (other = null)}>ใช้ตัวนี้ต่อ</button>
   </div>
 {/if}
-<div class="shell">
+<!-- on the Workspace page the menu shrinks to icons so the windows get the whole width (ISSUE-087) -->
+<div class="shell" class:rail={store.page === "workspace"}>
   <aside>
     <div class="brand">
       <div class="logo"><Icon name="logo" size="22" /></div>
@@ -130,22 +137,15 @@
     </div>
     <nav>
       {#each NAV as n}
-        <button class="nav" class:on={store.page === n.key} onclick={() => (store.page = n.key)}>
+        <button class="nav" class:on={store.page === n.key} onclick={() => (store.page = n.key)} title={t("nav_" + n.key, store.lang)}>
           <span class="ico"><Icon name={n.icon} /></span>{t("nav_" + n.key, store.lang)}
           {#if n.key === "morning" && openQ > 0}<span class="badge">{openQ}</span>{/if}
         </button>
       {/each}
     </nav>
     <div class="side-foot">
-      {#if d}
-        <div class="mini">
-          <div class="row small"><span class="muted grow" title="โควต้า AI ที่ใช้ไปแล้ว — ไม่ใช่ความคืบหน้าของไอเดีย (ความคืบหน้าดูที่การ์ดไอเดียและหน้า เช้านี้)">โควต้าสัปดาห์</span><b>{pct(d.week_pct)}</b></div>
-          <div class="bar"><i style="width:{Math.min(100, d.week_pct)}%"></i><i class="res" style="width:{Math.min(100 - d.week_pct, d.reserve)}%"></i></div>
-          <div class="row small"><span class="muted grow" title="โควต้า AI ในรอบ 5 ชั่วโมง — ไม่ใช่ความคืบหน้าของไอเดีย">โควต้า 5 ชม.</span><b>{pct(d.five_pct)}</b></div>
-          <div class="bar"><i class="five" style="width:{Math.min(100, d.five_pct)}%"></i></div>
-        </div>
-      {/if}
-      <button class="ghost small kbd" onclick={() => (paletteOpen = true)}>ค้นหา / สั่งงาน <kbd>Ctrl K</kbd></button>
+      <QuotaMini />
+      <button class="ghost small kbd" onclick={() => (paletteOpen = true)}><span><Icon name="search" /> ค้นหา</span> <kbd>Ctrl F</kbd></button>
       <button class="ghost small ver" onclick={() => { store.settingsTab = "about"; store.page = "settings"; }} title="ดูประวัติเวอร์ชัน / อัปเดต">v{s?.version ?? ""}{#if upd} <span class="newdot" title="มีเวอร์ชันใหม่ v{upd.latest}"><Icon name="dot" size="0.8em" /> ใหม่ v{upd.latest}</span>{/if}</button>
     </div>
   </aside>
@@ -162,9 +162,10 @@
         </button>
       {/if}
     </header>
-    <section class="page">
-      <Shelf />
+    <section class="page" class:full={store.page === "workspace"}>
+      {#if store.page !== "workspace"}<Shelf />{/if}
       {#if store.page === "morning"}<Morning />
+      {:else if store.page === "workspace"}<Workspace />
       {:else if store.page === "board"}<Board />
       {:else if store.page === "quota"}<Quota />
       {:else if store.page === "sessions"}<Sessions />
@@ -202,17 +203,21 @@
   .ico { width: 20px; text-align: center; }
   .badge { margin-left: auto; background: var(--amber); color: #2a1a00; font-size: 11px; font-weight: 600; border-radius: 999px; padding: 0 7px; }
   .side-foot { margin-top: auto; display: flex; flex-direction: column; gap: 12px; }
-  .mini { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
-  .bar { height: 6px; background: var(--bg-2); border-radius: 6px; overflow: hidden; display: flex; margin-bottom: 4px; }
-  .bar i { display: block; height: 100%; background: var(--teal); }
-  .bar i.res { background: repeating-linear-gradient(45deg, var(--amber-bg), var(--amber-bg) 3px, transparent 3px, transparent 6px); }
-  .bar i.five { background: var(--blue); }
   .kbd { display: flex; justify-content: space-between; align-items: center; color: var(--text-3); }
   kbd { font-family: inherit; font-size: 11px; border: 1px solid var(--line-2); border-radius: 5px; padding: 0 5px; }
   main { display: flex; flex-direction: column; min-width: 0; height: 100vh; }
   header { display: flex; gap: 12px; align-items: center; padding: 14px 28px; border-bottom: 1px solid var(--line); }
   .page { flex: 1; overflow: auto; padding: 24px 28px 60px; }
   .shelve { white-space: nowrap; flex: none; }
+  .page.full { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
+  .shell.rail { grid-template-columns: 60px 1fr; }
+  .rail aside { padding: 18px 8px; align-items: center; }
+  .rail .brand > div:last-child, .rail .side-foot :global(.mini), .rail .kbd, .rail .ver { display: none; }
+  .rail .brand { padding: 0; }
+  .rail .nav { font-size: 0; justify-content: center; padding: 10px 0; width: 44px; position: relative; }
+  .rail .nav .ico { font-size: 15px; }
+  .rail .badge { position: absolute; top: 2px; right: 0; font-size: 10px; padding: 0 5px; }
+  .rail header { padding: 10px 16px; }
   .status { display: flex; align-items: center; gap: 8px; max-width: 360px; border-radius: 999px; padding: 6px 14px; font-size: 13px; color: var(--text-2); }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); flex: none; }
   .status.run .dot { background: var(--teal); animation: pulse 1.4s infinite; }

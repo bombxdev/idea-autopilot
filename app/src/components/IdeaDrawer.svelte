@@ -1,7 +1,7 @@
 <script>
   import Icon from "./Icon.svelte";
   import { store, stageLabel, refresh, toast, progress, stepGroups, fixing } from "../lib/store.svelte.js";
-  import { api, ago, clock, STATUS } from "../lib/api.js";
+  import { api, ago, clock, hm, dayBreak, STATUS } from "../lib/api.js";
   import Markdown from "./Markdown.svelte";
   import Intents from "./Intents.svelte";
   import Question from "./Question.svelte";
@@ -11,10 +11,26 @@
   import IdeaAi from "./IdeaAi.svelte";
   import Scope from "./Scope.svelte";
   import LiveLog from "./LiveLog.svelte";
+  import { lift } from "../lib/lift.js";
+  import { wsOpen } from "../lib/workspace.svelte.js";
 
-  let { id } = $props();
+  // embedded: a window on the Workspace page (ISSUE-087) instead of the side drawer — full size, two columns when
+  // wide, with minimize and "take off the Workspace" in place of close
+  let { id, embedded = false, onmin = null, onclose = null } = $props();
+  function toWorkspace() {
+    wsOpen(id);
+    store.page = "workspace";
+    store.openIdea = null;
+  }
   let data = $state(null);
   let tab = $state("report");
+  // the documents panel (report, how to use, plan…) folds down so the overview and chat get the height; remembered
+  // on this machine, and a click on a tab opens it again (ISSUE-089)
+  let docsOpen = $state((() => { try { return localStorage.getItem("ideaDocsOpen") !== "0"; } catch { return true; } })());
+  function setDocs(v) {
+    docsOpen = v;
+    try { localStorage.setItem("ideaDocsOpen", v ? "1" : "0"); } catch {}
+  }
   let editing = $state(false);
   let draft = $state("");
   // the AI chosen for this idea (account, model, effort); saved as soon as it is changed
@@ -111,6 +127,20 @@
   const openQs = $derived((data?.questions ?? []).filter((q) => !q.answer));
   const answered = $derived((data?.questions ?? []).filter((q) => q.answer));
 
+  // delete: a box where the idea's folder name (slug) is typed to confirm (ISSUE-086)
+  let delOpen = $state(false);
+  let delText = $state("");
+  let delInput = $state();
+  function askDelete() {
+    delText = "";
+    delOpen = true;
+    requestAnimationFrame(() => delInput?.focus());
+  }
+  async function confirmDelete() {
+    if (delText.trim() !== idea.slug) return;
+    delOpen = false;
+    await act("delete");
+  }
   async function act(a) {
     await api.action(id, a);
     toast({ archive: "เก็บแล้ว", restore: "กู้คืนแล้ว", delete: "ลบแล้ว", urgent: "เปลี่ยนความด่วนแล้ว", pin: "ปักหมุดไว้บนสุดของคอลัมน์แล้ว", unpin: "เลิกปักหมุดแล้ว",
@@ -121,8 +151,8 @@
   const tokens = (r) => r.input_tokens + r.output_tokens + r.cache_write;
 </script>
 
-<div class="scrim" onclick={() => (store.openIdea = null)} role="presentation"></div>
-<aside class="drawer">
+{#if !embedded}<div class="scrim" onclick={() => (store.openIdea = null)} role="presentation"></div>{/if}
+<aside class="drawer" class:embedded class:folded={!docsOpen}>
   {#if idea}
     <div class="top">
       <div class="row">
@@ -149,7 +179,14 @@
         {:else}
           <button class="ghost small" onclick={() => act("archive")}>เก็บ</button>
         {/if}
-        <button class="ghost small" onclick={() => (store.openIdea = null)}><Icon name="close" /></button>
+        <button class="ghost small" onclick={askDelete} title="ลบไอเดียนี้ (เช่น เผลอกดส่งไป) — บอทจะหยุดทำทันที">ลบ</button>
+        {#if embedded}
+          <button class="ghost small" onclick={() => onmin?.()} title="ย่อหน้าต่าง (ยังอยู่บนแถบ Workspace)"><Icon name="minimize" /></button>
+          <button class="ghost small" onclick={() => onclose?.()} title="เอาออกจาก Workspace (ไม่ได้ลบไอเดีย)"><Icon name="close" /></button>
+        {:else}
+          <button class="ghost small" onclick={toWorkspace} title="เปิดเป็นหน้าต่างใน Workspace — เต็มจอ สลับกับไอเดียอื่นได้"><Icon name="windows" /></button>
+          <button class="ghost small" onclick={() => (store.openIdea = null)}><Icon name="close" /></button>
+        {/if}
       </div>
       {#if editing}
         <textarea class="edit" rows="5" bind:value={draft} onkeydown={(e) => e.key === "Escape" && (editing = false)}></textarea>
@@ -202,8 +239,11 @@
     </div>
 
     <div class="tabs">
-      {#each tabs as t}<button class="tab" class:on={tab === t.key} onclick={() => (tab = t.key)}>{#if t.icon}<Icon name={t.icon} /> {/if}{t.label}</button>{/each}
-      <button class="tab" class:on={tab === "history"} onclick={() => (tab = "history")}>ประวัติ</button>
+      {#each tabs as t}<button class="tab" class:on={docsOpen && tab === t.key} onclick={() => { tab = t.key; setDocs(true); }}>{#if t.icon}<Icon name={t.icon} /> {/if}{t.label}</button>{/each}
+      <button class="tab" class:on={docsOpen && tab === "history"} onclick={() => { tab = "history"; setDocs(true); }}>ประวัติ</button>
+      <span class="grow"></span>
+      <button class="tab fold" onclick={() => setDocs(!docsOpen)} title={docsOpen ? "พับรายงานลง — ให้ภาพรวมและแชตสั่ง AI ได้พื้นที่เต็ม" : "เปิดรายงานขึ้นมา"}>
+        <Icon name={docsOpen ? "arrowDown" : "arrowUp"} /> {docsOpen ? "พับลง" : "เปิดรายงาน"}</button>
     </div>
 
     <div class="body">
@@ -212,9 +252,11 @@
         <table class="runs">
           <thead><tr><th>เวลา</th><th>ขั้น</th><th>โมเดล</th><th>ผล</th><th>tokens</th><th>%สัปดาห์</th></tr></thead>
           <tbody>
-            {#each data.runs as r}
+            {#each data.runs as r, i}
+              {@const day = dayBreak(data.runs, i, (x) => x.started)}
+              {#if day}<tr class="dayrow"><td colspan="6"><span>{day}</span></td></tr>{/if}
               <tr title={r.error ?? ""}>
-                <td>{clock(r.started)}</td><td>{stageLabel(r.stage)}</td>
+                <td>{hm(r.started)}</td><td>{stageLabel(r.stage)}</td>
                 <td title={r.reason ?? ""}>{#if r.power}<Icon name="rocket" /> {/if}{r.model_label || r.model}{r.effort ? ` · ${r.effort}` : ""}</td>
                 <td class="st-{r.status}">{r.status}</td>
                 <td>{(tokens(r) / 1000).toFixed(0)}k</td>
@@ -242,6 +284,21 @@
     <div class="pad faint">กำลังโหลด…</div>
   {/if}
 </aside>
+{#if delOpen && idea}
+  <div class="delwrap" use:lift={true} role="presentation" onclick={(e) => e.target === e.currentTarget && (delOpen = false)}>
+    <div class="delbox" role="dialog" aria-modal="true" aria-label="ลบไอเดีย">
+      <b class="deltitle"><Icon name="trash" /> ลบไอเดีย #{idea.id}</b>
+      <p class="small">“{idea.title}” จะหายจากรายการ บอทหยุดทำทันที และโฟลเดอร์ไอเดียจะถูกย้ายไปที่ <code>workspace/.deleted/</code> (เก็บไว้ 30 วันเผื่อกู้คืน แล้วลบทิ้งเอง)</p>
+      <p class="small">พิมพ์ <code class="slug">{idea.slug}</code> เพื่อยืนยัน</p>
+      <input bind:this={delInput} bind:value={delText} placeholder={idea.slug} spellcheck="false" autocomplete="off"
+        onkeydown={(e) => { if (e.key === "Enter") confirmDelete(); if (e.key === "Escape") delOpen = false; }} />
+      <div class="delbar">
+        <button type="button" onclick={() => (delOpen = false)}>ยกเลิก</button>
+        <button type="button" class="danger-fill" disabled={delText.trim() !== idea.slug} onclick={confirmDelete}>ลบไอเดียนี้</button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <style>
   .on-power { border-color: var(--amber); color: var(--amber); }
@@ -275,6 +332,8 @@
   .pad { padding: 24px; }
   .runs { width: 100%; border-collapse: collapse; font-size: 13px; }
   .runs th, .runs td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  /* where the day changes: the date on a quiet row of its own (ISSUE-075) */
+  .runs tr.dayrow td { padding: 10px 8px 4px; border-bottom: none; font-size: 11px; color: var(--text-3); font-weight: 600; letter-spacing: 0.02em; }
   .runs th { color: var(--text-3); font-weight: 500; }
   .botstate { display: flex; flex-direction: column; gap: 3px; padding: 8px 12px; background: var(--bg-2); border-radius: 8px; border-left: 3px solid var(--line); }
   .botstate .err { color: var(--red); opacity: 0.85; }
@@ -282,4 +341,29 @@
   .st-error, .st-interrupted { color: var(--red); }
   .st-timeout, .st-rate_limited, .st-cancelled { color: var(--amber); }
   .on-pin { color: var(--amber); border-color: var(--amber); }
+  /* a Workspace window: fills its place; wide enough → overview + chat on the left, documents on the right */
+  .drawer.embedded { position: relative; top: auto; right: auto; bottom: auto; width: 100%; height: 100%; z-index: auto; border-left: none; animation: none; }
+  .drawer.embedded .top { max-height: 48%; }
+  @container ideawin (min-width: 1000px) {
+    .drawer.embedded { display: grid; grid-template-columns: minmax(440px, 1fr) minmax(440px, 1.05fr); grid-template-rows: auto minmax(0, 1fr); }
+    .drawer.embedded .top { grid-column: 1; grid-row: 1 / span 2; max-height: none; border-bottom: none; border-right: 1px solid var(--line); }
+    .drawer.embedded .tabs { grid-column: 2; grid-row: 1; }
+    .drawer.embedded .body { grid-column: 2; grid-row: 2; }
+    .drawer.embedded.folded { display: flex; }
+    .drawer.embedded.folded .top { border-right: none; }
+  }
+  /* the documents panel folded down: only its tab bar stays, at the bottom */
+  .drawer.folded .body { display: none; }
+  .drawer.folded .top { max-height: none; flex: 1; border-bottom: 1px solid var(--line); }
+  .drawer.folded .tabs { border-bottom: none; }
+  .tabs .fold { color: var(--text-3); display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+  .tabs .fold:hover { color: var(--teal); }
+  .delwrap { position: fixed; inset: 0; z-index: 400; background: rgba(0, 0, 0, 0.55); display: grid; place-items: center; padding: 16px; }
+  .delbox { width: min(460px, 100%); background: var(--bg-2); border: 1px solid var(--line); border-radius: 14px; padding: 18px; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5); }
+  .delbox p { margin: 0; color: var(--text-2); }
+  .deltitle { display: flex; align-items: center; gap: 8px; font-size: 16px; color: var(--red); }
+  .delbox .slug { user-select: all; color: var(--text); }
+  .delbar { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+  .danger-fill { background: var(--red); border-color: var(--red); color: #fff; }
+  .danger-fill:disabled { opacity: 0.4; cursor: not-allowed; }
 </style>

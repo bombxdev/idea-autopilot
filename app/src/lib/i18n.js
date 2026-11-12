@@ -56,6 +56,7 @@ const D = {
   // navigation
   nav_morning: ["เช้านี้", "This morning", "今晨", "今朝", "오늘 아침", "Sáng nay", "Pagi ini", "Esta mañana", "Ce matin", "Heute früh", "Esta manhã", "Утро", "هذا الصباح", "आज सुबह", "Stamattina", "Bu sabah"],
   nav_board: ["บอร์ด", "Board", "看板", "ボード", "보드", "Bảng", "Papan", "Tablero", "Tableau", "Board", "Quadro", "Доска", "اللوحة", "बोर्ड", "Bacheca", "Pano"],
+  nav_workspace: ["พื้นที่ทำงาน", "Workspace", "工作区", "ワークスペース", "워크스페이스", "Không gian làm việc", "Ruang kerja", "Espacio de trabajo", "Espace de travail", "Arbeitsbereich", "Área de trabalho", "Рабочая область", "مساحة العمل", "कार्यक्षेत्र", "Area di lavoro", "Çalışma alanı"],
   nav_quota: ["โควต้า", "Quota", "额度", "クォータ", "할당량", "Hạn mức", "Kuota", "Cuota", "Quota", "Kontingent", "Cota", "Квота", "الحصة", "कोटा", "Quota", "Kota"],
   nav_library: ["คลังความรู้", "Library", "知识库", "ライブラリ", "라이브러리", "Thư viện", "Pustaka", "Biblioteca", "Bibliothèque", "Bibliothek", "Biblioteca", "Библиотека", "المكتبة", "लाइब्रेरी", "Libreria", "Kütüphane"],
   nav_skills: ["สกิล", "Skills", "技能", "スキル", "스킬", "Kỹ năng", "Skill", "Habilidades", "Compétences", "Skills", "Habilidades", "Навыки", "المهارات", "स्किल्स", "Competenze", "Beceriler"],

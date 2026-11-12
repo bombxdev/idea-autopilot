@@ -55,14 +55,15 @@
     {#if u.available && !compact}
       {#if u.notes}<pre class="notes">{u.notes}</pre>{/if}
       {#if u.mode === "scoop"}<div class="small faint">เครื่องนี้ติดตั้งด้วย Scoop — อัปเดตด้วยคำสั่ง <code>scoop update idea-autopilot</code></div>
-      {:else if u.mode !== "installer"}<div class="small faint">เครื่องนี้เป็น{MODE[u.mode]} — อัปเดตอัตโนมัติใช้ได้เฉพาะเครื่องที่ติดตั้งด้วยตัวติดตั้ง โหลดรุ่นใหม่จากหน้า Releases แล้วแทนที่ไฟล์ (ข้อมูลของคุณไม่หาย)</div>
+      {:else if u.mode === "dev"}<div class="small faint">เครื่องนี้เป็น{MODE[u.mode]} — อัปเดตด้วยการ build ใหม่ (deploy) ไม่ใช่จาก Releases</div>
+      {:else if u.mode === "portable" && u.available && !u.can_apply && !u.no_digest}<div class="small faint">รุ่นนี้ไม่มีไฟล์แบบพกพา (.zip) ให้อัปเดตอัตโนมัติ — โหลดจากหน้า Releases แล้วแทนที่โฟลเดอร์ bin (ข้อมูลของคุณไม่หาย)</div>
       {:else if u.no_digest}<div class="small faint">GitHub ไม่ได้ให้ค่า SHA-256 ของไฟล์ติดตั้งรุ่นนี้ จึงไม่อัปเดตให้อัตโนมัติ (ตรวจความถูกต้องไม่ได้) — โหลดจากหน้า Releases เอง</div>{/if}
     {/if}
     {#if !compact}
       <label class="row small auto">
-        <input type="checkbox" checked={u.auto} onchange={(e) => setAuto(e.currentTarget.checked)} disabled={u.mode !== "installer"} />
+        <input type="checkbox" checked={u.auto} onchange={(e) => setAuto(e.currentTarget.checked)} disabled={u.mode !== "installer" && u.mode !== "portable"} />
         อัปเดตอัตโนมัติ: ตรวจทุก 6 ชั่วโมง และติดตั้งให้เองเมื่อบอทว่างและไม่มี session คุยกับ AI เปิดอยู่
-        {#if u.mode !== "installer"}<span class="faint">(ใช้ได้เฉพาะเครื่องที่ติดตั้งด้วยตัวติดตั้ง)</span>{/if}
+        {#if u.mode !== "installer" && u.mode !== "portable"}<span class="faint">(ใช้ได้กับเครื่องที่ติดตั้งด้วยตัวติดตั้ง หรือแบบพกพา)</span>{/if}
       </label>
       <div class="small faint">ตรวจล่าสุด {when(u.checked)} · แหล่งอัปเดต: GitHub Releases ของโปรเจกต์ · ไฟล์ติดตั้งต้องมีค่า SHA-256 ตรงกับที่ GitHub รายงาน ไม่งั้นไม่ติดตั้ง{#if u.error} · <span class="err">{u.error}</span>{/if}</div>
     {/if}

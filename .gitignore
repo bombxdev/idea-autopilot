@@ -35,3 +35,6 @@ docs/img/facebook-post*.png
 # local-only: scratch logs and skills installed for this machine's Claude Code
 logs/
 .claude/skills/
+
+# internal market/competitor notes: kept local
+docs/market/

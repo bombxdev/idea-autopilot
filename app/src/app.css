@@ -139,3 +139,13 @@ body.capture-body { background: transparent; }
 /* idea number: the handle people use when they talk about an idea ("#14") */
 .idn { display: inline-block; font: 600 12px/1.6 ui-monospace, "Cascadia Code", Consolas, monospace; color: var(--teal); background: var(--teal-bg); padding: 0 7px; border-radius: 6px; margin-right: 7px; vertical-align: 1px; }
 .idn.big { font-size: 13px; padding: 1px 9px; }
+
+/* code blocks in a prompt box (lib/codebox.js, ISSUE-082/084): the textarea's text is invisible and this layer on top
+   draws it, with fences hidden and blocks in a light box that barely stands out */
+.cb-on { color: transparent !important; -webkit-text-fill-color: transparent; caret-color: var(--text); }
+.cb-on::placeholder { color: var(--text-3); -webkit-text-fill-color: var(--text-3); }
+.cb-back { position: absolute; z-index: 2; overflow: hidden; pointer-events: none; color: var(--text); white-space: pre-wrap; overflow-wrap: break-word; word-break: normal; box-sizing: border-box; border: 0; margin: 0; background: transparent; }
+.cb-block { position: relative; }
+.cb-block::before { content: ""; position: absolute; inset: 2px -8px; z-index: -1; background: rgba(127, 127, 127, 0.08); border: 1px solid rgba(127, 127, 127, 0.2); border-radius: 8px; }
+.cb-fence, .cb-tick { visibility: hidden; }
+.cb-inline { background: rgba(127, 127, 127, 0.16); border-radius: 4px; }

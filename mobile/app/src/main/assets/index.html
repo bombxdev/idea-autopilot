@@ -57,12 +57,27 @@ nav button.on { color: var(--text); background: var(--card); }
 .ask textarea { margin: 10px 0 8px; }
 .feed div { white-space: normal; } .feed .faint { font-weight: 400; } .feed .say { color: var(--text); } .feed .me { color: var(--teal); font-weight: 600; } .feed .done { color: var(--teal); } .feed .warn { color: var(--amber); } .feed .step { color: var(--text2, var(--text3)); }
 .feed .fb { white-space: pre-line; }
+.daybreak { display: flex; align-items: center; gap: 8px; margin: 6px 0 2px; font-size: 11px; color: var(--text3); }
+.daybreak::before, .daybreak::after { content: ""; flex: 1; border-top: 1px solid var(--line, #333); }
 .feed .fb.clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .feed button.more { display: block; border: none; background: transparent; padding: 0; margin: 1px 0 0; font-size: 12px; color: var(--teal); width: auto; }
 .feed pre.code { margin: 4px 0; padding: 6px 8px; background: var(--card, var(--bg)); border: 1px solid var(--line, #333); border-radius: 8px; white-space: pre-wrap; word-break: break-all; font: 11.5px/1.45 ui-monospace, monospace; color: var(--text); }
 .feed code { font: 11.5px ui-monospace, monospace; background: var(--bg); border-radius: 4px; padding: 0 4px; }
 .skillmenu { display: none; margin: -4px 0 8px; border: 1px solid var(--teal); border-radius: 10px; max-height: 190px; overflow: auto; background: var(--bg2); }
 .skillmenu.on { display: block; }
+.rings { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 12px 8px; margin-top: 6px; }
+.ringc { display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; min-width: 0; }
+.opt { display: flex; align-items: center; gap: 10px; padding: 8px 2px; }
+.opt input { width: auto; margin: 0; }
+.cb-on { color: transparent !important; -webkit-text-fill-color: transparent; caret-color: var(--text); }
+.cb-on::placeholder { color: var(--text3); -webkit-text-fill-color: var(--text3); }
+.cb-back { position: absolute; z-index: 2; overflow: hidden; pointer-events: none; color: var(--text); white-space: pre-wrap; overflow-wrap: break-word; word-break: normal; box-sizing: border-box; border: 0; margin: 0; background: transparent; }
+.cb-block { position: relative; }
+.cb-block::before { content: ""; position: absolute; inset: 2px -8px; z-index: -1; background: rgba(127, 127, 127, 0.08); border: 1px solid rgba(127, 127, 127, 0.2); border-radius: 8px; }
+.cb-fence, .cb-tick { visibility: hidden; }
+.cb-inline { background: rgba(127, 127, 127, 0.16); border-radius: 4px; }
+.growbtn { width: 100%; margin: -4px 0 8px; padding: 6px; font-size: 12.5px; }
+textarea.big { height: 62vh !important; overflow-y: auto !important; }
 .skillmenu button { display: block; width: 100%; text-align: left; border: none; border-radius: 0; background: transparent; padding: 8px 12px; font-size: 13px; }
 .skillmenu button b { color: var(--teal); }
 .skillmenu .d { display: block; color: var(--text3); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -162,6 +177,7 @@ nav button.on { color: var(--text); background: var(--card); }
 <div id="overlay"></div>
 <div id="toast" class="toast hidden"></div>
 
+<script src="version.js"></script>
 <script src="marked.min.js"></script>
 <script src="purify.min.js"></script>
 <script>
@@ -230,26 +246,46 @@ async function send(cmd, args) {
 // shrunk on the phone (≤1600 px, JPEG) so they travel fast, put in uploads/ of the repo, and named in the command;
 // the PC attaches them to the idea / message exactly like a file dropped on the desktop, then removes them
 const photos = {}; // "add" | idea id -> [{ name, b64, thumb }]
-function shrink(file) {
+// the page runs from file:///android_asset, where a blob: URL often cannot be loaded into <img> (every photo
+// failed with "เปิดรูปนี้ไม่ได้" — ISSUE-080); decode the file itself, else read it as a data: URL
+function readAsDataUrl(file) {
   return new Promise((ok, bad) => {
-    const url = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => {
-      const k = Math.min(1, 1600 / Math.max(img.width, img.height));
-      const c = document.createElement("canvas");
-      c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
-      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
-      URL.revokeObjectURL(url);
-      const data = c.toDataURL("image/jpeg", 0.82);
-      const t = document.createElement("canvas"), tk = 96 / Math.max(c.width, c.height);
-      t.width = Math.round(c.width * tk); t.height = Math.round(c.height * tk);
-      t.getContext("2d").drawImage(c, 0, 0, t.width, t.height);
-      const base = (file.name || "photo").replace(/\.[^.]+$/, "").replace(/[^\w-]+/g, "_").slice(0, 40) || "photo";
-      ok({ name: `${base}.jpg`, b64: data.split(",")[1], thumb: t.toDataURL("image/jpeg", 0.7) });
-    };
-    img.onerror = () => { URL.revokeObjectURL(url); bad(new Error("เปิดรูปนี้ไม่ได้")); };
-    img.src = url;
+    const r = new FileReader();
+    r.onload = () => ok(r.result);
+    r.onerror = () => bad(r.error);
+    r.readAsDataURL(file);
   });
+}
+function loadImg(src) {
+  return new Promise((ok, bad) => {
+    const img = new Image();
+    img.onload = () => ok(img);
+    img.onerror = bad;
+    img.src = src;
+  });
+}
+async function decodePhoto(file) {
+  if (window.createImageBitmap) {
+    try { return await createImageBitmap(file, { imageOrientation: "from-image" }); } catch {}
+    try { return await createImageBitmap(file); } catch {}
+  }
+  try { return await loadImg(await readAsDataUrl(file)); } catch {}
+  const kind = /hei[cf]/i.test(file.type || file.name || "") ? " (ไฟล์ HEIC — ตั้งกล้องให้ถ่ายเป็น JPEG หรือส่งเป็นภาพหน้าจอแทน)" : "";
+  throw new Error(`เปิดรูปนี้ไม่ได้${kind}`);
+}
+async function shrink(file) {
+  const img = await decodePhoto(file);
+  const k = Math.min(1, 1600 / Math.max(img.width, img.height));
+  const c = document.createElement("canvas");
+  c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+  c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+  img.close?.();
+  const data = c.toDataURL("image/jpeg", 0.82);
+  const t = document.createElement("canvas"), tk = 96 / Math.max(c.width, c.height);
+  t.width = Math.round(c.width * tk); t.height = Math.round(c.height * tk);
+  t.getContext("2d").drawImage(c, 0, 0, t.width, t.height);
+  const base = (file.name || "photo").replace(/\.[^.]+$/, "").replace(/[^\w-]+/g, "_").slice(0, 40) || "photo";
+  return { name: `${base}.jpg`, b64: data.split(",")[1], thumb: t.toDataURL("image/jpeg", 0.7) };
 }
 async function uploadPhotos(key) {
   const list = photos[key] || [];
@@ -287,6 +323,9 @@ async function refresh(quiet) {
       questions: (questions || []).map((q) => ({ ...q, options: parseList(q.options) })),
       runs: (runs || []).sort((a, b) => b.id - a.id),
     };
+    // a question of an idea that was deleted or put away is not asked any more (ISSUE-088)
+    const alive = new Set(data.ideas.filter((i) => i.status !== "archived").map((i) => i.id));
+    data.questions = data.questions.filter((q) => alive.has(q.idea_id));
     for (const q of data.questions) if (q.answer && sentAnswers[q.id]) delete sentAnswers[q.id];
     for (const k of Object.keys(pendingRemote)) if (!!sessionOf(Number(k)) === pendingRemote[k]) delete pendingRemote[k];
     for (const k of Object.keys(pendingAsk)) if ((sessionOf(Number(k))?.feed || []).some((f) => squash(f.text).includes(askKey(pendingAsk[k])))) delete pendingAsk[k];
@@ -314,6 +353,54 @@ function render() {
   $("#h-title").textContent = L.current ? "บอทกำลังทำงาน" : L.paused ? "พักบอทอยู่" : "Idea Autopilot";
   $("#h-sub").textContent = `${data.leader?.machine ? data.leader.machine + " · " : ""}ข่าวล่าสุด ${ago(lastNews)}${stale ? " · คอมฯ อาจปิดอยู่" : ""}`;
   renderNow(L, d, stale); renderIdeas(); renderAsk(open); renderMore();
+}
+
+// ---------- quota card (ISSUE-088) ----------
+// view: auto = the account the bot uses now · one = a chosen account · many = several accounts as rings
+let quotaView = load("quotaView") || { mode: "auto", one: "", many: [] };
+const accountsOf = (L) => (L.accounts || []).filter((a) => a.snap || a.decision);
+const levelColor = (p) => (p >= 85 ? "var(--red)" : p >= 60 ? "var(--amber)" : "var(--teal)");
+function ring(p, color, size = 68) {
+  const r = 27, c = 2 * Math.PI * r, v = Math.max(0, Math.min(100, Number(p) || 0));
+  return `<svg viewBox="0 0 68 68" width="${size}" height="${size}" aria-hidden="true"><circle cx="34" cy="34" r="${r}" fill="none" stroke="var(--line)" stroke-width="7"/>
+    <circle cx="34" cy="34" r="${r}" fill="none" stroke="${color}" stroke-width="7" stroke-linecap="round" stroke-dasharray="${((c * v) / 100).toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90 34 34)"/>
+    <text x="34" y="39" text-anchor="middle" font-size="15" font-weight="600" fill="var(--text)">${Math.round(v)}%</text></svg>`;
+}
+function quotaBars(d, title, sub) {
+  const week = d.week_pct ?? 0, res = Math.max(0, Math.min(100 - (week || 0), d.reserve || 0));
+  return `<div class="kv"><span class="muted">ใช้ไปแล้ว</span><b>${pct(week)}</b></div>
+      <div class="bar"><i style="width:${week || 0}%;background:var(--teal)"></i><i style="width:${res}%;background:repeating-linear-gradient(45deg,var(--amberbg),var(--amberbg) 4px,transparent 4px,transparent 8px)"></i></div>
+      <div class="faint small" style="margin-top:4px">ลาย = กันไว้ให้งานคุณ ${pct(d.reserve)} · บอทใช้ได้อีก ${pct(Math.max(0, d.bot_budget || 0))}</div>
+      <div class="kv"><span class="muted">5 ชม. ตอนนี้</span><b>${pct(d.five_pct)} <span class="faint small">/ เพดาน ${pct(d.five_cap)}</span></b></div>
+      <div class="bar"><i style="width:${d.five_pct || 0}%;background:var(--blue)"></i></div>`;
+}
+function quotaCard(L, d) {
+  const accts = accountsOf(L);
+  const head = (t) => `<div style="display:flex;align-items:center;gap:8px"><h3 style="flex:1;margin:0 0 6px">${t}</h3><button class="ghost small" data-qset="1" style="padding:4px 10px">⚙ แสดงแบบไหน</button></div>`;
+  if (quotaView.mode === "many" && accts.length) {
+    const pick = accts.filter((a) => !quotaView.many.length || quotaView.many.includes(a.id));
+    return `<div class="card">${head("โควต้าสัปดาห์นี้")}
+      <div class="rings">${pick.map((a) => { const w = a.snap?.week_pct ?? a.decision?.week_pct ?? 0, f = a.snap?.five_pct ?? a.decision?.five_pct ?? 0;
+        return `<div class="ringc">${ring(w, levelColor(w))}<div class="small ellipsis" style="max-width:100%"><b>${esc(a.label || a.id)}</b></div>
+          <div class="faint small">5 ชม. ${pct(f)}${a.active ? " · <span style=\"color:var(--teal)\">บอทใช้อยู่</span>" : ""}</div></div>`; }).join("")}</div></div>`;
+  }
+  if (quotaView.mode === "one") {
+    const a = accts.find((x) => x.id === quotaView.one);
+    if (a) return `<div class="card">${head(`โควต้าสัปดาห์นี้ · ${esc(a.label || a.id)}`)}${quotaBars({ ...a.decision, week_pct: a.snap?.week_pct ?? a.decision?.week_pct, five_pct: a.snap?.five_pct ?? a.decision?.five_pct })}</div>`;
+  }
+  const cur = accts.find((a) => a.active);
+  return `<div class="card">${head(`โควต้าสัปดาห์นี้${cur ? ` · ${esc(cur.label || cur.id)}` : ""}`)}${quotaBars({ ...d, week_pct: d.week_pct ?? L.snap?.week_pct })}</div>`;
+}
+function openQuotaView() {
+  const accts = accountsOf(data.live || {});
+  const v = quotaView;
+  overlay(`<h2>โควต้าที่แสดงหน้าแรก</h2>
+    <label class="opt"><input type="radio" name="qv" value="auto" ${v.mode === "auto" ? "checked" : ""}> บัญชีที่บอทใช้อยู่ตอนนี้ (อัตโนมัติ)</label>
+    ${accts.map((a) => `<label class="opt"><input type="radio" name="qv" value="one:${esc(a.id)}" ${v.mode === "one" && v.one === a.id ? "checked" : ""}> ${esc(a.label || a.id)} เป็นหลัก</label>`).join("")}
+    <label class="opt"><input type="radio" name="qv" value="many" ${v.mode === "many" ? "checked" : ""}> หลายบัญชี — แสดงเป็นวงกลม %</label>
+    <div class="faint small" style="margin:6px 0 4px">ถ้าเลือกหลายบัญชี: ติ๊กบัญชีที่อยากเห็น (ไม่ติ๊กเลย = ทุกบัญชี)</div>
+    ${accts.map((a) => `<label class="opt"><input type="checkbox" name="qvm" value="${esc(a.id)}" ${v.many.includes(a.id) ? "checked" : ""}> ${esc(a.label || a.id)}</label>`).join("")}
+    <button class="primary" id="qv-save" style="width:100%;margin-top:12px">บันทึก</button>`);
 }
 
 function renderNow(L, d, stale) {
@@ -344,14 +431,7 @@ function renderNow(L, d, stale) {
         ${!L.shelf && (cur || (L.sessions || []).length) ? `<button data-cmd="pause_all" title="หยุดบอทและแชตที่ AI ทำอยู่ แล้วจำไว้ — ปิดคอมฯ ได้เลย">⏸ พักทั้งหมด</button>` : ""}
       </div>
     </div>
-    <div class="card">
-      <h3>โควต้าสัปดาห์นี้</h3>
-      <div class="kv"><span class="muted">ใช้ไปแล้ว</span><b>${pct(week)}</b></div>
-      <div class="bar"><i style="width:${week || 0}%;background:var(--teal)"></i><i style="width:${res}%;background:repeating-linear-gradient(45deg,var(--amberbg),var(--amberbg) 4px,transparent 4px,transparent 8px)"></i></div>
-      <div class="faint small" style="margin-top:4px">ลาย = กันไว้ให้งานคุณ ${pct(d.reserve)} · บอทใช้ได้อีก ${pct(Math.max(0, d.bot_budget || 0))}</div>
-      <div class="kv"><span class="muted">5 ชม. ตอนนี้</span><b>${pct(d.five_pct)} <span class="faint small">/ เพดาน ${pct(d.five_cap)}</span></b></div>
-      <div class="bar"><i style="width:${d.five_pct || 0}%;background:var(--blue)"></i></div>
-    </div>
+    ${quotaCard(L, d)}
     ${(L.sessions || []).length ? `<div class="card" style="border-color:var(--teal)"><b>🛠 AI กำลังทำงานกับไอเดีย</b>
       ${(L.sessions || []).map((x) => `<div class="run" data-open="${x.idea_id}"><div style="flex:1;min-width:0">
         <div class="small"><b>${esc(x.name)}</b> <span class="chip ${(SESS[x.status] || SESS.idle)[1]}">${(SESS[x.status] || SESS.idle)[0]}</span></div>
@@ -361,9 +441,10 @@ function renderNow(L, d, stale) {
     ${queue.length ? `<div class="card"><h3>คิวถัดไป</h3>${queue.map((i) => `
       <div class="run" data-open="${i.id}"><div style="flex:1;min-width:0"><div class="small"><span class="idn">#${i.id}</span><b>${esc(i.title)}</b></div>
       <div class="prog"><div class="bar"><i style="width:${progress(i)}%"></i></div><span class="small faint">${progress(i)}%</span></div></div></div>`).join("")}</div>` : ""}
-    <div class="card"><h3>ทำล่าสุด</h3>${runs.length ? runs.map((r) => {
+    <div class="card"><h3>ทำล่าสุด</h3>${runs.length ? runs.map((r, n) => {
       const idea = data.ideas.find((i) => i.id === r.idea_id); const st = RUNST[r.status] || [r.status, ""];
-      return `<div class="run" data-open="${r.idea_id}"><div class="tm">${hm(r.started)}</div><div style="flex:1;min-width:0">
+      const day = dayBreak(runs.map((x) => ({ ts: x.started })), n);
+      return `${day ? `<div class="daybreak"><span>${esc(day)}</span></div>` : ""}<div class="run" data-open="${r.idea_id}"><div class="tm">${hm(r.started)}</div><div style="flex:1;min-width:0">
         <div class="small"><span class="dot" style="background:${PALETTE[r.idea_id % PALETTE.length]}"></span><span class="idn">#${r.idea_id}</span><b>${esc(idea?.title || "")}</b></div>
         <div class="small muted">${esc(STAGES[r.stage] || r.stage)} · <span class="chip ${st[1]}" style="margin:0">${st[0]}</span></div>
         ${r.summary ? `<div class="small faint">${esc(r.summary)}</div>` : ""}</div></div>`;
@@ -383,13 +464,38 @@ function ideaCard(i) {
   </div>`;
 }
 
+// ideas the owner just sent work to from the phone (they show first until the PC reports newer activity)
+const touched = load("touched") || {};
+function touch(id) { touched[id] = Math.floor(Date.now() / 1000); save("touched", touched); }
+let ideaQ = "";
+/** the last time anything happened on an idea: a run, a chat message, an edit, or a command from this phone */
+function lastAct(i) {
+  const run = data.runs.find((r) => r.idea_id === i.id);
+  const chat = sessionOf(i.id)?.feed?.at(-1)?.ts || 0;
+  const now = data.live?.current?.idea_id === i.id ? Date.now() / 1000 : 0;
+  return Math.max(i.updated || 0, i.created || 0, run?.started || 0, chat, touched[i.id] || 0, now);
+}
 function renderIdeas() {
-  const F = { all: () => true, active: (i) => ["active", "inbox"].includes(i.status), ready: (i) => i.status === "ready", done: (i) => ["done", "failed"].includes(i.status) };
-  const list = data.ideas.filter((i) => i.status !== "archived").filter(F[filter]);
-  $("#tab-ideas").innerHTML = `
+  const box = $("#tab-ideas");
+  // the frame (filters + search) is drawn once per filter, so typing in the search box keeps its focus
+  if (box.dataset.f !== filter || !$("#idea-search")) {
+    box.dataset.f = filter;
+    box.innerHTML = `
     <div class="filters">${[["all", "ทั้งหมด"], ["active", "กำลังทำ"], ["ready", "พร้อมใช้"], ["done", "เสร็จแล้ว"]]
       .map(([k, l]) => `<button data-filter="${k}" class="${filter === k ? "on" : ""}">${l}</button>`).join("")}</div>
-    ${list.length ? list.map(ideaCard).join("") : `<div class="empty">ไม่มีไอเดียในหมวดนี้<br>กด ＋ เพื่อจดไอเดียใหม่</div>`}`;
+    <input id="idea-search" type="search" placeholder="🔍 ค้นหาไอเดีย — เลขหรือคำในชื่อ" value="${esc(ideaQ)}" style="margin-bottom:10px">
+    <div id="idea-list"></div>`;
+  }
+  renderIdeaList();
+}
+function renderIdeaList() {
+  const F = { all: () => true, active: (i) => ["active", "inbox"].includes(i.status), ready: (i) => i.status === "ready", done: (i) => ["done", "failed"].includes(i.status) };
+  const q = ideaQ.trim().toLowerCase().replace(/^#/, "");
+  const list = data.ideas.filter((i) => i.status !== "archived" && i.status !== "deleted").filter(F[filter])
+    .filter((i) => !q || String(i.id) === q || `${i.title} ${i.summary || ""} ${i.slug || ""}`.toLowerCase().includes(q))
+    .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || lastAct(b) - lastAct(a));
+  $("#idea-list").innerHTML = list.length ? list.map(ideaCard).join("")
+    : `<div class="empty">${q ? "ไม่พบไอเดียที่ตรงกับคำค้น" : "ไม่มีไอเดียในหมวดนี้<br>กด ＋ เพื่อจดไอเดียใหม่"}</div>`;
 }
 
 function qCard(q) {
@@ -417,6 +523,14 @@ function renderMore() {
       <div class="kv"><span class="muted">โหลดล่าสุด</span><b class="small">${fetchedAt ? ago(Math.floor(fetchedAt / 1000)) : "—"}</b></div>
       <div class="acts"><button id="logout">เปลี่ยน repo / token</button></div>
     </div>
+    ${(() => { // one version on both sides, the same as the GitHub release (ISSUE-076)
+      const me = window.APP_VERSION || "?", pc = data.live?.version || "";
+      const same = !pc || pc === me;
+      const num = (v) => String(v).split(".").map((x) => parseInt(x) || 0), newer = (a, b) => { const x = num(a), y = num(b); for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); return false; };
+      return `<div class="card"${same ? "" : ` style="border-color:var(--amber)"`}><h3>เวอร์ชัน</h3>
+      <div class="kv"><span class="muted">แอปมือถือ</span><b class="small">v${esc(me)}</b></div>
+      <div class="kv"><span class="muted">โปรแกรมบนคอมฯ</span><b class="small">${pc ? `v${esc(pc)}` : "—"}</b></div>
+      ${same ? "" : `<div class="small" style="color:var(--amber);margin-top:6px">เวอร์ชันไม่ตรงกัน — ${newer(pc, me) ? "ติดตั้งแอปมือถือตัวใหม่ (ไฟล์ APK ใน release เดียวกับคอมฯ)" : "อัปเดตโปรแกรมบนคอมฯ ให้เป็นเวอร์ชันเดียวกัน"}</div>`}</div>`; })()}
     <div class="card"><h3>Telegram</h3>
       <div style="display:flex;gap:10px;align-items:center"><div style="flex:1" class="small">
         <b>ส่งคำถามไปตอบใน Telegram</b><div class="muted">ปิดไว้ถ้าตอบในแอปนี้ — Telegram จะเหลือแค่แจ้งสถานะ</div></div>
@@ -425,8 +539,8 @@ function renderMore() {
       </div></div>
     <div class="card"><h3>เคล็ดลับ</h3><div class="small muted">
       • ขึ้นต้นไอเดียด้วย <b>!</b> = ด่วน, <b>?</b> = ขอแค่ research<br>
-      • ช่วงที่บอททำงาน สถานะจะอัปเดตทุกประมาณ 2 นาที<br>
-      • คำสั่งจากมือถือจะถึงคอมฯ ภายในประมาณ 5 นาที</div></div>`;
+      • ช่วงที่มีแชตเปิดอยู่ สถานะอัปเดตทุกประมาณ 15 วินาที (ปกติทุกประมาณ 1 นาที)<br>
+      • คำสั่งจากมือถือถึงคอมฯ ภายในประมาณ 30 วินาทีตอนมีแชตเปิดอยู่ (ปกติไม่เกิน 2 นาที)</div></div>`;
 }
 
 const isStep = (l) => l.startsWith("›") || (/^\p{Extended_Pictographic}/u.test(l) && !l.startsWith("💬"));
@@ -459,6 +573,7 @@ async function openIdea(id) {
       ${["done", "ready"].includes(i.status) ? "" : `<button data-act="run_now" data-id="${id}" class="primary">⚡ ทำเลยตอนนี้</button>`}
       ${["done", "ready"].includes(i.status) ? `<button data-act="go" data-id="${id}">👍 ไปต่อ</button>` : ""}<button data-act="deeper" data-id="${id}">🔍 ขุดลึก</button>
       <button data-act="alt" data-id="${id}">🔀 ลองอีกแนว</button>${["done", "ready"].includes(i.status) ? "" : `<button data-act="stop" data-id="${id}">✂️ พอแค่นี้</button>`}
+      <button data-act="delete" data-id="${id}" style="color:var(--red)">🗑 ลบไอเดีย</button>
     </div>
     ${remoteCard(i)}
     ${qs.map(qCard).join("")}
@@ -497,6 +612,18 @@ let pendingAsk = {}; // idea id -> instruction sent from the phone, until the PC
 // a feed line: ``` blocks as code boxes, `code` and **bold** (ISSUE-073); AIs that print line by line split a block
 // over several lines, so those are joined back first
 const moreOpen = new Set(); // feed messages opened in full (ISSUE-074)
+// the date where the day changes in a time list; none when it is all today (ISSUE-075)
+const dayKey = (ts) => { const d = new Date(ts * 1000); return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`; };
+function dayName(ts) {
+  const d = new Date(ts * 1000), now = new Date(), y = new Date(); y.setDate(now.getDate() - 1);
+  const full = d.toLocaleDateString("th-TH", { weekday: "short", day: "numeric", month: "short" });
+  return dayKey(ts) === dayKey(now / 1000) ? `วันนี้ · ${full}` : dayKey(ts) === dayKey(y / 1000) ? `เมื่อวาน · ${full}` : full;
+}
+function dayBreak(list, i) {
+  const ts = list[i].ts;
+  if (i === 0) return list.every((x) => dayKey(x.ts) === dayKey(Date.now() / 1000)) ? "" : dayName(ts);
+  return dayKey(list[i - 1].ts) === dayKey(ts) ? "" : dayName(ts);
+}
 function joinFences(list) {
   const out = [];
   for (const f of list) {
@@ -519,8 +646,11 @@ function fmtFeed(text) {
   return html + fmtInline(text.slice(last));
 }
 // "/" in the instruction box lists the skills (the PC sends them in live.json); tap one to put "/name " there
-function skillMenu() {
-  const box = $("#ask-text"), menu = $("#skill-menu");
+let skillBox = "ask-text"; // the box the skill list belongs to
+const menuOf = (id) => (id === "idea-text" ? "#idea-skill-menu" : "#skill-menu");
+function skillMenu(id = skillBox) {
+  skillBox = id;
+  const box = $("#" + id), menu = $(menuOf(id));
   if (!box || !menu) return;
   const m = /(^|\s)\/([\w-]*)$/.exec(box.value.slice(0, box.selectionStart ?? box.value.length));
   const all = data.live?.slash || [];
@@ -532,7 +662,7 @@ function skillMenu() {
     : `<div class="faint small" style="padding:8px 12px">${all.length ? "ไม่มีสกิลที่ขึ้นต้นด้วยคำนี้" : "ยังไม่มีรายชื่อสกิลจากคอมฯ (เปิดสกิลที่หน้าสกิลในคอมฯ)"}</div>`;
 }
 function putSkill(slug) {
-  const box = $("#ask-text");
+  const box = $("#" + skillBox);
   if (!box) return;
   const at = box.selectionStart ?? box.value.length;
   const m = /(^|\s)\/([\w-]*)$/.exec(box.value.slice(0, at));
@@ -545,7 +675,202 @@ function putSkill(slug) {
   box.focus();
   box.setSelectionRange(pos, pos);
   skillMenu();
+  showPrev(box);
 }
+// Code blocks inside a plain textarea, like Claude's prompt box (ISSUE-082, ISSUE-084):
+// - the textarea's own text is invisible; a layer on top (pointer-events: none) draws the same text in the same
+//   place, so Thai input, pasting images, the caret and selection all stay the textarea's own
+// - three backticks on a line open a block (the closing fence is added); the fence lines are not drawn — they
+//   become the block's top and bottom padding, and the caret never stops on them
+// - Enter inside a block is a new line (never sends); Enter on an empty last line leaves the block
+// - Backspace at the start of a block removes the block (an empty one entirely; otherwise its text stays as text)
+// - an inline code span (single backticks) is drawn with a light background, its backticks hidden
+// (same code as app/src/lib/codebox.js on the PC; box._cb = codebox(box))
+// Backticks are built from char 96 (a literal one confuses the i18n extractor).
+const TICK = String.fromCharCode(96);
+const FENCE = TICK.repeat(3);
+const isFence = (line) => line.trimStart().startsWith(FENCE);
+const escHtml = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const INLINE = new RegExp(TICK + "([^" + TICK + "\\n]+)" + TICK, "g");
+
+/** lines with their bounds and fence role: "open" | "close" | "" (an unclosed block runs to the end) */
+function scan(v) {
+  const out = [];
+  let at = 0, inside = false;
+  for (const text of v.split("\n")) {
+    let role = "";
+    if (isFence(text)) {
+      role = inside ? "close" : "open";
+      inside = !inside;
+    }
+    out.push({ start: at, end: at + text.length, text, role, inBlock: inside && role === "" });
+    at += text.length + 1;
+  }
+  return out;
+}
+
+const inlineHtml = (line) =>
+  escHtml(line).replace(INLINE, (_, x) => `<span class="cb-tick">${TICK}</span><span class="cb-inline">${x}</span><span class="cb-tick">${TICK}</span>`);
+
+/** the overlay's html: the same text, each block in a box, fences and inline backticks invisible */
+function paintBlocks(text) {
+  const lines = scan(text);
+  let html = "";
+  lines.forEach((l, i) => {
+    const nl = i < lines.length - 1 ? "\n" : "";
+    if (l.role === "open") html += `<div class="cb-block"><span class="cb-fence">${escHtml(l.text)}</span>${nl}`;
+    else if (l.role === "close") html += `<span class="cb-fence">${escHtml(l.text)}</span>${nl}</div>`;
+    else html += (l.inBlock ? escHtml(l.text) : inlineHtml(l.text)) + nl;
+  });
+  if (lines.some((l) => l.role === "open") && lines.filter((l) => l.role).length % 2 === 1) html += "</div>";
+  // a trailing newline shows as an empty line in a textarea but not in a div
+  return html + "​";
+}
+
+const lineAt = (lines, pos) => {
+  for (let i = 0; i < lines.length; i++) if (pos <= lines[i].end) return i;
+  return lines.length - 1;
+};
+
+function codebox(node) {
+  const parent = node.parentNode;
+  const top = document.createElement("div");
+  top.className = "cb-back";
+  top.setAttribute("aria-hidden", "true");
+  parent.insertBefore(top, node.nextSibling);
+  if (getComputedStyle(parent).position === "static") parent.style.position = "relative";
+  node.classList.add("cb-on");
+  let busy = false, dir = "";
+
+  function place() {
+    const cs = getComputedStyle(node);
+    for (const k of ["fontFamily", "fontSize", "fontWeight", "lineHeight", "letterSpacing", "wordSpacing", "tabSize",
+      "paddingTop", "paddingRight", "paddingBottom", "paddingLeft", "textIndent", "textTransform", "direction"]) top.style[k] = cs[k];
+    top.style.left = node.offsetLeft + parseFloat(cs.borderLeftWidth) + "px";
+    top.style.top = node.offsetTop + parseFloat(cs.borderTopWidth) + "px";
+    top.style.width = node.clientWidth + "px";
+    top.style.height = node.clientHeight + "px";
+  }
+  function paint() {
+    place();
+    top.innerHTML = paintBlocks(node.value);
+    top.scrollTop = node.scrollTop;
+  }
+  // write through the textarea itself so undo and the page's own bindings (bind:value, autogrow) follow
+  function put(text, from, to, caret) {
+    busy = true;
+    node.setRangeText(text, from, to, "end");
+    node.setSelectionRange(caret, caret);
+    node.dispatchEvent(new Event("input", { bubbles: true }));
+    busy = false;
+    paint();
+  }
+  const caretTo = (p) => node.setSelectionRange(p, p);
+
+  // the caret never rests on a hidden fence line: step over it in the direction it was moving
+  function skipFence() {
+    if (document.activeElement !== node || node.selectionStart !== node.selectionEnd) return;
+    const v = node.value, lines = scan(v), i = lineAt(lines, node.selectionStart), l = lines[i];
+    if (!l.role) return;
+    const up = dir === "up";
+    if (l.role === "open") {
+      if (up && i > 0) caretTo(lines[i - 1].end);
+      else if (lines[i + 1]) caretTo(lines[i + 1].start);
+    } else if (!up) {
+      if (lines[i + 1]) caretTo(lines[i + 1].start);
+      else put("\n", v.length, v.length, v.length + 1); // nothing below the block yet: make a line to type on
+    } else caretTo(lines[i - 1].end);
+  }
+
+  function onInput(e) {
+    if (busy) return;
+    // any insert (one key, several chars at once, or a phone keyboard's composed text), never a delete
+    if (!e.isComposing && (!e.inputType || e.inputType.startsWith("insert")) && (e.data == null || e.data.includes(TICK))) {
+      const v = node.value, pos = node.selectionStart, lines = scan(v), l = lines[lineAt(lines, pos)];
+      // the line is exactly the three backticks just typed, and that fence opens a block
+      if (l.text === FENCE && l.end === pos && l.role === "open" && !lines.some((x) => x.role === "close" && x.start > l.start)) {
+        put("\n\n" + FENCE, pos, pos, pos + 1);
+        return;
+      }
+    }
+    paint();
+  }
+  function onKey(e) {
+    dir = ["ArrowUp", "ArrowLeft", "PageUp", "Home"].includes(e.key) ? "up" : ["ArrowDown", "ArrowRight", "PageDown", "End"].includes(e.key) ? "down" : "";
+    if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
+    const v = node.value, pos = node.selectionStart;
+    if (pos !== node.selectionEnd) return;
+    const lines = scan(v), i = lineAt(lines, pos), l = lines[i], prev = lines[i - 1], next = lines[i + 1];
+    if (e.key === "Enter" && !e.shiftKey && l.inBlock) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (l.text.trim() === "" && next?.role === "close" && prev?.role !== "open") {
+        // empty last line of the block: drop it and continue below the block
+        const rest = v.slice(next.end);
+        const out = v.slice(0, l.start) + next.text + (rest.startsWith("\n") ? rest : "\n" + rest);
+        put(out, 0, v.length, l.start + next.text.length + 1);
+      } else put("\n", pos, pos, pos + 1);
+      return;
+    }
+    if (e.key === "Backspace" && pos === l.start && prev?.role === "open") {
+      // at the start of a block: remove it — an empty block entirely, otherwise just its fences
+      e.preventDefault();
+      e.stopPropagation();
+      let c = i;
+      while (lines[c] && lines[c].role !== "close") c++;
+      const body = lines.slice(i, c);
+      const from = prev.start, to = lines[c] ? lines[c].end : v.length;
+      const keep = body.every((x) => !x.text.trim()) ? "" : body.map((x) => x.text).join("\n");
+      // drop the line break the block leaves behind too
+      const cut = keep ? [from, to] : from > 0 ? [from - 1, to] : [0, Math.min(to + 1, v.length)];
+      put(keep, cut[0], cut[1], cut[0]);
+      return;
+    }
+    if (e.key === "Backspace" && pos === l.start && prev?.role === "close") {
+      // just below a block: step into its last line instead of breaking the fence
+      e.preventDefault();
+      caretTo(lines[i - 2] ? lines[i - 2].end : prev.start);
+      return;
+    }
+    if (e.key === "Delete" && pos === l.end && (next?.role === "open" || next?.role === "close")) {
+      e.preventDefault(); // would pull a fence into this line
+    }
+  }
+  const onMouse = () => (dir = "");
+  const onSel = () => requestAnimationFrame(skipFence);
+  const onScroll = () => (top.scrollTop = node.scrollTop);
+  node.addEventListener("input", onInput);
+  node.addEventListener("keydown", onKey);
+  node.addEventListener("mousedown", onMouse);
+  node.addEventListener("scroll", onScroll);
+  document.addEventListener("selectionchange", onSel);
+  const ro = new ResizeObserver(paint);
+  ro.observe(node);
+  requestAnimationFrame(paint);
+  return {
+    update() {
+      requestAnimationFrame(paint);
+    },
+    destroy() {
+      node.removeEventListener("input", onInput);
+      node.removeEventListener("keydown", onKey);
+      node.removeEventListener("mousedown", onMouse);
+      node.removeEventListener("scroll", onScroll);
+      document.removeEventListener("selectionchange", onSel);
+      ro.disconnect();
+      top.remove();
+      node.classList.remove("cb-on");
+    },
+  };
+}
+// draw code blocks in this box (attached the first time it is used)
+function showPrev(box) {
+  if (!box) return;
+  if (!box._cb) box._cb = codebox(box);
+  else box._cb.update();
+}
+// big box for a long instruction; tap again to shrink (ISSUE-079)
+const growBtn = (id) => `<button class="growbtn" data-grow="${id}">⤢ ขยายช่องพิมพ์</button>`;
 const CARRY = "↻ ทำต่อจากคำสั่งล่าสุดของผมที่ยังไม่เสร็จ (ในบทสนทนานี้และ DIRECTIVES.md) — รอบก่อนติดปัญหาของโปรแกรม ไม่ต้องให้ผมพิมพ์ซ้ำ ทำได้เลย แล้วบอกผลว่าใช้ได้จริงไหม";
 const squash = (t) => String(t || "").replace(/\s+/g, "");
 const askKey = (t) => squash(String(t).replace(/(^|\s)\/[\w-]+(?=\s|$)/g, " ")).slice(0, 25);
@@ -564,13 +889,14 @@ function remoteCard(i) {
       <button data-cut="${i.id}" style="width:100%;margin-top:6px">${r.waiting ? "หยุดรอบนี้ แล้วส่งข้อความเลย" : "หยุดรอบนี้"}</button></div>` : ""}
     <textarea id="ask-text" rows="3" placeholder="บอกสิ่งที่อยากให้แก้ เช่น “ทำปุ่มให้ใหญ่ขึ้น และเพิ่มโหมดมืด” · พิมพ์ / เพื่อเรียกสกิล"></textarea>
     <div id="skill-menu" class="skillmenu"></div>
+    ${growBtn("ask-text")}
     ${photoRow(i.id)}
     ${accts().length > 1 ? `<select id="ask-acct" data-sendto="1" style="width:100%;margin-bottom:8px"><option value="">AI ของไอเดียนี้ (${esc(acctName(aiOf(i.id).account) || "อัตโนมัติ")})</option>${accts().map((a) => `<option value="${esc(a.id)}">${esc(a.label)}${a.program && a.program.toLowerCase() !== a.label.toLowerCase() ? ` (ผ่าน ${esc(a.program)})` : ""}</option>`).join("")}</select>` : ""}
     <button class="primary" id="ask-btn" data-ask="${i.id}" style="width:100%">ส่งให้ ${esc(sendTo(aiOf(i.id).account))}</button>
     ${!r || r.status === "idle" || r.status === "error" ? `<button data-carry="${i.id}" style="width:100%;margin-top:6px" title="รอบก่อนพังหรือค้าง: ให้ AI ทำคำสั่งล่าสุดต่อโดยไม่ต้องพิมพ์ซ้ำ">↻ ทำต่อจากที่สั่งไว้</button>` : ""}
     <div class="faint small" style="margin-top:6px">${esc(msg)}</div>
-    ${feed.length ? `<div class="log feed">${joinFences(feed).map((f) => { const k = f.ts + ":" + f.text.length, long = f.text.length > 200 || f.text.split("\n").length > 4;
-      return `<div class="${feedKind(f.text)}"><span class="faint">${hm(f.ts)}</span> <span class="fb${long && !moreOpen.has(k) ? " clamp" : ""}">${fmtFeed(f.text)}</span>${long ? `<button class="more" data-more="${esc(k)}">${moreOpen.has(k) ? "ย่อ ▴" : "ดูเต็ม ▾"}</button>` : ""}</div>`; }).join("")}</div>` : ""}
+    ${feed.length ? `<div class="log feed">${joinFences(feed).map((f, i, all) => { const k = f.ts + ":" + f.text.length, long = f.text.length > 200 || f.text.split("\n").length > 4, day = dayBreak(all, i);
+      return `${day ? `<div class="daybreak"><span>${esc(day)}</span></div>` : ""}<div class="${feedKind(f.text)}"><span class="faint">${hm(f.ts)}</span> <span class="fb${long && !moreOpen.has(k) ? " clamp" : ""}">${fmtFeed(f.text)}</span>${long ? `<button class="more" data-more="${esc(k)}">${moreOpen.has(k) ? "ย่อ ▴" : "ดูเต็ม ▾"}</button>` : ""}</div>`; }).join("")}</div>` : ""}
     ${r ? `<div class="acts" style="margin:10px 0 0"><button data-url="https://claude.ai/code">เปิดในแอป Claude</button><button data-remote="${i.id}" data-on="0">ปิด session</button></div>` : ""}
   </div>`;
 }
@@ -587,14 +913,16 @@ function aiSelects(cur, attr) {
 function openAdd() {
   const text = $("#idea-text")?.value || "";
   overlay(`<h2>จดไอเดีย</h2>
-    <textarea id="idea-text" rows="4" placeholder="พิมพ์บรรทัดเดียวพอ เช่น อยากรู้ว่าทำแอปจองคิวขายได้ไหม"></textarea>
+    <textarea id="idea-text" rows="4" placeholder="พิมพ์บรรทัดเดียวพอ เช่น อยากรู้ว่าทำแอปจองคิวขายได้ไหม · พิมพ์ / เพื่อเรียกสกิล"></textarea>
+    <div id="idea-skill-menu" class="skillmenu"></div>
+    ${growBtn("idea-text")}
     <div class="faint small" style="margin:6px 0 10px">! นำหน้า = ด่วน · ? นำหน้า = ขอแค่ research</div>
     ${photoRow("add")}
     <div style="margin:4px 0 12px">${aiSelects(addAi, "data-add-field")}</div>
     <div id="idea-err" class="err"></div>
     <button class="primary" id="idea-send" style="width:100%">ส่งเข้าคิว</button>`);
   const box = $("#idea-text");
-  if (box) box.value = text;
+  if (box) { box.value = text; showPrev(box); }
   if (!text) setTimeout(() => $("#idea-text")?.focus(), 150);
 }
 
@@ -626,6 +954,18 @@ document.addEventListener("click", async (e) => {
   else if (t.dataset.answer) {
     if (t.dataset.other) openOther(Number(t.dataset.answer)); else answer(Number(t.dataset.answer), t.dataset.val);
   } else if (t.dataset.act) {
+    touch(Number(t.dataset.id));
+    if (t.dataset.act === "delete") {
+      // type the idea's folder name to confirm, like on the PC (ISSUE-086)
+      const idea = data.ideas.find((x) => x.id === Number(t.dataset.id));
+      const slug = idea?.slug || String(t.dataset.id);
+      const typed = prompt(`ลบไอเดีย #${t.dataset.id} “${idea?.title || ""}”
+บอทจะหยุดทำทันที และย้ายโฟลเดอร์ไปที่ workspace/.deleted/ (เก็บไว้ 30 วัน)
+
+พิมพ์ ${slug} เพื่อยืนยัน`);
+      if (typed === null) return;
+      if (typed.trim() !== slug) { toast("พิมพ์ชื่อไม่ตรง — ยังไม่ได้ลบ"); return; }
+    }
     try { await send("action", { id: Number(t.dataset.id), action: t.dataset.act }); toast(t.dataset.act === "run_now" ? "ส่งแล้ว — คอมฯ จะเริ่มทำทันทีที่รับคำสั่ง (~1-5 นาที)" : "ส่งคำสั่งแล้ว — คอมฯ จะทำภายใน ~5 นาที"); closeOverlay(); }
     catch (err) { toast(err.message); }
   } else if (t.dataset.more) {
@@ -635,6 +975,13 @@ document.addEventListener("click", async (e) => {
     t.textContent = open ? "ย่อ ▴" : "ดูเต็ม ▾";
   } else if (t.dataset.skill) {
     putSkill(t.dataset.skill);
+  } else if (t.dataset.grow) {
+    const box = $("#" + t.dataset.grow);
+    if (box) {
+      const big = box.classList.toggle("big");
+      t.textContent = big ? "⤡ ย่อช่องพิมพ์" : "⤢ ขยายช่องพิมพ์";
+      box.focus();
+    }
   } else if (t.dataset.carry) {
     // after a crash or a bug: carry on with the last request without typing it again (ISSUE-072)
     const box = $("#ask-text");
@@ -648,6 +995,7 @@ document.addEventListener("click", async (e) => {
     catch (err) { toast(err.message); }
   } else if (t.dataset.ask) {
     const id = Number(t.dataset.ask), v = $("#ask-text")?.value.trim();
+    if (v) touch(id);
     if (!v) { toast("พิมพ์สิ่งที่อยากให้ AI ทำก่อน"); return; }
     t.disabled = true;
     const account = $("#ask-acct")?.value || "";
@@ -709,16 +1057,37 @@ document.addEventListener("click", async (e) => {
     const v = $("#other-text").value.trim();
     if (!v) { $("#other-err").textContent = "พิมพ์คำตอบก่อน"; return; }
     answer(Number(t.dataset.q), v);
+  } else if (t.dataset.qset) {
+    openQuotaView();
+  } else if (t.id === "qv-save") {
+    const r = document.querySelector('input[name="qv"]:checked')?.value || "auto";
+    quotaView = { mode: r.startsWith("one:") ? "one" : r, one: r.startsWith("one:") ? r.slice(4) : "", many: [...document.querySelectorAll('input[name="qvm"]:checked')].map((x) => x.value) };
+    save("quotaView", quotaView);
+    closeOverlay();
+    render();
   } else if (t.id === "logout") {
     if (confirm("ล้าง repo และ token ที่บันทึกไว้?")) { localStorage.clear(); location.reload(); }
   } else if (t.id === "f-go") connect();
 });
-document.addEventListener("input", (e) => { if (e.target.id === "idea-text") $("#idea-err").textContent = ""; if (e.target.id === "ask-text") skillMenu(); });
+document.addEventListener("focusin", (e) => { if (e.target.id === "ask-text" || e.target.id === "idea-text") showPrev(e.target); });
+document.addEventListener("input", (e) => {
+  const id = e.target.id;
+  if (id === "idea-search") { ideaQ = e.target.value; renderIdeaList(); return; }
+  if (id === "idea-text") $("#idea-err").textContent = "";
+  if (id === "ask-text" || id === "idea-text") { skillMenu(id); showPrev(e.target); }
+});
+// text boxes grow with what is typed, up to half the screen (ISSUE-078)
+document.addEventListener("input", (e) => {
+  const t = e.target;
+  if (t.tagName !== "TEXTAREA") return;
+  t.style.height = "auto";
+  t.style.height = Math.min(t.scrollHeight + 2, Math.round(window.innerHeight * 0.5)) + "px";
+});
 // redraw the idea sheet without losing what was typed in the chat box
 function redrawIdea(id) {
   const txt = $("#ask-text")?.value;
   openIdea(id);
-  if (txt) setTimeout(() => { const b = $("#ask-text"); if (b) b.value = txt; }, 0);
+  if (txt) setTimeout(() => { const b = $("#ask-text"); if (b) { b.value = txt; showPrev(b); } }, 0);
 }
 document.addEventListener("change", async (e) => {
   const el = e.target;
@@ -744,7 +1113,7 @@ document.addEventListener("change", async (e) => {
     d[el.dataset.aiField] = el.value;
     if (el.dataset.aiField === "account") { d.model = ""; d.effort = ""; }
     // keep what was typed in the chat box while the sheet redraws
-    const txt = $("#ask-text")?.value; openIdea(id); if (txt) setTimeout(() => { const b = $("#ask-text"); if (b) b.value = txt; }, 0);
+    const txt = $("#ask-text")?.value; openIdea(id); if (txt) setTimeout(() => { const b = $("#ask-text"); if (b) { b.value = txt; showPrev(b); } }, 0);
   } else if (el.dataset.sendto) {
     const b = $("#ask-btn"); if (b) b.textContent = `ส่งให้ ${sendTo(el.value || aiOf(Number(b.dataset.ask)).account)}`;
   }

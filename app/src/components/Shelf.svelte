@@ -43,6 +43,6 @@
 
 <style>
   .shelf { display: flex; align-items: center; gap: 12px; padding: 10px 14px; margin: 0 0 12px; border: 1px solid var(--teal); background: var(--teal-bg); border-radius: 12px; color: var(--text); }
-  .shelf :global(.ico) { color: var(--teal); }
+  .shelf > :global(.ico) { color: var(--teal); } /* the ⏸ mark only, not the icon inside the teal button (ISSUE-085) */
   .body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 </style>

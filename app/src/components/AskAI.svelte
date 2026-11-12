@@ -1,10 +1,12 @@
 <script>
   import FeedText from "./FeedText.svelte";
+  import { autogrow } from "../lib/autogrow.js";
+  import { codebox } from "../lib/codebox.js";
   import Icon from "./Icon.svelte";
   // สั่ง AI แก้/ทำต่อในไอเดีย: ส่งข้อความเข้า Remote Control session "Idea#<id>" (มีอยู่แล้วส่งเข้าอันเดิม)
   // แล้วแสดงว่า AI กำลังทำอะไรเป็นภาษาคน (แปลงจาก transcript ด้วยกฎ ไม่ใช้ token เพิ่ม)
   import { lift } from "../lib/lift.js";
-  import { api } from "../lib/api.js";
+  import { api, dayBreak } from "../lib/api.js";
   import { store, toast, refresh } from "../lib/store.svelte.js";
   import Attach from "./Attach.svelte";
   import SkillMenu from "./SkillMenu.svelte";
@@ -36,6 +38,12 @@
   let att;
   let askEl = $state();
   let box = $state();
+  // the box grows with the text; ⤢ opens it big for a long instruction with files (ISSUE-078)
+  let big = $state(false);
+  function toggleBig() {
+    big = !big;
+    requestAnimationFrame(() => box?.focus());
+  }
   let menu; // "/" opens the list of skills (they work with every AI, see skills.rs)
 
   // only AI agents installed on this machine are offered. Claude shows a live feed here; the others
@@ -208,23 +216,28 @@
     </div>
   {/if}
 
-  <div class="compose">
+  <div class="compose" class:big use:lift={big}>
+    {#if big}<b class="bigtitle"><Icon name="wrench" /> สั่ง AI แก้ / ทำต่อ — Idea #{id}</b>{/if}
     <div class="tw">
     <SkillMenu bind:text bind:this={menu} el={box} />
     <textarea
       bind:this={box}
+      use:autogrow={[big ? 0 : 0.5, text]}
+      use:codebox={text}
       rows="2"
       bind:value={text}
       onpaste={(e) => att?.paste(e)}
       placeholder="บอกสิ่งที่อยากให้แก้ เช่น “ทำปุ่มให้ใหญ่ขึ้น และเพิ่มโหมดมืด” · พิมพ์ / เพื่อเรียกสกิล · Ctrl+V วางภาพได้"
       onkeydown={(e) => {
         if (menu?.key(e)) return;
+        if (e.key === "Escape" && big) big = false;
         if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.isComposing) send();
       }}
     ></textarea>
     </div>
     <div class="bar">
       <Attach bind:this={att} bind:staged priority={3} zone={() => askEl} />
+      <button type="button" class="ghost small" onclick={toggleBig} title={big ? "ย่อกลับ (Esc)" : "ขยายเป็นช่องใหญ่ — สำหรับคำสั่งยาวๆ และแนบรูป"}><Icon name={big ? "collapse" : "layers"} /> {big ? "ย่อกลับ" : "ขยาย"}</button>
       {#if canCarry && !text.trim()}
         <button class="ghost small" disabled={sending} onclick={carryOn} title="รอบก่อนพัง ค้าง หรือโปรแกรมติดบั๊ก: ให้ AI ทำคำสั่งล่าสุดที่ยังไม่เสร็จต่อเลย ไม่ต้องพิมพ์ซ้ำ (มันเห็นบทสนทนาเดิมและคำสั่งทั้งหมดของไอเดียนี้)"><Icon name="refresh" /> ทำต่อจากที่สั่งไว้</button>
       {/if}
@@ -257,6 +270,8 @@
         {#each feed as f, i (f.ts + ":" + i)}
           {@const k = f.ts + ":" + f.text.length}
           {@const long = isLong(f.text)}
+          {@const day = dayBreak(feed, i)}
+          {#if day}<div class="daybreak"><span>{day}</span></div>{/if}
           <div class="line {kind(f.text)}"><span class="t">{hhmm(f.ts)}</span><div class="x"><div class="body" class:clamp={long && !opened[k]}><FeedText text={f.text} /></div>{#if long}<button type="button" class="more" onclick={() => (opened[k] = !opened[k])}>{opened[k] ? "ย่อ ▴" : "ดูเต็ม ▾"}</button>{/if}</div></div>
         {/each}
       </div>
@@ -291,6 +306,9 @@
   .line .t { color: var(--text-3); font-variant-numeric: tabular-nums; flex: none; }
   .line .x { overflow-wrap: anywhere; min-width: 0; flex: 1; }
   .line .body { white-space: pre-line; }
+  /* a quiet line with the date where the day changes (ISSUE-075) */
+  .daybreak { display: flex; align-items: center; gap: 8px; margin: 6px 0 2px; font-size: 11px; color: var(--text-3); }
+  .daybreak::before, .daybreak::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
   .line .body.clamp { display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
   .line .more { border: none; background: transparent; padding: 0; margin-top: 1px; font-size: 12px; color: var(--teal); }
   .line.step .x { color: var(--text-2); }
@@ -299,7 +317,13 @@
   .line.done .x { color: var(--teal); }
   .line.warn .x { color: var(--amber); }
   .compose { display: flex; flex-direction: column; gap: 8px; }
-  .compose textarea { flex: 1; resize: vertical; min-height: 64px; width: 100%; }
+  .compose textarea { flex: 1; resize: none; min-height: 64px; width: 100%; line-height: 1.5; }
+  /* the big editor, over a dimmed window */
+  .compose.big { position: fixed; top: 7vh; left: 50%; transform: translateX(-50%); width: min(940px, 94vw); height: 84vh; z-index: 300; padding: 14px 16px;
+    background: var(--bg-2); border: 1px solid var(--teal); border-radius: 14px; box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.55), 0 20px 60px rgba(0, 0, 0, 0.5); }
+  .compose.big .tw { flex: 1; min-height: 0; }
+  .compose.big textarea { height: 100% !important; overflow-y: auto !important; font-size: 15px; }
+  .bigtitle { font-size: 15px; display: flex; align-items: center; gap: 6px; }
   .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
   .bar select { height: 34px; padding: 0 10px; font-size: 13px; max-width: 240px; }
   .bar .send { height: 36px; padding: 0 22px; white-space: nowrap; }

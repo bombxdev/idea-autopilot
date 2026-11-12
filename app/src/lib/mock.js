@@ -79,7 +79,7 @@ const state = {
   paused: false, turbo_until: 0, user_active: false, reserve_per_hour: 1.5, reserve_learned: false, cooldown_until: 0,
   agents: [{ id: "claude", label: "Claude", via: "app", hint: "หลัก" }, { id: "codex", label: "Codex (OpenAI)", via: "orca", hint: "งานโค้ด/ขัดเกลาหน้าตา · ใช้โควต้า OpenAI · เปิดใน Orca" }],
   sessions: [{ idea_id: 5, name: "Idea#5 : กาแฟเย็นทำให้ง่วงจริงไหม", status: "working", started: now - 300, pid: 1, note: "", sid: "x", ai: "Claude Code · Opus 5.5", busy_since: now - 47 * 60, waiting: 1, quiet: 420, screen: "● Read(t2.png)\n  ⎿  Reading…", feed: [
-    { ts: now - 290, text: "⏳ กำลังเปิด session…" }, { ts: now - 284, text: "🛰 พร้อมแล้ว — เปิดดูในแอป Claude ได้" },
+    { ts: now - 26 * 3600, text: "🙋 คุณ: สรุปผลสำรวจเมื่อวานให้หน่อย" }, { ts: now - 26 * 3600 + 60, text: "✅ จบรอบนี้" }, { ts: now - 290, text: "⏳ กำลังเปิด session…" }, { ts: now - 284, text: "🛰 พร้อมแล้ว — เปิดดูในแอป Claude ได้" },
     { ts: now - 280, text: "🙋 คุณ: เพิ่มตารางเปรียบเทียบปริมาณน้ำตาลของกาแฟเย็นแต่ละร้าน" }, { ts: now - 278, text: "🙋 คุณ: At line:1 char:207\n+ ... ore } from './agent/keystore.mjs'; const p = wincredKeystore().get('g ...\n+ ~\nAn expression was expected after '('.\nAt line:1 char:244\n+ ... st p = wincredKeystore().get('goatcounter/password'); if (!p) throw n ...\n+ ~\nMissing statement block after if ( condition ).\n+ CategoryInfo : ParserError: (:) [], ParentContainsErrorRecordException\n+ FullyQualifiedErrorId : ExpectedExpression" },
     { ts: now - 270, text: "💬 จะอ่านรายงานเดิมก่อน เพื่อดูว่ามีข้อมูลน้ำตาลอะไรอยู่แล้วบ้าง" }, { ts: now - 265, text: "💬 ลองรันนี้ใน PowerShell:\n```powershell\ncd D:/x\nnode a.mjs | Set-Clipboard\n```\nแล้วกด **Ctrl+V** หรือล้างด้วย `Set-Clipboard -Value ''`" },
     { ts: now - 265, text: "📖 อ่านไฟล์ REPORT.md" }, { ts: now - 240, text: "🌐 ค้นเว็บ: ปริมาณน้ำตาล กาแฟเย็น Amazon Café" },
@@ -192,7 +192,7 @@ const handlers = {
   list_ideas: () => ({ ideas, questions, stages }),
   get_idea: ({ id }) => ({
     idea: ideas.find((i) => i.id === id), files: { report: md, idea: "# ไอเดีย\n\nข้อความเดิมของคุณ" },
-    runs: [{ id: 9, stage: "research", status: "ok", started: now - 3 * H, input_tokens: 2e4, output_tokens: 9e3, cache_write: 6e4, week_before: 52, week_after: 55.5 }],
+    runs: [{ id: 9, stage: "research", status: "ok", started: now - 3 * H, input_tokens: 2e4, output_tokens: 9e3, cache_write: 6e4, week_before: 52, week_after: 55.5 }, { id: 8, stage: "clarify", status: "ok", started: now - 27 * H, input_tokens: 1e4, output_tokens: 4e3, cache_write: 2e4, week_before: 50, week_after: 51 }],
     questions: questions.filter((q) => q.idea_id === id), directives: [[now - 2 * H, "เน้นตลาดไทย"]], dir: "",
   }),
   get_digest: () => ({ ts: now - 2 * H, body: { since: now - 20 * H, headline: "1 พร้อมลองเล่น · 2 เสร็จ · 2 คำถามรอคุณ · บอทใช้ไป 18% ของสัปดาห์", runs: 7, bot_pct: 18.2, needs: [{ id: 4, title: ideas[3].title, needs: ideas[3].needs }] } }),

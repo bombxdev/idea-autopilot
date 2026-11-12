@@ -2,6 +2,23 @@ plugins {
     id 'com.android.application'
 }
 
+// One version for the PC app and the phone app: the PC's tauri.conf.json (the version the GitHub release carries).
+// versionCode = major*10000 + minor*100 + patch, so every release installs over the one before (ISSUE-076).
+def appVersion = new groovy.json.JsonSlurper().parse(file("$rootDir/../app/src-tauri/tauri.conf.json")).version as String
+def vParts = appVersion.tokenize('.').collect { (it.replaceAll(/\D.*$/, '') ?: '0') as int }
+def appVersionCode = vParts[0] * 10000 + vParts[1] * 100 + vParts[2]
+// the page reads it from version.js (window.APP_VERSION) to show it and to compare it with the PC's
+def versionAssets = file("$buildDir/generated/version-assets")
+tasks.register('writeVersionAsset') {
+    inputs.property('version', appVersion)
+    outputs.dir(versionAssets)
+    doLast {
+        versionAssets.mkdirs()
+        new File(versionAssets, 'version.js').text = "window.APP_VERSION = \"${appVersion}\";\n"
+    }
+}
+tasks.named('preBuild') { dependsOn 'writeVersionAsset' }
+
 android {
     namespace 'app.ideaautopilot.mobile'
     compileSdk 35
@@ -10,8 +27,8 @@ android {
         applicationId 'app.ideaautopilot.mobile'
         minSdk 26
         targetSdk 35
-        versionCode 16
-        versionName '0.4.9'
+        versionCode appVersionCode
+        versionName appVersion
     }
 
     buildTypes {
@@ -20,6 +37,9 @@ android {
             // debug key so the APK installs directly; this is a personal sideloaded app
             signingConfig signingConfigs.debug
         }
+    }
+    sourceSets {
+        main.assets.srcDirs += [versionAssets]
     }
     lint {
         checkReleaseBuilds false

@@ -1,6 +1,7 @@
 # Builds what you hand to other people, both checked for personal names, paths and data first:
 #   dist\IdeaAutopilot-<version>-Setup.exe        the installer (updates in place; ideas and settings are kept)
 #   dist\IdeaAutopilot-<version>-portable.zip     unzip-and-run copy that starts empty
+#   dist\IdeaAutopilot-<version>-mobile.apk       the phone app, same version (if Android Studio is installed)
 # Needs Windows 10/11 build tools (Rust, Node). Usage:
 #   powershell -ExecutionPolicy Bypass -File scripts\package.ps1
 # Code signing (optional, removes the "unknown publisher" warning): set IA_SIGN_THUMBPRINT to the
@@ -68,3 +69,12 @@ Compress-Archive -Path $out -DestinationPath $zip
 $sig = (Get-AuthenticodeSignature $setupOut).Status
 Write-Host "Installer: $setupOut  (signature: $sig)"
 Write-Host "Portable : $zip"
+
+# ---- phone app: the same version as the PC (build.gradle reads tauri.conf.json), for the same release ----
+$apk = "$root\dist\IdeaAutopilot-$version-mobile.apk"
+& powershell -ExecutionPolicy Bypass -File "$PSScriptRoot/build-apk.ps1"
+if ($LASTEXITCODE) { Write-Warning "Phone app not built (Android Studio missing?) - the release has no APK this time" }
+else {
+  Copy-Item "$root\dist\IdeaAutopilot-mobile.apk" $apk -Force
+  Write-Host "Phone app: $apk"
+}
