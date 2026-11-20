@@ -3,13 +3,14 @@
   // Which AI works on an idea: pick an account (only the ones switched on), a model and an effort — each "auto" unless the
   // owner chooses. The model and effort lists come from what that account can use. Used when adding and when editing.
   import { onMount } from "svelte";
-  import { api } from "../lib/api.js";
+  import { api, effortName, effortOption } from "../lib/api.js";
   import ModelPicker from "./ModelPicker.svelte";
 
   let { value = $bindable({ account: "", model: "", effort: "" }), onchange = null, startOpen = false, title = "AI สำหรับไอเดียนี้", autoNote = "ถ้าไม่เลือก บอทใช้บัญชีและโมเดลตามที่ตั้งไว้" } = $props();
   let models = $state([]);
   let hiddenModels = $state([]);
   let source = $state("");
+  let acctEfforts = $state([]); // the levels this account offers (Claude Code: Low … Max)
   let open = $state(startOpen);
   let loading = $state(false);
   const LADDER = ["low", "medium", "high", "xhigh"];
@@ -34,6 +35,7 @@
     models = [];
     hiddenModels = [];
     source = "";
+    acctEfforts = [];
     if (!id) return;
     loading = true;
     api.accountModels(id).then((m) => {
@@ -41,6 +43,7 @@
       models = m?.models ?? [];
       hiddenModels = m?.hidden ?? [];
       source = m?.source ?? "";
+      acctEfforts = m?.efforts ?? [];
     }).catch(() => {}).finally(() => (loading = false));
   });
 
@@ -48,13 +51,13 @@
   const efforts = $derived.by(() => {
     if (acct && !acct.effort_supported) return [];
     const m = models.find((x) => x.id === value.model);
-    return m?.efforts?.length ? m.efforts : LADDER;
+    return m?.efforts?.length ? m.efforts : acctEfforts.length ? acctEfforts : LADDER;
   });
   const label = (a) => `${a.label || a.id} · ${a.vendor_label || a.kind_label}${a.enabled ? "" : " (ปิดอยู่ในตั้งค่า)"}`;
   const summary = $derived(
     !value.account && !value.model && !value.effort
       ? "อัตโนมัติ"
-      : [acct ? acct.label || acct.id : value.account || "AI อัตโนมัติ", value.model || "model auto", value.effort || "effort auto"].join(" · "),
+      : [acct ? acct.label || acct.id : value.account || "AI อัตโนมัติ", models.find((m) => m.id === value.model)?.label || value.model || "model auto", value.effort ? `effort ${effortName(value.effort)}` : "effort auto"].join(" · "),
   );
 
   function set(patch) {
@@ -81,7 +84,7 @@
       <label>Effort
         <select value={value.effort} disabled={!value.account || (acct && !acct.effort_supported)} onchange={(e) => set({ effort: e.currentTarget.value })}>
           <option value="">auto (โปรแกรมเลือกให้)</option>
-          {#each efforts as x}<option value={x}>{x}</option>{/each}
+          {#each efforts as x}<option value={x}>{effortOption(x)}</option>{/each}
         </select></label>
       {#if acct && !acct.enabled}<span style="color:var(--amber)">⚠ บัญชีนี้ปิดอยู่ในตั้งค่า — บอทจะใช้บัญชีอื่นแทน เลือกใหม่ได้</span>
       {:else if !accounts.length}<span class="faint">ยังไม่มีบัญชี AI ที่เปิดอยู่ — เพิ่มได้ที่ตั้งค่า → บัญชี AI</span>

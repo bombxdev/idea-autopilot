@@ -10,6 +10,7 @@
   import Morning from "./pages/Morning.svelte";
   import Board from "./pages/Board.svelte";
   import Quota from "./pages/Quota.svelte";
+  import Usage from "./pages/Usage.svelte";
   import Library from "./pages/Library.svelte";
   import Skills from "./pages/Skills.svelte";
   import Settings from "./pages/Settings.svelte";
@@ -17,6 +18,7 @@
   import Sessions from "./pages/Sessions.svelte";
   import Workspace from "./pages/Workspace.svelte";
   import QuotaMini from "./components/QuotaMini.svelte";
+  import { inbox, loadReview } from "./lib/review.svelte.js";
   import IdeaDrawer from "./components/IdeaDrawer.svelte";
   import Palette from "./components/Palette.svelte";
   import QuickAdd from "./components/QuickAdd.svelte";
@@ -25,17 +27,24 @@
   import UpdateCard from "./components/UpdateCard.svelte";
   import WhatsNew from "./components/WhatsNew.svelte";
 
+  // 8 entries in 3 groups (ISSUE-098): pages about the same thing share one entry and show as tabs on the page
+  // ("usage" under quota, "sessions" under activity) — the page keys stay, so old links still open the right view
   const NAV = [
+    { group: "ไอเดีย" },
     { key: "morning", icon: "sun" },
     { key: "board", icon: "board" },
     { key: "workspace", icon: "windows" },
-    { key: "quota", icon: "gauge" },
     { key: "library", icon: "book" },
+    { group: "AI" },
+    { key: "quota", icon: "gauge", also: ["usage"] },
     { key: "skills", icon: "toolbox" },
-    { key: "sessions", icon: "link" },
-    { key: "activity", icon: "list" },
+    { group: "ระบบ" },
+    { key: "activity", icon: "list", also: ["sessions"] },
     { key: "settings", icon: "gear" },
   ];
+  const QUOTA_TABS = [["quota", "โควต้า", "gauge"], ["usage", "รายงานการใช้", "chart"]];
+  const LOG_TABS = [["activity", "ไทม์ไลน์", "list"], ["sessions", "เซสชัน", "link"]];
+  const PAGE_TABS = { quota: QUOTA_TABS, usage: QUOTA_TABS, activity: LOG_TABS, sessions: LOG_TABS };
 
   let paletteOpen = $state(false);
   let upd = $state(null); // a newer version is out
@@ -54,6 +63,7 @@
       setUiLang(store.lang);
     }).catch(() => {});
     listen("other-copy", (e) => (other = e.payload));
+    loadReview();
     const checkUpdate = () => api.updateStatus(false).then((u) => (upd = u?.available ? u : null)).catch(() => {});
     setTimeout(checkUpdate, 4000);
     listen("update-available", () => checkUpdate());
@@ -81,7 +91,8 @@
 
   const s = $derived(store.state);
   const d = $derived(s?.decision);
-  const openQ = $derived(store.questions.length);
+  // the badge counts everything waiting for the owner: questions and finished work not looked at yet (ISSUE-100)
+  const openQ = $derived(inbox().count);
   const botState = $derived.by(() => {
     if (!s) return { cls: "idle", text: "กำลังโหลด…" };
     if (s.role === "follower") return { cls: "idle", text: "เครื่องรอง · บอทรันที่เครื่องหลัก" };
@@ -137,10 +148,12 @@
     </div>
     <nav>
       {#each NAV as n}
-        <button class="nav" class:on={store.page === n.key} onclick={() => (store.page = n.key)} title={t("nav_" + n.key, store.lang)}>
+        {#if n.group}<div class="navgrp">{n.group}</div>{:else}
+        <button class="nav" class:on={store.page === n.key || n.also?.includes(store.page)} onclick={() => (store.page = n.key)} title={t("nav_" + n.key, store.lang)}>
           <span class="ico"><Icon name={n.icon} /></span>{t("nav_" + n.key, store.lang)}
           {#if n.key === "morning" && openQ > 0}<span class="badge">{openQ}</span>{/if}
         </button>
+        {/if}
       {/each}
     </nav>
     <div class="side-foot">
@@ -162,12 +175,26 @@
         </button>
       {/if}
     </header>
+    {#if store.page !== "settings"}
+      {#each s?.account_problems ?? [] as p (p.id)}
+        <div class="connbar"><Icon name="warning" /> <span class="grow"><b>{p.title}</b> เชื่อมต่อไม่ได้: {p.cause}</span>
+          <button class="small primary" onclick={() => { store.settingsTab = "ai"; store.page = "settings"; }}>ไปแก้</button></div>
+      {/each}
+    {/if}
     <section class="page" class:full={store.page === "workspace"}>
       {#if store.page !== "workspace"}<Shelf />{/if}
+      {#if PAGE_TABS[store.page]}
+        <div class="ptabs" role="tablist">
+          {#each PAGE_TABS[store.page] as [key, label, icon]}
+            <button class="ptab" class:on={store.page === key} role="tab" aria-selected={store.page === key} onclick={() => (store.page = key)}><Icon name={icon} /> {label}</button>
+          {/each}
+        </div>
+      {/if}
       {#if store.page === "morning"}<Morning />
       {:else if store.page === "workspace"}<Workspace />
       {:else if store.page === "board"}<Board />
       {:else if store.page === "quota"}<Quota />
+      {:else if store.page === "usage"}<Usage />
       {:else if store.page === "sessions"}<Sessions />
       {:else if store.page === "library"}<Library />
       {:else if store.page === "skills"}<Skills />
@@ -199,6 +226,15 @@
   nav { display: flex; flex-direction: column; gap: 2px; }
   .nav { border: none; text-align: left; display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 9px; color: var(--text-2); }
   .nav:hover { background: var(--card); color: var(--text); }
+  .connbar { display: flex; gap: 10px; align-items: center; padding: 8px 28px; background: var(--amber-bg); border-bottom: 1px solid var(--amber); font-size: 13px; }
+  .navgrp { font-size: 11px; color: var(--text-3); padding: 12px 10px 4px; letter-spacing: .04em; }
+  .navgrp:first-child { padding-top: 0; }
+  .rail .navgrp { font-size: 0; padding: 0; height: 1px; width: 28px; background: var(--line); margin: 8px auto; }
+  .rail .navgrp:first-child { display: none; }
+  .ptabs { display: flex; gap: 6px; border-bottom: 1px solid var(--line); padding-bottom: 8px; margin-bottom: 16px; }
+  .ptab { background: transparent; border: 1px solid transparent; border-radius: 8px; padding: 6px 12px; color: var(--text-2); white-space: nowrap; }
+  .ptab:hover { background: var(--bg-2); }
+  .ptab.on { background: var(--bg-2); border-color: var(--teal); color: var(--text); font-weight: 600; }
   .nav.on { background: var(--card-2); color: var(--text); font-weight: 500; }
   .ico { width: 20px; text-align: center; }
   .badge { margin-left: auto; background: var(--amber); color: #2a1a00; font-size: 11px; font-weight: 600; border-radius: 999px; padding: 0 7px; }

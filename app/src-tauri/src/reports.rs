@@ -248,6 +248,98 @@ pub fn run_log(st: &AppState, run_id: i64) -> Result<Vec<String>> {
         .collect())
 }
 
+/// Every run that started in [from, to): who ran it, with which model, and what it cost in tokens and time.
+/// The usage report aggregates these in the interface so its filters stay instant.
+/// `model` is the exact model name when the agent reported one, else the name that was requested.
+pub fn usage_runs(st: &AppState, from: i64, to: i64) -> Result<Value> {
+    // chat logs are files: read them before taking the database lock
+    let chats = crate::chat_usage::collect(&st.root, from, to);
+    let c = st.db.lock();
+    let mut q = c.prepare(
+        "SELECT r.id, r.idea_id, COALESCE(i.title, ''), r.stage, r.status, r.started, r.ended,
+                r.input_tokens, r.output_tokens, r.cache_read, r.cache_write, r.cost_usd, r.num_turns,
+                COALESCE(NULLIF(r.model_id, ''), NULLIF(r.model_used, ''), r.model), r.model,
+                COALESCE(NULLIF(r.provider, ''), 'claude'), r.account, COALESCE(r.effort, ''), COALESCE(i.scope, 'personal'),
+                r.session_id, COALESCE(i.slug, '')
+         FROM runs r LEFT JOIN ideas i ON i.id = r.idea_id
+         WHERE r.started >= ?1 AND r.started < ?2 ORDER BY r.started",
+    )?;
+    let now = db::now();
+    let rows = q
+        .query_map([from, to], |r| {
+            let (started, ended): (i64, Option<i64>) = (r.get(5)?, r.get(6)?);
+            Ok(json!({
+                "id": r.get::<_, i64>(0)?, "idea_id": r.get::<_, i64>(1)?, "idea": r.get::<_, String>(2)?,
+                "stage": r.get::<_, String>(3)?, "status": r.get::<_, String>(4)?, "started": started,
+                "secs": (ended.unwrap_or(now) - started).max(0),
+                "input": r.get::<_, i64>(7)?, "output": r.get::<_, i64>(8)?, "cache_read": r.get::<_, i64>(9)?,
+                "cache_write": r.get::<_, i64>(10)?, "cost": r.get::<_, f64>(11)?, "turns": r.get::<_, i64>(12)?,
+                "model": r.get::<_, String>(13)?, "tier": r.get::<_, String>(14)?, "provider": r.get::<_, String>(15)?,
+                "account": r.get::<_, String>(16)?, "effort": r.get::<_, String>(17)?, "scope": r.get::<_, String>(18)?,
+                "source": "bot", "msgs": 0, "from_log": false,
+                "_sid": r.get::<_, Option<String>>(19)?, "_slug": r.get::<_, String>(20)?, "_ended": ended.unwrap_or(0),
+            }))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    // chats: one row per chat, model and hour, shaped like a run (stage "chat", no run count of its own)
+    let ideas: std::collections::HashMap<i64, (String, String)> =
+        db::list_ideas(&c)?.into_iter().map(|i| (i.id, (i.title, i.scope))).collect();
+    let first: Option<i64> = c.query_row("SELECT MIN(started) FROM runs", [], |r| r.get(0)).ok().flatten();
+    drop(q);
+    drop(c);
+    let mut rows = rows;
+    // a Codex or Mistral run that recorded no tokens: take them from the agent's own log (marked, so the page can say so)
+    for row in rows.iter_mut() {
+        let zero = ["input", "output", "cache_read", "cache_write"].iter().all(|k| row[*k].as_i64() == Some(0));
+        let provider = row["provider"].as_str().unwrap_or_default().to_string();
+        if zero && (provider == "codex" || provider == "mistral") {
+            let r = crate::log_tokens::RunRef {
+                id: row["id"].as_i64().unwrap_or(0),
+                provider: &provider,
+                session_id: row["_sid"].as_str(),
+                idea_dir: crate::workspace::idea_dir(&st.ws, row["_slug"].as_str().unwrap_or_default()),
+                started: row["started"].as_i64().unwrap_or(0),
+                ended: row["_ended"].as_i64().unwrap_or(0),
+            };
+            if let Some(t) = crate::log_tokens::recover(&st.root, &r) {
+                for (k, v) in ["input", "output", "cache_read", "cache_write"].iter().zip(t) {
+                    row[*k] = json!(v);
+                }
+                row["from_log"] = json!(true);
+            }
+        }
+        if let Some(o) = row.as_object_mut() {
+            o.retain(|k, _| !k.starts_with('_'));
+        }
+    }
+    for (n, h) in chats.into_iter().enumerate() {
+        let (title, scope) = ideas.get(&h.idea_id).cloned().unwrap_or_default();
+        rows.push(json!({
+            "id": -(n as i64) - 1, "idea_id": h.idea_id, "idea": title, "stage": "chat", "status": "ok", "started": h.first,
+            "secs": (h.last - h.first).max(60), "input": h.input, "output": h.output, "cache_read": h.cache_read,
+            "cache_write": h.cache_write, "cost": 0.0, "turns": h.messages, "model": h.model, "tier": "", "provider": h.provider,
+            "account": h.account, "effort": "", "scope": if scope.is_empty() { "personal".into() } else { scope },
+            "source": "chat", "msgs": h.messages, "from_log": true,
+        }));
+    }
+    Ok(json!({ "runs": rows, "first": first }))
+}
+
+/// A report the interface rendered (PNG, PDF or CSV, base64), saved under data/exports/. Returns the file path.
+pub fn save_export(st: &AppState, name: &str, b64: &str) -> Result<std::path::PathBuf> {
+    use base64::Engine;
+    let ext = std::path::Path::new(name).extension().and_then(|e| e.to_str()).unwrap_or("");
+    anyhow::ensure!(matches!(ext, "png" | "pdf" | "csv"), "บันทึกได้เฉพาะ .png .pdf หรือ .csv");
+    let safe: String = name.chars().map(|c| if c.is_alphanumeric() || "-_.".contains(c) { c } else { '-' }).collect();
+    let data = base64::engine::general_purpose::STANDARD.decode(b64.trim())?;
+    anyhow::ensure!(!data.is_empty() && data.len() < 40 * 1024 * 1024, "ไฟล์ว่างหรือใหญ่เกิน 40 MB");
+    let dir = st.root.join("data").join("exports");
+    std::fs::create_dir_all(&dir)?;
+    let p = dir.join(safe);
+    std::fs::write(&p, data)?;
+    Ok(p)
+}
+
 pub fn export_csv(st: &AppState) -> Result<std::path::PathBuf> {
     let dir = st.root.join("data").join("exports");
     std::fs::create_dir_all(&dir)?;

@@ -42,7 +42,7 @@ fn on_path(cli: &str) -> bool {
     let mut c = std::process::Command::new(if cfg!(windows) { "where" } else { "which" });
     c.arg(cli);
     hidden(&mut c);
-    c.output().map(|o| o.status.success()).unwrap_or(false)
+    crate::runner::output_within(&mut c, 10).map(|o| o.status.success()).unwrap_or(false)
 }
 
 pub fn orca_exe() -> Option<PathBuf> {
@@ -82,7 +82,7 @@ fn orca(args: &[&str]) -> Result<Value, String> {
     let mut c = std::process::Command::new(exe);
     c.args(args).arg("--json");
     hidden(&mut c);
-    let o = c.output().map_err(|e| format!("เรียก Orca ไม่ได้: {e}"))?;
+    let o = crate::runner::output_within(&mut c, 30).map_err(|e| format!("เรียก Orca ไม่ได้: {e}"))?;
     let out = String::from_utf8_lossy(&o.stdout);
     let v: Value = serde_json::from_str(out.trim()).unwrap_or(Value::Null);
     if v.get("ok").and_then(Value::as_bool) == Some(true) {

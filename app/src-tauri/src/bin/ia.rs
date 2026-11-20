@@ -270,12 +270,14 @@ fn run() -> Result<(), String> {
         "add" | "a" => println!("จดแล้ว #{} — AI จะเริ่มคิดเมื่อมีโควต้าว่าง", out),
         "brain" => println!("export สมองแล้วที่ {}", s(&out)),
         "models" => {
-            let v: Vec<String> = out["versions"].as_object().into_iter().flatten().map(|(k, v)| format!("{k}={}", s(v))).collect();
-            println!("เวอร์ชันล่าสุดที่เห็น: {}", if v.is_empty() { "—".into() } else { v.join(", ") });
-            for (stage, p) in out["stages"].as_object().into_iter().flatten() {
-                let st: Vec<String> = p["stats"].as_object().into_iter().flatten()
-                    .map(|(t, x)| format!("{t} {}/{}", x["good"], x["runs"])).collect();
-                println!("{stage:<10} ตาราง {:<6} → ใช้ {:<6} [{}] {}", s(&p["base"]), s(&p["chosen"]), st.join(", "), s(&p["note"]));
+            for (agent, a) in out["agents"].as_object().into_iter().flatten() {
+                let v: Vec<String> = a["versions"].as_object().into_iter().flatten().map(|(k, v)| format!("{k}={}", s(v))).collect();
+                println!("[{agent}] เวอร์ชันล่าสุดที่เห็น: {}", if v.is_empty() { "—".into() } else { v.join(", ") });
+                for (stage, p) in a["stages"].as_object().into_iter().flatten() {
+                    let st: Vec<String> = p["stats"].as_object().into_iter().flatten()
+                        .map(|(t, x)| format!("{t} {}/{}", x["good"], x["runs"])).collect();
+                    println!("  {stage:<10} ตาราง {:<6} → ใช้ {:<6} [{}] {}", s(&p["base"]), s(&p["chosen"]), st.join(", "), s(&p["note"]));
+                }
             }
         }
         "runlog" => {

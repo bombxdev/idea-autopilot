@@ -209,10 +209,17 @@
   {#if tab === "ai"}
   {#if prov}
     <div class="card">
-      <h2>AI ที่ใช้ทำงาน</h2>
-      <h3 style="margin:8px 0 4px">บัญชี AI (หลายบัญชี หลายค่าย)</h3>
+      <h2>บัญชี AI</h2>
       <Accounts />
-      <h3 style="margin:16px 0 4px">ตัวเลือกเดิม: AI หลักเมื่อไม่ได้ตั้งบัญชี</h3>
+      <!-- ISSUE-102 -->
+      <div class="row field"><span class="grow">เมื่อบัญชีที่ไอเดียเลือกไว้ใช้ไม่ได้ <span class="faint small">(โควต้าหมด ติดลิมิต หรือเชื่อมต่อไม่ได้)</span></span>
+        <select value={s.account_switch === "wait" ? "wait" : "auto"} onchange={(e) => save("account_switch", e.target.value)}>
+          <option value="auto">สลับไปบัญชีอื่นที่ว่างให้อัตโนมัติ (แนะนำ)</option>
+          <option value="wait">รอบัญชีนั้น ไม่สลับ</option>
+        </select></div>
+      <!-- the older single "main AI" choice only matters when no account is set: folded away (ISSUE-098) -->
+      <details class="adv">
+      <summary>ขั้นสูง: AI หลักเมื่อยังไม่มีบัญชี <span class="faint small">· ตอนนี้: {prov.active_label}</span></summary>
       <p class="muted small">เครื่องนี้ไม่จำเป็นต้องมีครบทุกตัว — เลือกตัวที่คุณมีได้เลย ผลงานทั้งหมดเป็นไฟล์ในโฟลเดอร์ไอเดีย จึงเปลี่ยน AI ได้ทุกเมื่อโดยงานเดิมไม่หาย</p>
       <div class="row field"><span class="grow">ตอนนี้ใช้: <b>{prov.active_label}</b>
         <span class="faint small">· วัดโควต้า: {prov.meter === "real" ? "อ่านจากบริการจริง" : "งบชั่วโมงของแอป"}</span></span>
@@ -238,10 +245,11 @@
       </div>
       {#if test}
         <div class="small" style="color:{test.ok ? 'var(--teal)' : 'var(--red)'}">
-          <Icon name={test.ok ? "check" : "closeCircle"} /> {test.ok ? `ใช้ได้ (${test.seconds} วินาที)` : `ไม่สำเร็จ: ${test.error ?? test.status}`}
-          {#each test.lines ?? [] as l}<div class="faint">{l}</div>{/each}
+          <Icon name={test.ok ? "check" : "closeCircle"} /> {test.ok ? `ใช้ได้ (${test.seconds} วินาที)` : test.diag ? `${test.diag.cause} — ${test.diag.fix}` : `ไม่สำเร็จ: ${test.error ?? test.status}`}
+          {#if test.ok || !test.diag}{#each test.lines ?? [] as l}<div class="faint">{l}</div>{/each}{/if}
         </div>
       {/if}
+      </details>
     </div>
   {/if}
   {/if}
@@ -340,20 +348,23 @@
   <div class="card">
     <h2>โมเดลและ effort</h2>
     <p class="muted small">โหมดอัตโนมัติเลือกด้วยกฎ + สถิติจริง จึงไม่เสีย token ในการตัดสินใจ และ Claude เรียกรุ่นล่าสุดของแต่ละตระกูลเสมอ: งานปริมาณมาก (ค้นเว็บ เขียนโค้ด) ใช้ระดับกลาง, งานตัดสินใจ (ตัดสิน วางแผน) ใช้ระดับแรง, งานจัดคิวใช้ระดับเร็ว (แต่ละ AI จับคู่ระดับกับโมเดลของตัวเองตามที่ตั้งไว้ด้านบน · Claude = Haiku / Sonnet / Opus) · ถ้าเคยติดขัดจะขยับขึ้น · ถ้าโควต้าเหลือและกำลังจะหมดอายุจะอัปเกรดคุณภาพ · ถ้าโควต้าใกล้หมดจะลด effort · ทุก 5 รอบจะลองรุ่นที่ถูกกว่า 1 ครั้ง ถ้าดีพอๆ กัน 5 รอบขึ้นไปจะเปลี่ยนไปใช้ถาวร และเริ่มนับใหม่เมื่อมีโมเดลเวอร์ชันใหม่</p>
-    {#if policy && Object.keys(policy.stages).length}
+    {#if policy?.agents && Object.keys(policy.agents).length}
       <div class="pol">
-        <div class="faint small">เรียนรู้จากผลงานจริงทุกชั่วโมง (ไม่ใช้ token) · เวอร์ชันล่าสุดที่เห็น: {Object.values(policy.versions).join(", ") || "—"}</div>
-        <table>
-          <thead><tr><th>ขั้น</th><th>ตาราง</th><th>ใช้จริง</th><th>สถิติ (ดี/ทั้งหมด)</th></tr></thead>
-          <tbody>
-            {#each Object.entries(policy.stages) as [stage, p]}
-              <tr class:down={p.offset < 0}>
-                <td>{stage}</td><td>{p.base}</td><td><b>{p.chosen}</b></td>
-                <td class="faint">{Object.entries(p.stats).map(([t, x]) => `${t} ${x.good}/${x.runs}`).join(" · ")}</td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
+        <div class="faint small">เรียนรู้จากผลงานจริงทุกชั่วโมง (ไม่ใช้ token) · แยกสถิติของแต่ละ AI เพราะระดับเดียวกันคือคนละโมเดล</div>
+        {#each Object.entries(policy.agents) as [agent, a]}
+          <div class="small" style="margin-top:8px"><b>{agent}</b> <span class="faint">· เวอร์ชันล่าสุดที่เห็น: {Object.values(a.versions).join(", ") || "—"}</span></div>
+          <table>
+            <thead><tr><th>ขั้น</th><th>ตาราง</th><th>ใช้จริง</th><th>สถิติ (ดี/ทั้งหมด)</th></tr></thead>
+            <tbody>
+              {#each Object.entries(a.stages) as [stage, p]}
+                <tr class:down={p.offset < 0}>
+                  <td>{stage}</td><td>{p.base}</td><td><b>{p.chosen}</b></td>
+                  <td class="faint">{Object.entries(p.stats).map(([t, x]) => `${t} ${x.good}/${x.runs}`).join(" · ")}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        {/each}
       </div>
     {/if}
     <p class="muted small">
@@ -373,7 +384,7 @@
       <div class="row field"><span class="grow">{label}</span>
         <input list="model-opts" style="width:230px" value={s[k] || "auto"} onchange={(e) => save(k, e.target.value.trim() || "auto")} />
         <select value={s[ek] || "auto"} onchange={(e) => save(ek, e.target.value)}>
-          <option value="auto">effort: auto</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option>
+          <option value="auto">effort: auto</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">Extra (xhigh)</option>
         </select></div>
     {/each}
   </div>
@@ -531,4 +542,7 @@
   .kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 14px; }
   .kv span { color: var(--text-2); }
   input[type="time"] { padding: 4px 8px; }
+  .adv { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 10px; }
+  .adv > summary { cursor: pointer; color: var(--text-2); font-size: 13px; padding: 4px 0; }
+  .adv[open] > summary { margin-bottom: 8px; color: var(--text); }
 </style>

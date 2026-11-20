@@ -82,7 +82,8 @@ pub fn push(app: &AppHandle, text: String) {
     let (Some(token), Some(chat)) = (setting(app, "telegram_token"), setting(app, "telegram_chat")) else { return };
     let Ok(chat) = chat.parse::<i64>() else { return };
     tauri::async_runtime::spawn(async move {
-        let _ = Tg { http: reqwest::Client::new(), token }.send(chat, &text, None).await;
+        let http = reqwest::Client::builder().timeout(std::time::Duration::from_secs(30)).build().unwrap_or_default();
+        let _ = Tg { http, token }.send(chat, &text, None).await;
     });
 }
 

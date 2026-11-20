@@ -34,7 +34,7 @@ impl IdeaAi {
     }
 
     pub fn effort_forced(&self) -> Option<&str> {
-        ["low", "medium", "high", "xhigh"].into_iter().find(|e| *e == self.effort)
+        ["low", "medium", "high", "xhigh", "max"].into_iter().find(|e| *e == self.effort)
     }
 }
 

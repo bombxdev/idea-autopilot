@@ -5,7 +5,7 @@
   // own name, on/off switch, model + effort (auto, or chosen from what that account can use) and quota. The bot uses
   // the first one switched on that its own quota allows.
   import { onMount } from "svelte";
-  import { api } from "../lib/api.js";
+  import { api, effortOption } from "../lib/api.js";
   import { toast, store } from "../lib/store.svelte.js";
   import { ask } from "../lib/dialog.svelte.js";
   import ModelPicker from "./ModelPicker.svelte";
@@ -29,6 +29,45 @@
   let keyEdit = $state({}); // account id -> new key typed
   let testing = $state({});
   let tested = $state({});
+  // One word on the state of an account (ISSUE-099): the chips "installed / key / logged in / tested" used to sit side
+  // by side and could contradict each other ("logged in" next to "test failed").
+  function status(a) {
+    if (!a.installed) return ["ต้องติดตั้งก่อน", "amber"];
+    if (waiting[a.id]) return ["กำลังรอล็อกอิน…", "amber"];
+    if (testing[a.id]) return ["กำลังทดสอบ…", ""];
+    if (a.problem) return ["เชื่อมต่อไม่ได้", "red"];
+    if (a.auth === "key" && !a.key_set) return ["ยังไม่มี key", "amber"];
+    if (a.last_test?.ok) return ["พร้อมใช้", "teal"];
+    if (a.auth !== "key" && a.logged_in === false) return ["ยังไม่ได้ล็อกอิน", "amber"];
+    if (a.last_test) return ["ทดสอบไม่ผ่าน", "red"];
+    return ["ยังไม่ได้ทดสอบ", ""];
+  }
+  // why it does not work and the one thing to do, from the app's own diagnosis of the error
+  const diagOf = (a) => a.problem ?? (tested[a.id] && !tested[a.id].ok ? tested[a.id].diag : null) ?? (a.last_test && !a.last_test.ok ? a.last_test.diag : null);
+  const FIX = { login: "ล็อกอินใหม่", key: "ใส่ key ใหม่", models: "เลือกโมเดลอื่น", install: "ติดตั้ง", retry: "ทดสอบอีกครั้ง" };
+  function fix(a, d) {
+    if (d.action === "login") login(a);
+    else if (d.action === "install") installCli(a.kind);
+    else if (d.action === "key" || d.action === "models") { if (!openCfg[a.id]) toggleCfg(a); }
+    else test(a);
+  }
+  // the sign-in happens in another window: watch for it and test by itself when it shows up
+  let waiting = $state({});
+  async function watchLogin(id) {
+    waiting = { ...waiting, [id]: true };
+    for (let i = 0; i < 200 && waiting[id]; i++) {
+      await new Promise((r) => setTimeout(r, 3000));
+      await load();
+      const a = data.accounts.find((x) => x.id === id);
+      if (!a) break;
+      if (a.logged_in === true) {
+        waiting = { ...waiting, [id]: false };
+        await test(a);
+        return;
+      }
+    }
+    waiting = { ...waiting, [id]: false };
+  }
   const EFFORTS = ["low", "medium", "high", "xhigh"];
 
   // a "check now" that just ended: read the model list again so the newly passed models show
@@ -85,6 +124,11 @@
       keyIn = "";
       baseIn = "";
       await load();
+      // the next step is done for the owner: install → sign in → test (ISSUE-099)
+      const a = data.accounts.find((x) => x.id === id);
+      if (a && !a.installed) installCli(a.kind);
+      else if (a && a.auth !== "key" && a.logged_in === false) login(a);
+      else if (a) test(a);
     } catch (e) {
       toast(String(e), "err");
     }
@@ -93,7 +137,10 @@
   async function login(a) {
     try {
       await api.accountLogin(a.id);
-      toast("เปิดหน้าต่างล็อกอินแล้ว — ทำให้เสร็จในเบราว์เซอร์ แล้วกลับมาที่นี่");
+      if (a.logged_in === false) {
+        toast("เปิดหน้าต่างล็อกอินแล้ว — ทำตามในหน้าต่างนั้นให้เสร็จ โปรแกรมจะทดสอบให้เอง");
+        watchLogin(a.id);
+      } else toast("เปิดหน้าต่างล็อกอินแล้ว — ทำตามในหน้าต่างนั้นให้เสร็จ แล้วกดทดสอบ");
     } catch (e) {
       toast(String(e), "err");
     }
@@ -114,8 +161,9 @@
     try {
       await api.accountSetKey(a.id, keyEdit[a.id] ?? "", a.vendor === "custom" ? a.base_url : null);
       keyEdit = { ...keyEdit, [a.id]: undefined };
-      toast("บันทึก key แล้ว (เก็บในโฟลเดอร์ของบัญชีนี้ ไม่แสดงกลับ)", "ok");
+      toast("บันทึก key แล้ว — กำลังทดสอบให้", "ok");
       await load();
+      test(a);
     } catch (e) {
       toast(String(e), "err");
     }
@@ -268,21 +316,23 @@
         {#if a.isolated && a.auth !== "key"}<span class="chip" title="login แยกในโฟลเดอร์ของบัญชีนี้">แยก login</span>{/if}
         {#if a.active}<span class="chip teal">กำลังใช้งาน</span>{/if}
         {#if store.state?.account_limits?.[a.id]}<span class="chip amber" title={store.state.account_limits[a.id].why}><Icon name="hourglass" /> ติดลิมิต · รอถึง {clock(store.state.account_limits[a.id].until)}</span>{/if}
-        {#if !a.installed}<span class="chip amber">ยังไม่ได้ติดตั้ง CLI</span>
-          <button class="small primary" disabled={installing} onclick={() => installCli(a.kind)} title="ติดตั้งโปรแกรมของค่ายนี้ให้ (จะแสดงคำสั่งให้ยืนยันก่อน)">{#if !(installing && inst.kind === a.kind)}<Icon name="download" /> {/if}{installing && inst.kind === a.kind ? "กำลังติดตั้ง…" : "ติดตั้ง CLI"}</button>
-        {:else if a.auth === "key"}
-          {#if a.key_set}<span class="chip teal">มี key แล้ว</span>{:else}<span class="chip amber">ยังไม่มี key</span>{/if}
-        {:else if a.logged_in === false}<span class="chip amber">ยังไม่ได้ล็อกอิน</span>
-        {:else if a.logged_in}<span class="chip teal">ล็อกอินแล้ว</span>{/if}
-        {#if a.last_test}<span class="chip {a.last_test.ok ? 'teal' : 'red'}" title={a.last_test.ok ? `โมเดล: ${a.last_test.model ?? ""}` : (a.last_test.error ?? "")}>{a.last_test.ok ? "✓ ทดสอบผ่าน" : "✗ ทดสอบไม่ผ่าน"} · {ago(a.last_test.ts)}</span>
-        {:else if a.installed}<span class="chip">ยังไม่เคยทดสอบ</span>{/if}
+        {#if true}{@const [word, tone] = status(a)}<span class="chip {tone}" title={a.last_test ? (a.last_test.ok ? "ทดสอบผ่านล่าสุด " + ago(a.last_test.ts) + " · โมเดล: " + (a.last_test.model ?? "") : "ทดสอบล่าสุด " + ago(a.last_test.ts)) : ""}>{word}</span>{/if}
+        {#if !a.installed}<button class="small primary" disabled={installing} onclick={() => installCli(a.kind)} title="ติดตั้งโปรแกรมของค่ายนี้ให้ (จะแสดงคำสั่งให้ยืนยันก่อน)">{#if !(installing && inst.kind === a.kind)}<Icon name="download" /> {/if}{installing && inst.kind === a.kind ? "กำลังติดตั้ง…" : "ติดตั้ง CLI"}</button>{/if}
         {#if !a.enabled}<span class="chip">ปิดชั่วคราว</span>{/if}
         <span class="grow"></span>
         {#if a.installed && a.auth !== "key"}<button class="small" onclick={() => login(a)} title="เปิดหน้าต่างล็อกอินของ {a.kind_label} (ทำต่อในเบราว์เซอร์) แล้วกด “ทดสอบ” เพื่อยืนยัน">{a.logged_in ? "ล็อกอินใหม่" : "ล็อกอิน"}</button>{/if}
         <button class="small" disabled={testing[a.id] || !a.installed} onclick={() => test(a)} title="ลองสั่งงานจริงสั้นๆ เพื่อตรวจว่าล็อกอิน/key และโมเดลใช้ได้">{testing[a.id] ? "กำลังทดสอบ…" : "ทดสอบ"}</button>
         <button class="small danger" onclick={() => remove(a)} title={a.isolated ? "ยกเลิกการเชื่อมต่อ + ลบ login / key ของบัญชีนี้" : "เอาออกจากโปรแกรม"}>{a.isolated ? "ยกเลิกการเชื่อมต่อ" : "เอาออก"}</button>
       </div>
-      {#if tested[a.id]}
+      {#if diagOf(a)}
+        {@const d = diagOf(a)}
+        <div class="fixbox">
+          <span class="fixico"><Icon name="warning" /></span>
+          <div class="grow"><b>{d.cause}</b><div class="small">{d.fix}</div></div>
+          <button class="small primary" disabled={testing[a.id]} onclick={() => fix(a, d)}>{FIX[d.action] ?? FIX.retry}</button>
+        </div>
+      {/if}
+      {#if tested[a.id] && (tested[a.id].ok || !tested[a.id].diag)}
         <div class="small" style="color:{tested[a.id].ok ? 'var(--teal)' : 'var(--red)'}">
           <Icon name={tested[a.id].ok ? "check" : "closeCircle"} /> {tested[a.id].ok ? `ใช้ได้ (${tested[a.id].seconds} วินาที · โมเดล ${tested[a.id].model ?? "?"})` : `ไม่สำเร็จ: ${tested[a.id].error ?? tested[a.id].status}`}
           {#each tested[a.id].lines ?? [] as l}<div class="faint"><IconText text={l} /></div>{/each}
@@ -397,7 +447,7 @@
             <label>Effort
               <select value={a.effort} disabled={!a.effort_supported} onchange={(e) => upd(a, { effort: e.currentTarget.value })}>
                 <option value="auto">auto (โปรแกรมเลือกให้)</option>
-                {#each effortsFor(a) as x}<option value={x}>{x}</option>{/each}
+                {#each effortsFor(a) as x}<option value={x}>{effortOption(x)}</option>{/each}
               </select></label>
             {#if !a.effort_supported}<span class="faint">AI ตัวนี้ปรับ effort ไม่ได้</span>
             {:else if manual(a) && models[a.id]?.models?.find((m) => m.id === a.model)?.efforts?.length}<span class="faint">ระดับที่โมเดลนี้รองรับ: {models[a.id].models.find((m) => m.id === a.model).efforts.join(", ")}</span>{/if}
@@ -497,4 +547,6 @@
   .chk { margin-top: 6px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; display: flex; flex-direction: column; gap: 3px; }
   .chk .row { gap: 8px; align-items: center; flex-wrap: wrap; }
   .chk .bar { width: 140px; }
+  .fixbox { display: flex; gap: 10px; align-items: center; background: var(--red-bg, rgba(220, 80, 80, 0.1)); border: 1px solid var(--red); border-radius: 10px; padding: 8px 12px; margin-top: 6px; }
+  .fixico { color: var(--red); }
 </style>

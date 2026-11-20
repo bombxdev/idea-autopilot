@@ -668,6 +668,15 @@ pub fn account_series(c: &Connection, since: i64) -> std::collections::BTreeMap<
     out
 }
 
+/// How many weekly-quota points an account gained since `since` (its own history; a drop = a weekly reset, skipped).
+/// For an account the owner does not use himself all of it is the bot's — its own "used today" (ISSUE-102).
+pub fn account_week_gain_since(c: &Connection, account: &str, since: i64) -> f64 {
+    let Ok(mut st) = c.prepare("SELECT week_pct FROM account_usage WHERE account=?1 AND ts>=?2 ORDER BY ts") else { return 0.0 };
+    let Ok(rows) = st.query_map(params![account, since], |r| r.get::<_, f64>(0)) else { return 0.0 };
+    let v: Vec<f64> = rows.flatten().collect();
+    v.windows(2).map(|w| (w[1] - w[0]).max(0.0)).sum()
+}
+
 /// Mark runs left "running" by a previous crash as interrupted.
 /// (started, ended) of every bot run that touched the time since `since` — for the self-metered budget.
 pub fn run_spans_since(c: &Connection, since: i64) -> Result<Vec<(i64, Option<i64>)>> {
@@ -795,6 +804,32 @@ mod board_tests {
         assert!(i.fixing && i.pinned);
         set_fixing(&c, id, false).unwrap();
         assert!(!get_idea(&c, id).unwrap().fixing);
+        drop(c);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod account_usage_tests {
+    use super::*;
+
+    #[test]
+    fn each_account_counts_only_its_own_use_and_a_reset_is_not_negative() {
+        let dir = std::env::temp_dir().join(format!("ia_acct_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let c = open(&dir.join("t.db")).unwrap();
+        let row = |ts: i64, a: &str, w: f64| c.execute("INSERT INTO account_usage(ts,account,five_pct,week_pct,source) VALUES(?1,?2,0,?3,'')", params![ts, a, w]).unwrap();
+        row(100, "codex", 1.0);
+        row(200, "codex", 2.0);
+        row(300, "claude", 40.0);
+        row(400, "claude", 70.0);
+        // ISSUE-102: Codex at 2 % must not be judged on Claude's 30 points
+        assert_eq!(account_week_gain_since(&c, "codex", 0), 1.0);
+        assert_eq!(account_week_gain_since(&c, "claude", 0), 30.0);
+        row(500, "codex", 0.5); // weekly reset
+        row(600, "codex", 1.5);
+        assert_eq!(account_week_gain_since(&c, "codex", 0), 2.0);
+        assert_eq!(account_week_gain_since(&c, "codex", 450), 1.0);
         drop(c);
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -117,10 +117,48 @@ const daily = Array.from({ length: 14 }, (_, i) => {
   return { date: d.toISOString().slice(0, 10), user: wd === 0 ? 0.5 : 4 + ((i * 7) % 5), bot: 6 + ((i * 3) % 6) };
 });
 
+// sample runs for the usage report: a few agents and models over the last ~70 days (codex/claude report tokens, mistral does not)
+const usageSample = (() => {
+  const models = [
+    ["claude", "", "claude-sonnet-5-5", 0.09], ["claude", "", "claude-opus-5-5", 0.25], ["claude", "", "claude-haiku-5-5", 0.02],
+    ["codex", "Codex_main", "gpt-6.1-sol", 0], ["mistral", "Mistral_team", "devstral-medium-latest", 0],
+  ];
+  const ideaNames = [[3, "เกมการ์ดเล่นสั้นบนเว็บ", "personal"], [7, "แดชบอร์ด 5S", "work"], [9, "ร้านก๋วยเตี๋ยวเรือ", "personal"], [13, "Thai LLM self-hosting", "personal"]];
+  const stages = ["research", "build", "verify", "clarify", "verdict"];
+  let seed = 7;
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const out = [];
+  const t0 = Math.floor(Date.now() / 1000) - 70 * 86400;
+  for (let i = 0; i < 260; i++) {
+    const [provider, account, model, price] = models[Math.floor(rnd() * rnd() * models.length * 1.6) % models.length];
+    const [idea_id, idea, scope] = ideaNames[Math.floor(rnd() * ideaNames.length)];
+    const quiet = provider === "mistral";
+    const cr = quiet ? 0 : Math.floor(2e5 + rnd() * 2e6), out_ = quiet ? 0 : Math.floor(5e3 + rnd() * 3e4);
+    out.push({ id: i + 1, idea_id, idea, scope, stage: stages[Math.floor(rnd() * stages.length)], status: rnd() < 0.82 ? "ok" : "error",
+      started: t0 + Math.floor(i * (70 * 86400 / 260) + rnd() * 3600), secs: Math.floor(120 + rnd() * 1500),
+      input: quiet ? 0 : Math.floor(rnd() * 900), output: out_, cache_read: cr, cache_write: quiet ? 0 : Math.floor(cr * 0.07),
+      cost: +(price * (cr / 1e6) * 3).toFixed(3), turns: 8, model, tier: "standard", provider, account, effort: "medium", source: "bot", msgs: 0 });
+  }
+  for (let i = 0; i < 40; i++) {
+    const [idea_id, idea, scope] = ideaNames[i % ideaNames.length];
+    const codex = i % 4 === 0, cr = Math.floor(5e5 + rnd() * 4e6);
+    out.push({ id: -i - 1, idea_id, idea, scope, stage: "chat", status: "ok", started: t0 + Math.floor((i + 0.5) * (70 * 86400 / 40)), secs: Math.floor(300 + rnd() * 2400),
+      input: Math.floor(rnd() * 400), output: Math.floor(4e3 + rnd() * 2e4), cache_read: cr, cache_write: codex ? 0 : Math.floor(cr * 0.05), cost: 0, turns: 12,
+      model: codex ? "gpt-6.1-sol" : "claude-opus-5-5", tier: "", provider: codex ? "codex" : "claude", account: codex ? "Codex_main" : "", effort: "", source: "chat", msgs: Math.floor(4 + rnd() * 30) });
+  }
+  out.sort((a, b) => a.started - b.started);
+  return out;
+})();
+
 const handlers = {
+  usage_runs: ({ from, to }) => ({ runs: usageSample.filter((r) => r.started >= from && r.started < to), first: usageSample[0].started }),
+  save_export: ({ name }) => `C:/IdeaAutopilot/data/exports/${name}`,
   // open the preview with ?fresh to see the first-run setup screen
-  get_state: () => ({ ...state, onboarded: !/fresh/.test(location.search) }),
-  get_providers: () => state.providers,
+  get_state: () => ({ ...state, onboarded: !/fresh/.test(location.search), account_problems: location.search.includes("connfail") ? [{ id: "claude02", title: "Claude บ้าน", kind: "auth", cause: "การล็อกอินของบัญชีนี้หลุดหรือหมดอายุ", action: "login" }] : [] }),
+  // ?noai: nothing installed (first-run setup without an AI, ISSUE-105)
+  get_providers: () => /noai/.test(location.search)
+    ? { ...state.providers, active: "none", active_label: "ยังไม่มี AI", claude: false, list: state.providers.list.map((p) => ({ ...p, installed: false, active: false })) }
+    : state.providers,
   get_about: () => ({ version: "0.2.0", seen: "0.2.0", changelog: "# ประวัติเวอร์ชัน\n\n## v0.2.0 — 2026-10-30\n\n**ใหม่**\n- ตัวอย่าง\n\n## v0.1.0 — 2026-10-09\n\nรุ่นแรก\n" }),
   skills_list: () => ({
     max_offered: 8,
@@ -157,6 +195,7 @@ const handlers = {
   cli_install_status: () => ({ kind: "gemini", state: "error", lines: ["$ npm install -g @google/gemini-cli", "npm error code ENOTFOUND"], message: "ติดตั้งไม่สำเร็จ — ดูข้อความด้านล่าง หรือรันคำสั่งเองใน terminal" }),
   accounts_list: () => ({
     accounts: [
+      ...(location.search.includes("connfail") ? [{ id: "claude02", kind: "claude", kind_label: "Claude Code", label: "Claude บ้าน", enabled: true, vendor: "anthropic", vendor_label: "Anthropic — Claude", auth: "login", key_set: false, base_url: "", needs_model: false, isolated: true, model: "auto", effort: "auto", installed: true, logged_in: true, real_quota: true, effort_supported: true, allowed: false, reason: "เชื่อมต่อไม่ได้", last_test: { ok: false, ts: Math.floor(Date.now() / 1000) - 600, error: "exit Some(1): Please run /login" }, problem: { kind: "auth", cause: "การล็อกอินของบัญชีนี้หลุดหรือหมดอายุ", fix: "กด “ล็อกอินใหม่” แล้วทำตามในหน้าต่างที่เปิดขึ้น", action: "login", until: Math.floor(Date.now() / 1000) + 3600 } }] : []),
       { id: "claude01", kind: "claude", kind_label: "Claude Code", label: "", enabled: true, vendor: "anthropic", vendor_label: "Anthropic — Claude", auth: "login", key_set: false, base_url: "", needs_model: false, isolated: false, model: "auto", effort: "auto", installed: true, logged_in: true, real_quota: true, quota: { five: 22, week: 58, source: "api" }, active: true, effort_supported: true, last_test: { ok: true, ts: 1793860000, model: "haiku" } },
       { id: "codex01", kind: "codex", kind_label: "Codex CLI", label: "Codex งาน", enabled: true, vendor: "openai", vendor_label: "OpenAI — Codex (GPT)", auth: "login", key_set: false, base_url: "", needs_model: false, isolated: false, model: "auto", effort: "auto", installed: true, logged_in: true, real_quota: true, quota: { five: 16, week: 42, source: "codex" }, effort_supported: true, last_test: { ok: false, ts: 1793860300, error: "Free usage limit reached" } },
       { id: "gemini01", kind: "gemini", kind_label: "Gemini CLI", label: "", enabled: true, vendor: "google", vendor_label: "Google — Gemini", auth: "login", key_set: false, base_url: "", needs_model: false, isolated: false, model: "auto", effort: "auto", installed: false, logged_in: null, real_quota: false, effort_supported: false , limit: { kind: "daily", text: "ล็อกอิน Google: ฟรีราว 1,000 คำขอ/วัน (60 คำขอ/นาที) ไม่มีรอบ 5 ชม./สัปดาห์ — เริ่มนับใหม่เที่ยงคืนเวลาแปซิฟิก", reset: Math.floor(Date.now() / 1000) + 9000 } },
@@ -174,7 +213,9 @@ const handlers = {
       { id: "mistral", label: "Mistral Vibe", installed: false, install: "uv tool install mistral-vibe" },
     ],
   }),
-  account_models: ({ id }) => ({ source: id === "codex01" ? "account" : "known", runner: "x", efforts: ["low", "medium", "high", "xhigh"], models: id === "codex01" ? [{ id: "gpt-6.1-sol", label: "gpt-6.1-sol", efforts: ["low", "medium", "high", "xhigh"] }, { id: "gpt-6-luna", label: "gpt-6-luna", efforts: ["low", "medium"] }] : [{ id: "deepseek-chat", label: "deepseek-chat", efforts: [] }, { id: "openrouter/meta-llama/llama-3.3-70b-instruct:free", label: "openrouter/meta-llama/llama-3.3-70b-instruct:free", efforts: [], free: true }, { id: "openrouter/anthropic/claude-sonnet-4", label: "openrouter/anthropic/claude-sonnet-4", efforts: [] }], hidden: id === "codex01" ? [] : [{ id: "openrouter/nvidia/nemotron-3-nano:free", state: "chat", note: "ไม่ได้เขียน STATUS.json", free: true }, { id: "openrouter/new/model-x", state: "pending", note: "" }], hidden_counts: { chat: 1, pending: 1, unknown: 0 }, checking: false }),
+  account_models: ({ id }) => id === "claude01" ? ({ source: "known", runner: "claude", efforts: ["low", "medium", "high", "xhigh", "max"], hidden: [], hidden_counts: {}, checking: false,
+    models: [["claude-opus-5-5", "Opus 5.5", "main", ""], ["claude-sonnet-5-5", "Sonnet 5.5", "main", "ค่าเริ่มต้นของ Claude Code"], ["claude-fable-5-2", "Fable 5.2", "main", ""], ["claude-haiku-5-5", "Haiku 5.5", "main", ""], ["claude-fable-5-1", "Fable 5.1", "more", ""], ["claude-opus-4-8", "Opus 4.8", "more", ""]]
+      .map(([id, label, group, note]) => ({ id, label, group, note, efforts: ["low", "medium", "high", "xhigh", "max"] })) }) : ({ source: id === "codex01" ? "account" : "known", runner: "x", efforts: ["low", "medium", "high", "xhigh"], models: id === "codex01" ? [{ id: "gpt-6.1-sol", label: "gpt-6.1-sol", efforts: ["low", "medium", "high", "xhigh"] }, { id: "gpt-6-luna", label: "gpt-6-luna", efforts: ["low", "medium"] }] : [{ id: "deepseek-chat", label: "deepseek-chat", efforts: [] }, { id: "openrouter/meta-llama/llama-3.3-70b-instruct:free", label: "openrouter/meta-llama/llama-3.3-70b-instruct:free", efforts: [], free: true }, { id: "openrouter/anthropic/claude-sonnet-4", label: "openrouter/anthropic/claude-sonnet-4", efforts: [] }], hidden: id === "codex01" ? [] : [{ id: "openrouter/nvidia/nemotron-3-nano:free", state: "chat", note: "ไม่ได้เขียน STATUS.json", free: true }, { id: "openrouter/new/model-x", state: "pending", note: "" }], hidden_counts: { chat: 1, pending: 1, unknown: 0 }, checking: false }),
   accounts_series: () => {
     const n = Math.floor(Date.now() / 1000); const mk = (f, w) => Array.from({ length: 30 }, (_, i) => [n - (30 - i) * 4 * 3600, Math.min(100, f + ((i * 7) % 30)), Math.min(100, w + i)]);
     return { claude01: mk(10, 30), codex01: mk(5, 20), deepseek01: mk(1, 2) };
@@ -212,7 +253,7 @@ const handlers = {
     model_default: "auto", autostart: "1", reserve_per_hour: null, root: "C:/IdeaAutopilot", language: "th", meter: "auto", provider: "auto",
     schedule: { start: 9, lunch_start: 12, lunch_end: 13, end: 18, half_end: 12, days: { mon: "full", tue: "full", wed: "full", thu: "full", fri: "full", sat: "off", sun: "off" } },
   }),
-  get_policy: () => ({ stages: {}, versions: {}, learned_at: 0 }),
+  get_policy: () => ({ agents: {}, learned_at: 0 }),
   sync_status: () => ({ machine: "demo-pc", mode: "standalone", brain_dir: "C:/IdeaAutopilot/brain", brain_personal_dir: "C:/IdeaAutopilot/brain/personal", brain_work_dir: "C:/IdeaAutopilot/brain/work", brain_work_keywords: [], brain_exported: 0 }),
   list_days: () => [],
   library: () => ideas.filter((i) => i.status !== "inbox").map((i) => ({ ...i, snippet: null })),

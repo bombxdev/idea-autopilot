@@ -21,6 +21,7 @@ import android.widget.FrameLayout;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -41,6 +42,15 @@ public class MainActivity extends Activity {
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);
         s.setAllowFileAccess(true);
+        // The phone's font-size setting: WebView would enlarge ordinary text by it but not a textarea's own text, so
+        // the input box's drawn text ran ahead of its caret (ISSUE-104). Keep WebView's own text zoom off and let the
+        // page zoom everything by the same factor instead (index.html reads it from IAApp.fontScale()).
+        final float fontScale = getResources().getConfiguration().fontScale;
+        s.setTextZoom(100);
+        web.addJavascriptInterface(new Object() {
+            @JavascriptInterface
+            public float fontScale() { return fontScale; }
+        }, "IAApp");
         web.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest req) {

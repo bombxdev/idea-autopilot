@@ -403,6 +403,21 @@ pub fn get_reports(st: State<AppState>, days: i64) -> R<Value> {
 }
 
 #[tauri::command]
+pub fn usage_runs(st: State<AppState>, from: i64, to: i64) -> R<Value> {
+    reports::usage_runs(&st, from, to).map_err(e)
+}
+
+/// Save a rendered report (PNG / PDF) and show it in its folder.
+#[tauri::command]
+pub fn save_export(app: AppHandle, st: State<AppState>, name: String, data: String) -> R<String> {
+    let p = reports::save_export(&st, &name, &data).map_err(e)?;
+    if let Some(d) = p.parent() {
+        open_path(&app, d);
+    }
+    Ok(p.to_string_lossy().into())
+}
+
+#[tauri::command]
 pub fn export_csv(app: AppHandle, st: State<AppState>) -> R<String> {
     let dir = reports::export_csv(&st).map_err(e)?;
     open_path(&app, &dir);
@@ -470,7 +485,7 @@ pub fn set_day(st: State<AppState>, date: String, kind: Option<String>, note: Op
 }
 
 const SETTING_KEYS: &[&str] = &[
-    "model_default", "model_build", "model_verify", "reserve_per_hour", "autostart", "extra_inbox", "schedule",
+    "reviewed", "account_switch", "model_default", "model_build", "model_verify", "reserve_per_hour", "autostart", "extra_inbox", "schedule",
     "sync_dir", "brain_dir", "brain_personal", "brain_work", "brain_work_keywords", "scope_default", "telegram_token", "telegram_chat", "telegram_questions",
     // which AI works, how its quota is measured, report language, first-run flag
     "provider", "tier_models", "custom_cmd", "meter", "budget_hours_week", "budget_hours_5h", "budget_reset_day",
@@ -827,6 +842,8 @@ pub async fn test_provider(app: AppHandle, provider: Option<String>) -> R<Value>
     .await
     .map_err(|x| format!("{x:#}"))?;
     let seen: Vec<String> = lines.lock().iter().rev().take(6).rev().cloned().collect();
+    // the cause and what to do, instead of only the raw error (ISSUE-101)
+    let diag = if out.status == "ok" { None } else { crate::connect::diagnose(&format!("{} {}", out.error.clone().unwrap_or_default(), seen.join(" ")), false) };
     Ok(json!({
         "ok": out.status == "ok",
         "status": out.status,
@@ -834,6 +851,7 @@ pub async fn test_provider(app: AppHandle, provider: Option<String>) -> R<Value>
         "error": out.error,
         "lines": seen,
         "provider": prov,
+        "diag": diag.as_ref().map(crate::connect::json_of),
     }))
 }
 
@@ -912,7 +930,13 @@ pub fn show_main(app: AppHandle, idea: Option<i64>) {
 /// Per-model results from the bot's own history: success rate, cost per good run, turns, time.
 #[tauri::command]
 pub fn model_economics(st: State<AppState>) -> Value {
-    crate::economics::report(&st.db.lock())
+    let (mut rows, extras) = {
+        let c = st.db.lock();
+        (crate::economics::rows(&c), crate::economics::extras(&c))
+    };
+    // reading the agents' logs happens without the db lock
+    crate::economics::fill(&mut rows, &st.root, &st.ws);
+    crate::economics::report(&rows, extras)
 }
 
 /// Mark / unmark an idea for full-power mode.
@@ -1004,6 +1028,34 @@ pub fn attach_delete(st: State<AppState>, id: i64, name: String) -> R<()> {
 
 // ---------- AI accounts ----------
 
+/// Why the bot must not use this account now, in the owner's words: it is held for a connection problem, has no key,
+/// or is not signed in. None = fine. A test that passed last time outweighs the file check of the sign-in (ISSUE-099).
+pub fn not_connected(st: &AppState, a: &crate::accounts::Account, now: i64) -> Option<String> {
+    if let Some(p) = crate::connect::parked(&st.db.lock(), &a.id, now) {
+        return Some(format!("เชื่อมต่อไม่ได้: {} — {}", p["cause"].as_str().unwrap_or(""), p["fix"].as_str().unwrap_or("")));
+    }
+    if a.uses_key() {
+        return (!crate::accounts::has_secret(&st.root, &a.id)).then(|| "ยังไม่ได้ใส่ key — ใส่ key ในหน้าตั้งค่า".to_string());
+    }
+    if login_state(a) == Some(false) {
+        let tests: Value = db::get_setting(&st.db.lock(), "acct_tests").and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_else(|| json!({}));
+        if tests[&a.id]["ok"].as_bool() != Some(true) {
+            return Some("ยังไม่ได้ล็อกอิน — กดปุ่มล็อกอินในหน้าตั้งค่า".to_string());
+        }
+    }
+    None
+}
+
+/// Forget what was remembered about an account's health (last test, limit, connection hold).
+fn forget_health(c: &rusqlite::Connection, id: &str) {
+    let mut all: Value = db::get_setting(c, "acct_tests").and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_else(|| json!({}));
+    if all.as_object_mut().is_some_and(|m| m.remove(id).is_some()) {
+        let _ = db::set_setting(c, "acct_tests", &all.to_string());
+    }
+    crate::limits::clear(c, id);
+    crate::connect::unpark(c, id);
+}
+
 fn login_state(a: &crate::accounts::Account) -> Option<bool> {
     let home = dirs::home_dir().unwrap_or_default();
     let dir = |own: &str, default: std::path::PathBuf| if a.home.is_empty() { default } else { std::path::Path::new(&a.home).join(own) };
@@ -1038,6 +1090,7 @@ pub fn accounts_list(st: State<AppState>) -> Value {
     let budget = crate::usage::BudgetCfg::load(&st.db.lock());
     // how far a "check now" of each account got (read before the runtime lock: it takes it too)
     let checks: std::collections::HashMap<String, Value> = list.iter().filter_map(|a| crate::model_check::progress_json(&st, &a.id).map(|v| (a.id.clone(), v))).collect();
+    let problems: std::collections::HashMap<String, Value> = list.iter().filter_map(|a| crate::connect::parked(&st.db.lock(), &a.id, db::now()).map(|v| (a.id.clone(), v))).collect();
     let rt = st.rt.lock();
     let active = rt.account.as_ref().map(|a| a.id.clone());
     let items: Vec<Value> = list
@@ -1060,6 +1113,8 @@ pub fn accounts_list(st: State<AppState>) -> Value {
                 "active": active.as_deref() == Some(a.id.as_str()),
                 "effort_supported": crate::providers::def(&a.kind).map(|d| d.effort).unwrap_or(false),
                 "last_test": tests.get(&a.id),
+                // why it cannot connect now ({kind, cause, fix, action, until}) — the screen shows the cause and one button
+                "problem": problems.get(&a.id),
                 // the app's own meter (bot hours on this account against these budgets) when the provider has no readable quota
                 "budget": { "five_h": budget.hours_5h, "week_h": budget.hours_week },
                 // the limit this provider really has (5-hour/weekly windows, a free daily count, or pay per use) and its balance
@@ -1145,7 +1200,10 @@ pub fn account_set_key(st: State<AppState>, id: String, key: String, base_url: O
     if let Some(b) = base_url {
         a.base_url = b.trim().to_string();
     }
+    // taking the key away switched the account off: a new key switches it back on, and what was known about the old key is forgotten
+    a.enabled = true;
     crate::accounts::save(&c, &list)?;
+    forget_health(&c, &id);
     drop(c);
     st.wake.notify_one();
     Ok(())
@@ -1209,6 +1267,12 @@ pub async fn account_models(app: AppHandle, id: String) -> R<Value> {
     let mut source = "known";
     let mut problem: Option<String> = None;
     match a.kind.as_str() {
+        // Claude Code: the same models, names and order as its own picker (ISSUE-097)
+        "claude" if !crate::omniroute::is(&a) => {
+            for (id, label, group, note) in crate::catalog::CLAUDE_MODELS {
+                models.push(json!({ "id": id, "label": label, "group": group, "note": note, "efforts": crate::catalog::CLAUDE_EFFORTS }));
+            }
+        }
         "codex" => {
             let mut ms = crate::providers::codex_models_in(&a.home);
             // none yet (a fresh login never ran Codex) or a day old: ask Codex itself (ISSUE-069)
@@ -1280,15 +1344,24 @@ pub async fn account_models(app: AppHandle, id: String) -> R<Value> {
     // what really ran on this account before is usable on it — unless the agent itself just gave its full list (a name
     // recorded before, e.g. a Mistral API name Vibe never used, would only mislead)
     let listed_by_agent = source == "account" && (a.kind == "mistral" || a.kind == "opencode" || crate::omniroute::is(&a));
+    let claude = a.kind == "claude" && !crate::omniroute::is(&a);
     for m in seen.into_iter().filter(|_| !listed_by_agent) {
+        // Claude: a run recorded as "claude-opus-5-5[1m]" or "claude-opus-5-5-20260101" is a model already listed, and
+        // the bare aliases (opus / sonnet / haiku) are not what Claude Code shows
+        let base = m.split('[').next().unwrap_or(&m).to_string();
+        if claude && (["opus", "sonnet", "haiku", "fable"].contains(&base.as_str()) || models.iter().any(|x| x["id"].as_str().is_some_and(|id| base.starts_with(id)))) {
+            continue;
+        }
         if !models.iter().any(|x| x["id"] == m) {
             if source == "known" {
                 source = "history";
             }
-            models.push(json!({ "id": m, "label": m, "efforts": if crate::providers::def(&a.kind).is_some_and(|d| d.effort) { ladder.to_vec() } else { vec![] } }));
+            let label = if claude { crate::modelname::label("claude", Some(&m), "") } else { m.clone() };
+            let efforts: Vec<&str> = if claude { crate::catalog::CLAUDE_EFFORTS.to_vec() } else if crate::providers::def(&a.kind).is_some_and(|d| d.effort) { ladder.to_vec() } else { vec![] };
+            models.push(json!({ "id": m, "label": label, "group": "more", "efforts": efforts }));
         }
     }
-    let efforts: Vec<&str> = if crate::providers::def(&a.kind).is_some_and(|d| d.effort) { ladder.to_vec() } else { vec![] };
+    let efforts: Vec<&str> = if claude { crate::catalog::CLAUDE_EFFORTS.to_vec() } else if crate::providers::def(&a.kind).is_some_and(|d| d.effort) { ladder.to_vec() } else { vec![] };
     // only models that passed the bot-work check are offered; the others are listed apart, with why (model_check.rs)
     let checks = crate::model_check::all(&st.db.lock());
     let now = db::now();
@@ -1403,12 +1476,24 @@ pub async fn account_test(app: AppHandle, id: String) -> R<Value> {
         }
     }
     let used = if model_used.is_empty() { "ค่าเริ่มต้นของโปรแกรม".to_string() } else { model_used };
-    let res = json!({ "ok": ok, "status": out.status, "seconds": started.elapsed().as_secs(), "error": out.error, "lines": seen, "model": used, "ts": db::now() });
+    // the raw error becomes a cause and one thing to do; a working account is released at once (ISSUE-099)
+    let diag = if ok { None } else { crate::connect::diagnose(&format!("{} {}", out.error.clone().unwrap_or_default(), seen.join(" ")), a.uses_key()) };
+    {
+        let c = st.db.lock();
+        match &diag {
+            None if ok => crate::connect::unpark(&c, &a.id),
+            Some(d) if d.kind != "model" => crate::connect::park(&c, &a.id, d, db::now() + crate::connect::hold_secs(d.kind)),
+            _ => {}
+        }
+    }
+    st.wake.notify_one();
+    let diag = diag.as_ref().map(crate::connect::json_of);
+    let res = json!({ "ok": ok, "status": out.status, "seconds": started.elapsed().as_secs(), "error": out.error, "lines": seen, "model": used, "ts": db::now(), "diag": diag });
     // kept, so the account list shows whether each account worked the last time it was tried
     {
         let c = st.db.lock();
         let mut all: Value = db::get_setting(&c, "acct_tests").and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_else(|| json!({}));
-        all[&id] = json!({ "ok": ok, "ts": db::now(), "model": res["model"], "error": out.error });
+        all[&id] = json!({ "ok": ok, "ts": db::now(), "model": res["model"], "error": out.error, "diag": res["diag"] });
         let _ = db::set_setting(&c, "acct_tests", &all.to_string());
     }
     Ok(res)
@@ -1470,6 +1555,8 @@ pub fn account_remove(st: State<AppState>, id: String) -> R<()> {
         let _ = std::fs::remove_dir_all(&own);
     }
     crate::accounts::save(&c, &list)?;
+    // a later account that gets the same name must not inherit this one's test result, limit or hold
+    forget_health(&c, &id);
     drop(c);
     {
         let mut rt = st.rt.lock();
@@ -1486,6 +1573,8 @@ pub fn account_remove(st: State<AppState>, id: String) -> R<()> {
 pub fn account_login(st: State<AppState>, id: String) -> R<()> {
     let a = crate::accounts::find(&st.db.lock(), &id).ok_or("ไม่พบบัญชี")?;
     let bin = crate::providers::resolve_bin(crate::providers::def(&a.kind).map(|d| d.bin).unwrap_or(&a.kind)).ok_or("ยังไม่ได้ติดตั้ง AI ตัวนี้ในเครื่อง")?;
+    // the owner is signing in again: stop holding the account, the next run shows whether it worked
+    crate::connect::unpark(&st.db.lock(), &id);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

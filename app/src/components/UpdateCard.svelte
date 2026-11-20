@@ -35,7 +35,7 @@
     await api.setSetting("auto_update", on ? "1" : "0");
     u = { ...u, auto: on };
   }
-  const MODE = { installer: "ติดตั้งด้วยตัวติดตั้ง", scoop: "ติดตั้งด้วย Scoop", portable: "แบบพกพา", dev: "รุ่นสำหรับพัฒนา" };
+  const MODE = { installer: "ติดตั้งด้วยตัวติดตั้ง", scoop: "ติดตั้งด้วย Scoop", portable: "แบบพกพา", devbin: "โฟลเดอร์โปรเจกต์ (bin)", dev: "รุ่นสำหรับพัฒนา" };
   const when = (ts) => (ts ? new Date(ts * 1000).toLocaleString() : "—");
 </script>
 
@@ -56,7 +56,7 @@
       {#if u.notes}<pre class="notes">{u.notes}</pre>{/if}
       {#if u.mode === "scoop"}<div class="small faint">เครื่องนี้ติดตั้งด้วย Scoop — อัปเดตด้วยคำสั่ง <code>scoop update idea-autopilot</code></div>
       {:else if u.mode === "dev"}<div class="small faint">เครื่องนี้เป็น{MODE[u.mode]} — อัปเดตด้วยการ build ใหม่ (deploy) ไม่ใช่จาก Releases</div>
-      {:else if u.mode === "portable" && u.available && !u.can_apply && !u.no_digest}<div class="small faint">รุ่นนี้ไม่มีไฟล์แบบพกพา (.zip) ให้อัปเดตอัตโนมัติ — โหลดจากหน้า Releases แล้วแทนที่โฟลเดอร์ bin (ข้อมูลของคุณไม่หาย)</div>
+      {:else if (u.mode === "portable" || u.mode === "devbin") && u.available && !u.can_apply && !u.no_digest}<div class="small faint">รุ่นนี้ไม่มีไฟล์แบบพกพา (.zip) ให้อัปเดตอัตโนมัติ — โหลดจากหน้า Releases แล้วแทนที่โฟลเดอร์ bin (ข้อมูลของคุณไม่หาย)</div>
       {:else if u.no_digest}<div class="small faint">GitHub ไม่ได้ให้ค่า SHA-256 ของไฟล์ติดตั้งรุ่นนี้ จึงไม่อัปเดตให้อัตโนมัติ (ตรวจความถูกต้องไม่ได้) — โหลดจากหน้า Releases เอง</div>{/if}
     {/if}
     {#if !compact}

@@ -80,6 +80,79 @@ fn short(s: &str, n: usize) -> String {
     if s.chars().count() > n { format!("{t}…") } else { t }
 }
 
+/// After this long with no word from the agent and no file changed in the idea folder, the run is taken as hung:
+/// it is stopped and counted as a failed try, so the bot moves on instead of waiting for the stage's deadline
+/// (ISSUE-092). A file being written counts as alive — agents like Mistral Vibe print nothing until they finish.
+pub const STALL_SECS: u64 = 20 * 60;
+const WATCH_SKIP: &[&str] = &["node_modules", ".git", "target", ".venv", "venv", "__pycache__", ".next", ".cache", "logs", "dist", "build"];
+
+/// The most recently changed file under `dir` (not in build/dependency folders or the run's own logs), with its path
+/// relative to `dir`. Stops after 20 000 entries so a huge folder never makes this slow.
+pub fn newest_change(dir: &Path) -> Option<(std::time::SystemTime, String)> {
+    let mut best: Option<(std::time::SystemTime, std::path::PathBuf)> = None;
+    let mut stack = vec![dir.to_path_buf()];
+    let mut seen = 0usize;
+    while let Some(d) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        for e in rd.flatten() {
+            seen += 1;
+            if seen > 20_000 {
+                break;
+            }
+            let Ok(m) = e.metadata() else { continue };
+            if m.is_dir() {
+                let n = e.file_name().to_string_lossy().to_string();
+                if !WATCH_SKIP.contains(&n.as_str()) {
+                    stack.push(e.path());
+                }
+            } else if let Ok(t) = m.modified() {
+                if best.as_ref().is_none_or(|b| t > b.0) {
+                    best = Some((t, e.path()));
+                }
+            }
+        }
+    }
+    best.map(|(t, p)| (t, p.strip_prefix(dir).unwrap_or(&p).display().to_string().replace('\\', "/")))
+}
+
+/// Run a short command and give up after `secs` (ISSUE-092): a program waiting on a login prompt or a stalled network
+/// must never freeze the app. When time is up the whole process tree is killed and a TimedOut error comes back.
+pub fn output_within(c: &mut std::process::Command, secs: u64) -> std::io::Result<std::process::Output> {
+    use std::io::Read;
+    c.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = c.spawn()?;
+    let mut so = child.stdout.take();
+    let mut se = child.stderr.take();
+    let t1 = std::thread::spawn(move || {
+        let mut b = Vec::new();
+        if let Some(x) = so.as_mut() {
+            let _ = x.read_to_end(&mut b);
+        }
+        b
+    });
+    let t2 = std::thread::spawn(move || {
+        let mut b = Vec::new();
+        if let Some(x) = se.as_mut() {
+            let _ = x.read_to_end(&mut b);
+        }
+        b
+    });
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(secs);
+    let status = loop {
+        if let Some(st) = child.try_wait()? {
+            break st;
+        }
+        if std::time::Instant::now() >= end {
+            kill_tree(child.id());
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, format!("ไม่ตอบภายใน {secs} วินาที — หยุดคำสั่งแล้ว")));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
+    Ok(std::process::Output { status, stdout: t1.join().unwrap_or_default(), stderr: t2.join().unwrap_or_default() })
+}
+
 #[cfg(windows)]
 pub fn kill_tree(pid: u32) {
     let mut c = std::process::Command::new("taskkill");
@@ -213,6 +286,15 @@ pub async fn run(
     let deadline = tokio::time::sleep(std::time::Duration::from_secs(spec.timeout_mins * 60));
     tokio::pin!(deadline);
     let mut ended_by: Option<&str> = None;
+    // sign of life besides output: files changing in the idea folder (ISSUE-092)
+    let watch_dir = spec.cwd.to_path_buf();
+    let mut seen_change = {
+        let d = watch_dir.clone();
+        tokio::task::spawn_blocking(move || newest_change(&d).map(|x| x.0)).await.ok().flatten().unwrap_or(std::time::UNIX_EPOCH)
+    };
+    let mut alive = std::time::Instant::now();
+    let mut watch = tokio::time::interval(std::time::Duration::from_secs(20));
+    watch.tick().await;
     let mut stdout_open = true;
     let mut stderr_open = true;
     loop {
@@ -220,6 +302,7 @@ pub async fn run(
             line = lines.next_line(), if stdout_open => {
                 match line {
                     Ok(Some(l)) => {
+                        alive = std::time::Instant::now();
                         let _ = log.write_all(l.as_bytes()).await;
                         let _ = log.write_all(b"\n").await;
                         if codex_json {
@@ -283,6 +366,7 @@ pub async fn run(
             l = erx.recv(), if stderr_open => {
                 match l {
                     Some(l) => {
+                        alive = std::time::Instant::now();
                         let _ = log.write_all(format!("[stderr] {l}\n").as_bytes()).await;
                         if codex_json {
                             // with --json the story is on stdout; stderr is hook/skill noise: kept for error reports only
@@ -301,6 +385,21 @@ pub async fn run(
                     None => stderr_open = false,
                 }
             }
+            _ = watch.tick() => {
+                let d = watch_dir.clone();
+                if let Some((t, rel)) = tokio::task::spawn_blocking(move || newest_change(&d)).await.ok().flatten() {
+                    if t > seen_change {
+                        seen_change = t;
+                        alive = std::time::Instant::now();
+                        // agents that print nothing until the end: show what they are writing; others: a heartbeat
+                        on_line(if stream || codex_json { String::new() } else { format!("📝 แก้ไฟล์ {rel}") });
+                    }
+                }
+                if alive.elapsed().as_secs() >= STALL_SECS {
+                    ended_by = Some("stalled");
+                    break;
+                }
+            }
             _ = &mut deadline => { ended_by = Some("timeout"); break; }
             _ = cancel.notified() => { ended_by = Some("cancelled"); break; }
         }
@@ -313,7 +412,11 @@ pub async fn run(
         kill_tree(pid);
         let _ = child.kill().await;
         out.status = why.into();
-        on_line(if why == "timeout" { "⏱ หมดเวลาของขั้นนี้ — ทำต่อรอบหน้า".into() } else { "■ หยุดแล้ว".into() });
+        on_line(match why {
+            "timeout" => "⏱ หมดเวลาของขั้นนี้ — ทำต่อรอบหน้า".into(),
+            "stalled" => format!("⚠️ เงียบเกิน {} นาที — ไม่มีข้อความและไม่มีไฟล์เปลี่ยน ถือว่าค้าง หยุดแล้ว รอบหน้าจะลองใหม่ (ถ้าเป็นซ้ำ ลองเปลี่ยน AI ของไอเดียนี้)", STALL_SECS / 60),
+            _ => "■ หยุดแล้ว".into(),
+        });
     }
     let code = child.wait().await.ok().and_then(|s| s.code());
     let _ = err_task.await;
@@ -327,6 +430,14 @@ pub async fn run(
         if out.status == "ok" {
             on_line("✓ จบขั้น".into());
         }
+    }
+    if out.status == "stalled" {
+        out.status = "error".into();
+        out.error = Some(format!(
+            "ค้าง: เงียบเกิน {} นาที ไม่มีข้อความและไม่มีไฟล์เปลี่ยน — หยุดแล้ว รอบหน้าลองใหม่ ถ้าค้างซ้ำให้เปลี่ยน AI/โมเดลของไอเดียนี้ (stalled)",
+            STALL_SECS / 60
+        ));
+        return Ok(out);
     }
     let lower = format!("{result_text} {tail_text}").to_lowercase();
     if out.status == "error" {
@@ -344,6 +455,29 @@ pub async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_command_that_hangs_is_stopped_in_time() {
+        let mut c = if cfg!(windows) { let mut c = std::process::Command::new("ping"); c.args(["-n", "30", "127.0.0.1"]); c } else { let mut c = std::process::Command::new("sleep"); c.arg("30"); c };
+        let t = std::time::Instant::now();
+        let r = output_within(&mut c, 1);
+        assert!(r.is_err() && t.elapsed().as_secs() < 10, "gave up within the limit");
+        let mut ok = if cfg!(windows) { let mut c = std::process::Command::new("cmd"); c.args(["/C", "echo hi"]); c } else { let mut c = std::process::Command::new("echo"); c.arg("hi"); c };
+        assert!(String::from_utf8_lossy(&output_within(&mut ok, 10).unwrap().stdout).contains("hi"));
+    }
+
+    #[test]
+    fn the_newest_file_is_found_but_logs_and_dependencies_are_ignored() {
+        let d = tmp("newest");
+        std::fs::create_dir_all(d.join("prototype")).unwrap();
+        std::fs::create_dir_all(d.join("node_modules/x")).unwrap();
+        std::fs::create_dir_all(d.join("logs")).unwrap();
+        std::fs::write(d.join("prototype/index.html"), "a").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::fs::write(d.join("node_modules/x/a.js"), "b").unwrap();
+        std::fs::write(d.join("logs/run.log"), "c").unwrap();
+        assert_eq!(newest_change(&d).unwrap().1, "prototype/index.html");
+    }
 
     fn tmp(name: &str) -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!("ia-test-{name}-{}", std::process::id()));

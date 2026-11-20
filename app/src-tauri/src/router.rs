@@ -34,6 +34,9 @@ pub struct Choice {
     pub effort: String,
     pub tools: String,
     pub reason: String,
+    /// this run tries a cheaper tier to collect evidence: nothing else should change on it
+    #[serde(skip)]
+    pub probed: bool,
 }
 
 /// Full-power mode: strongest model, highest effort, whatever the thrift rules would say. Bookkeeping stays small.
@@ -44,10 +47,12 @@ pub fn choose_power(stage: &str, forced_model: Option<&str>) -> Choice {
         None => MODELS[if small { 0 } else { 2 }].to_string(),
     };
     let tools = if small { BASE_TOOLS.to_string() } else { format!("{BASE_TOOLS},{WEB_TOOLS}") };
-    Choice { model, effort: EFFORTS[if small { 0 } else { 3 }].to_string(), tools, reason: "โหมดเต็มที่ → โมเดลแรงสุด + effort สูงสุด".into() }
+    Choice { model, effort: EFFORTS[if small { 0 } else { 3 }].to_string(), tools, reason: "โหมดเต็มที่ → โมเดลแรงสุด + effort สูงสุด".into(), probed: false }
 }
 
 /// An idea that has already stumbled: the router moves it up a step, and cost tuning leaves it alone.
+/// The counters belong to the idea's current stage (a failure or a repeat keeps it on that stage, and moving on resets
+/// them); the scheduler also clears a failure that happened on another stage before asking.
 pub fn in_trouble(idea: &Idea, stage: &str) -> bool {
     idea.fail_count > 0 || (stage == "build" && idea.repeat_count >= 3) || (stage != "build" && idea.repeat_count >= 1)
 }
@@ -91,6 +96,7 @@ pub struct Learned {
 pub fn choose(stage: &str, idea: &Idea, d: &Decision, forced_model: Option<&str>, learned: Learned) -> Choice {
     let (mut m, mut e, why) = base(stage);
     let mut notes = vec![why.to_string()];
+    let mut probed = false;
     if learned.offset != 0 {
         m = (m as i32 + learned.offset).clamp(0, 2) as usize;
         notes.push(format!("สถิติจริงบอกว่า {} ทำได้ดีพอ", MODELS[m]));
@@ -104,8 +110,9 @@ pub fn choose(stage: &str, idea: &Idea, d: &Decision, forced_model: Option<&str>
         m = 2;
         notes.push("โควต้าเหลือจะหมดอายุ → ใช้ตัวเก่ง".into());
     } else {
-        if learned.probe && m > 0 {
+        if learned.probe && m > 0 && forced_model.map(str::trim).is_none_or(|f| f.is_empty() || f == "auto") {
             m -= 1;
+            probed = true;
             notes.push(format!("ทดลอง {} เก็บสถิติ", MODELS[m]));
         }
         if scarce(d) && stage != "replan" {
@@ -123,7 +130,7 @@ pub fn choose(stage: &str, idea: &Idea, d: &Decision, forced_model: Option<&str>
         None => MODELS[m].to_string(),
     };
     let tools = if stage == "replan" { BASE_TOOLS.to_string() } else { format!("{BASE_TOOLS},{WEB_TOOLS}") };
-    Choice { model, effort: EFFORTS[e].to_string(), tools, reason: notes.join(" · ") }
+    Choice { model, effort: EFFORTS[e].to_string(), tools, reason: notes.join(" · "), probed }
 }
 
 #[cfg(test)]
@@ -185,7 +192,10 @@ mod tests {
         let l = Learned { offset: -1, probe: false };
         assert_eq!(choose("verdict", &idea(), &normal(), None, l).model, "standard");
         let p = Learned { offset: 0, probe: true };
-        assert_eq!(choose("research", &idea(), &normal(), None, p).model, "fast");
+        let c = choose("research", &idea(), &normal(), None, p);
+        assert_eq!((c.model.as_str(), c.probed), ("fast", true));
+        // a forced model is not a probe, so the cost-aware pick may still apply around it
+        assert!(!choose("research", &idea(), &normal(), Some("strong"), p).probed);
         // never probe an idea that is already in trouble
         let mut i = idea();
         i.fail_count = 1;

@@ -39,7 +39,7 @@ struct Release {
 impl Release {
     /// (url, name, sha-256) of the file this kind of copy updates from
     fn asset_for(&self, mode: &str) -> (&str, &str, &str) {
-        if mode == "portable" {
+        if mode == "portable" || mode == "devbin" {
             (&self.zip_url, &self.zip_name, &self.zip_digest)
         } else {
             (&self.asset_url, &self.asset_name, &self.digest)
@@ -49,21 +49,26 @@ impl Release {
 
 /// Copies that update themselves from the release
 fn self_updating(mode: &str) -> bool {
-    mode == "installer" || mode == "portable"
+    mode == "installer" || mode == "portable" || mode == "devbin"
 }
 
 pub fn current() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
-/// installer | scoop | portable | dev
+/// installer | scoop | portable | devbin | dev
+/// devbin: the copy in the project folder's `bin\` (what deploy builds) — it updates from the portable zip like a
+/// portable copy, but no read-me files are copied next to `bin\`, where the project's own files are (ISSUE-091).
+/// dev: a build run from `target\`.
 fn install_mode() -> &'static str {
     let Ok(exe) = std::env::current_exe() else { return "portable" };
     let p = exe.display().to_string().to_lowercase().replace('/', "\\");
     if p.contains("\\scoop\\") {
         "scoop"
-    } else if p.contains("\\target\\") || p.contains("claude-control-usage") {
+    } else if p.contains("\\target\\") {
         "dev"
+    } else if p.contains("claude-control-usage") {
+        "devbin"
     } else if dirs::data_local_dir().map(|d| p.starts_with(&d.join("programs").display().to_string().to_lowercase())).unwrap_or(false) {
         "installer"
     } else {
@@ -171,7 +176,7 @@ pub async fn apply(app: &AppHandle) -> Result<(), String> {
     let (url, name, digest) = (url.to_string(), name.to_string(), digest.to_string());
     let prefix = format!("https://github.com/{REPO}/releases/download/");
     if !url.starts_with(&prefix) || !(name.ends_with("-Setup.exe") || name.ends_with("-portable.zip")) {
-        return Err(if mode == "portable" { "ไม่พบไฟล์แบบพกพา (.zip) ในรุ่นนี้" } else { "ไม่พบไฟล์ติดตั้งในรุ่นนี้" }.into());
+        return Err(if mode != "installer" { "ไม่พบไฟล์แบบพกพา (.zip) ในรุ่นนี้" } else { "ไม่พบไฟล์ติดตั้งในรุ่นนี้" }.into());
     }
     if digest.len() != 64 {
         return Err("GitHub ไม่ได้ให้ค่า SHA-256 ของไฟล์นี้ จึงตรวจความถูกต้องไม่ได้ — โหลดจากหน้า Releases เอง".into());
@@ -197,8 +202,8 @@ pub async fn apply(app: &AppHandle) -> Result<(), String> {
     std::fs::write(&file, &bytes).map_err(|e| e.to_string())?;
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let script = dir.join("apply-update.ps1");
-    let text = if mode == "portable" {
-        portable_script(std::process::id(), &file, &dir, &exe, &r.tag)
+    let text = if mode == "portable" || mode == "devbin" {
+        portable_script(std::process::id(), &file, &dir, &exe, &r.tag, mode == "portable")
     } else {
         let q = |p: &std::path::Path| p.display().to_string().replace('\'', "''");
         format!(
@@ -230,7 +235,7 @@ pub async fn apply(app: &AppHandle) -> Result<(), String> {
 /// The hidden script that swaps a portable copy's program files: unpack, check the new program is there, back up the
 /// files it replaces, copy the new ones over `bin\` (and the read-me files next to it), put the backup back if
 /// anything fails, then start the program. `data\` is never written.
-fn portable_script(pid: u32, zip: &std::path::Path, dir: &std::path::Path, exe: &std::path::Path, tag: &str) -> String {
+fn portable_script(pid: u32, zip: &std::path::Path, dir: &std::path::Path, exe: &std::path::Path, tag: &str, docs: bool) -> String {
     let q = |p: &std::path::Path| p.display().to_string().replace('\'', "''");
     let bin = exe.parent().unwrap_or(std::path::Path::new("."));
     let home = bin.parent().unwrap_or(bin);
@@ -250,8 +255,7 @@ $bin = '{bin}'
 Get-ChildItem $new.DirectoryName -File | ForEach-Object {{ $t = Join-Path $bin $_.Name; if (Test-Path $t) {{ Copy-Item $t $bak -Force }} }}
 try {{
   Copy-Item (Join-Path $new.DirectoryName '*') $bin -Force
-  Get-ChildItem (Split-Path $new.DirectoryName -Parent) -File | Where-Object {{ $_.Extension -in '.md', '.txt' }} | Copy-Item -Destination '{home}' -Force
-  Write-Output 'updated to v{tag}'
+{docs}  Write-Output 'updated to v{tag}'
 }} catch {{
   Write-Output "update failed: $_ - putting the old files back"
   Copy-Item (Join-Path $bak '*') $bin -Force
@@ -265,7 +269,12 @@ Start-Process -FilePath '{exe}' -ArgumentList '--minimized'
         exe = q(exe),
         backup = q(&dir.join(format!("backup-before-v{tag}"))),
         bin = q(bin),
-        home = q(home),
+        // the read-me files go next to bin\ only in a real portable folder, never into the project folder
+        docs = if docs {
+            format!("  Get-ChildItem (Split-Path $new.DirectoryName -Parent) -File | Where-Object {{ $_.Extension -in '.md', '.txt' }} | Copy-Item -Destination '{}' -Force\n", q(home))
+        } else {
+            String::new()
+        },
     )
 }
 
@@ -334,8 +343,13 @@ mod tests {
         assert_eq!(r.asset_for("portable").1, "IdeaAutopilot-0.5.2-portable.zip");
         assert_eq!(r.asset_for("portable").2, "def");
         assert_eq!(r.asset_for("installer").1, "IdeaAutopilot-0.5.2-Setup.exe");
-        assert!(self_updating("portable") && self_updating("installer") && !self_updating("scoop") && !self_updating("dev"));
-        let s = portable_script(1, std::path::Path::new("C:/u/a.zip"), std::path::Path::new("C:/P/data/updates"), std::path::Path::new("C:/P/bin/idea-autopilot.exe"), "0.5.2");
+        assert!(self_updating("portable") && self_updating("installer") && self_updating("devbin") && !self_updating("scoop") && !self_updating("dev"));
+        assert_eq!(r.asset_for("devbin").1, "IdeaAutopilot-0.5.2-portable.zip");
+        let s = portable_script(1, std::path::Path::new("C:/u/a.zip"), std::path::Path::new("C:/P/data/updates"), std::path::Path::new("C:/P/bin/idea-autopilot.exe"), "0.5.2", true);
         assert!(s.contains("Expand-Archive") && s.contains("backup-before-v0.5.2") && s.contains("C:/P/bin") && !s.contains("data\\.keep"));
+        assert!(s.contains("'.md', '.txt'"), "a portable folder gets the read-me files");
+        // the copy in the project folder: never the read-me files over the project's own README / CHANGELOG
+        let d = portable_script(1, std::path::Path::new("C:/u/a.zip"), std::path::Path::new("C:/P/data/updates"), std::path::Path::new("C:/P/bin/idea-autopilot.exe"), "0.5.2", false);
+        assert!(d.contains("C:/P/bin") && !d.contains("'.md'"));
     }
 }

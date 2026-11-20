@@ -45,7 +45,7 @@
               stroke-dasharray="{(C * Math.min(100, w)) / 100} {C}" transform="rotate(-90 16 16)" />
           </svg>
           <div class="an">
-            <div class="small ellipsis">{a.label || a.id}{#if a.active} <span class="now" title="บอทใช้บัญชีนี้อยู่">●</span>{/if}</div>
+            <div class="small nm"><span class="ellipsis">{a.label || a.id}</span>{#if a.active}<span class="now" title="บอทใช้บัญชีนี้อยู่">● บอทใช้อยู่</span>{/if}</div>
             <div class="faint tiny">{pct(w)} · 5 ชม. {pct(fiveOf(a))}</div>
           </div>
         </div>
@@ -89,7 +89,8 @@
   .acct { display: flex; align-items: center; gap: 8px; min-width: 0; }
   .an { min-width: 0; flex: 1; }
   .tiny { font-size: 11px; }
-  .now { color: var(--teal); font-size: 9px; vertical-align: 1px; }
+  .nm { display: flex; gap: 5px; align-items: baseline; min-width: 0; }
+  .now { color: var(--teal); font-size: 10px; white-space: nowrap; flex-shrink: 0; }
   .menu { position: absolute; left: 0; right: 0; bottom: calc(100% + 6px); background: var(--bg-2); border: 1px solid var(--line-2); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45); z-index: 30; max-height: 70vh; overflow: auto; }
   .menu label { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
   .menu label.sub { padding-left: 18px; }

@@ -314,7 +314,9 @@ pub fn git_run(dir: Option<&Path>, args: &[&str]) -> Result<String> {
         use std::os::windows::process::CommandExt;
         c.creation_flags(0x0800_0000);
     }
-    let out = c.output().context("git ไม่ได้ติดตั้ง?")?;
+    // never wait for a login prompt, never more than 2 minutes: a stuck push must not freeze syncing (ISSUE-092)
+    c.env("GIT_TERMINAL_PROMPT", "0").env("GCM_INTERACTIVE", "never");
+    let out = crate::runner::output_within(&mut c, 120).with_context(|| format!("git {}", args.first().unwrap_or(&"")))?;
     if !out.status.success() {
         anyhow::bail!("git {}: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim());
     }

@@ -8,6 +8,27 @@
 //! Addresses and model names follow each provider's documentation at the time of writing: they are starting
 //! points the owner can change, not promises.
 
+/// The Claude models in the order and with the names Claude Code's own model picker uses, so the app and the Claude
+/// app say the same thing (ISSUE-097): (id passed to `--model`, name shown, "main" = the first list, "more" = under
+/// "more models", note). Update this list when Claude Code's picker changes.
+pub const CLAUDE_MODELS: &[(&str, &str, &str, &str)] = &[
+    ("claude-opus-5-5", "Opus 5.5", "main", ""),
+    ("claude-sonnet-5-5", "Sonnet 5.5", "main", "ค่าเริ่มต้นของ Claude Code"),
+    ("claude-fable-5-2", "Fable 5.2", "main", ""),
+    ("claude-haiku-5-5", "Haiku 5.5", "main", ""),
+    ("claude-fable-5-1", "Fable 5.1", "more", ""),
+    ("claude-haiku-4-5", "Haiku 4.5", "more", ""),
+    ("claude-sonnet-5", "Sonnet 5", "more", ""),
+    ("claude-opus-5", "Opus 5", "more", ""),
+    ("claude-fable-5", "Fable 5", "more", ""),
+    ("claude-opus-4-8", "Opus 4.8", "more", ""),
+    ("claude-opus-4-7", "Opus 4.7", "more", ""),
+    ("claude-opus-4-6", "Opus 4.6", "more", ""),
+    ("claude-sonnet-4-6", "Sonnet 4.6", "more", ""),
+];
+/// Claude Code's effort levels (its picker: Low, Medium, High, Extra, Max)
+pub const CLAUDE_EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
+
 pub struct Vendor {
     pub id: &'static str,
     pub label: &'static str,

@@ -25,7 +25,8 @@
     const needle = typing ? q.trim().toLowerCase() : "";
     return models.filter((m) => (!freeOnly || m.free) && (!needle || `${m.id} ${m.label ?? ""}`.toLowerCase().includes(needle)));
   });
-  const text = $derived(typing ? q : value === "auto" ? "" : value);
+  // the chosen model by its name (e.g. "Opus 5.5" for claude-opus-5-5), as the agent's own picker shows it (ISSUE-097)
+  const text = $derived(typing ? q : value === "auto" ? "" : (models.find((m) => m.id === value)?.label ?? value));
   const known = (v) => models.some((m) => m.id === v);
 
   function pick(v) {
@@ -85,8 +86,9 @@
         <button type="button" class="opt" class:on={!value || value === "auto"} onclick={() => pick("")}>{auto}</button>
       {/if}
       {#each shown as m, i (m.id)}
-        <button type="button" class="opt" class:on={m.id === value} class:act={i === active} onclick={() => pick(m.id)}>
-          <span class="nm">{m.label ?? m.id}</span>{#if m.free}<span class="badge">ฟรี</span>{/if}
+        {#if m.group === "more" && shown[i - 1]?.group !== "more"}<div class="grp">รุ่นอื่นๆ</div>{/if}
+        <button type="button" class="opt" class:on={m.id === value} class:act={i === active} onclick={() => pick(m.id)} title={m.label && m.label !== m.id ? m.id : ""}>
+          <span class="nm">{m.label ?? m.id}</span>{#if m.free}<span class="badge">ฟรี</span>{/if}{#if m.note}<span class="badge note">{m.note}</span>{/if}
         </button>
       {/each}
       {#if hidden.length}
@@ -126,4 +128,6 @@
   .tag { font-size: 11px; padding: 0 6px; border-radius: 999px; background: var(--bg); color: var(--text-3); flex: none; }
   .tag.chat { color: var(--red); }
   .none { padding: 8px 10px; color: var(--text-3); font-size: 12px; }
+  .grp { padding: 8px 10px 2px; font-size: 11px; color: var(--text-3); border-top: 1px solid var(--line); margin-top: 4px; }
+  .badge.note { background: var(--card-2); color: var(--text-2); }
 </style>

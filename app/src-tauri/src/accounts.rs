@@ -18,7 +18,8 @@ use std::path::{Path, PathBuf};
 use crate::db;
 
 pub const KINDS: [&str; 5] = ["claude", "codex", "gemini", "opencode", "mistral"];
-pub const EFFORTS: [&str; 4] = ["low", "medium", "high", "xhigh"];
+/// "max" is Claude Code's top level (ISSUE-097); other agents only offer what their model lists say
+pub const EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Account {

@@ -405,7 +405,7 @@ fn signed_in(st: &AppState, account: &str) -> Option<bool> {
         use std::os::windows::process::CommandExt;
         c.creation_flags(0x0800_0000);
     }
-    let out = c.output().ok()?;
+    let out = crate::runner::output_within(&mut c, 20).ok()?;
     let v: Value = serde_json::from_slice(&out.stdout).ok()?;
     Some(v["loggedIn"].as_bool() == Some(true) && v["authMethod"].as_str() != Some("api_key"))
 }
@@ -441,7 +441,7 @@ fn recover(app: &AppHandle, id: i64, why: &str) {
         let ai = OPEN_AI.lock().get(&id).cloned().unwrap_or_default();
         match signed_in(&st, &ai.account) {
             Some(false) => {
-                push_feed(&app, id, [format!("⚠️ {why} — login ของ Claude Code หลุดจริง"), "เปิด Windows Terminal แล้วพิมพ์ claude auth login (ใช้บัญชี claude.ai) แล้วแอปจะเปิด session นี้ใหม่ให้เอง ไม่ต้องกดอะไรเพิ่ม".to_string()].join(" · "), Some("error"));
+                push_feed(&app, id, [format!("⚠️ {why} — login ของ Claude Code หลุดจริง"), if ai.account.is_empty() { "เปิด Windows Terminal แล้วพิมพ์ claude auth login (ใช้บัญชี claude.ai) แล้วแอปจะเปิด session นี้ใหม่ให้เอง ไม่ต้องกดอะไรเพิ่ม".to_string() } else { format!("ไปที่ ตั้งค่า → บัญชี AI แล้วกดปุ่มล็อกอินใหม่ของบัญชี {} (ใช้บัญชี claude.ai) แล้วแอปจะเปิด session นี้ใหม่ให้เอง", ai.account) }].join(" · "), Some("error"));
                 let end = db::now() + 30 * 60;
                 loop {
                     std::thread::sleep(Duration::from_secs(20));
@@ -728,6 +728,11 @@ pub fn start_with(app: &AppHandle, id: i64, ai: &ChatAi) -> Result<(), String> {
         if a.kind != "claude" {
             return Err("แชตในแอปใช้ได้กับบัญชีที่ใช้ Claude Code เท่านั้น — ค่ายอื่นจะเปิดใน terminal/Orca".into());
         }
+        // this chat rides on a claude.ai sign-in: an API key or a gateway account can never open it (it used to wait a
+        // minute and then say the login was lost) (ISSUE-099)
+        if a.uses_key() || crate::omniroute::is(a) {
+            return Err(format!("แชตแบบนี้ต้องใช้บัญชี Claude ที่ล็อกอินด้วย claude.ai — บัญชี {} ใช้ key/เกตเวย์ จึงเปิดไม่ได้ เลือกบัญชี Claude ที่ล็อกอินไว้แทน", a.title()));
+        }
     }
     let idea = db::get_idea(&st.db.lock(), id).map_err(|e| e.to_string())?;
     if idea.status == "archived" || idea.status == "deleted" {
@@ -763,7 +768,7 @@ pub fn start_with(app: &AppHandle, id: i64, ai: &ChatAi) -> Result<(), String> {
     if !ai.model.is_empty() {
         cmd.args(["--model", &ai.model]);
     }
-    if ["low", "medium", "high", "xhigh"].contains(&ai.effort.as_str()) {
+    if ["low", "medium", "high", "xhigh", "max"].contains(&ai.effort.as_str()) {
         cmd.args(["--effort", &ai.effort]);
     }
     cmd.cwd(&st.root);

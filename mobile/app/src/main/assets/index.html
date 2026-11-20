@@ -4,6 +4,10 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Idea Autopilot</title>
+<script>
+// the phone's font size, applied to the whole page at once so the input box and its drawn text grow together (ISSUE-104)
+try { var fs = window.IAApp && IAApp.fontScale(); if (fs > 0.5 && fs < 3 && Math.abs(fs - 1) > 0.01) document.documentElement.style.zoom = fs; } catch (e) {}
+</script>
 <style>
 @font-face { font-family: Plex; src: url(fonts/thai-400.woff2); font-weight: 400; unicode-range: U+0E00-0E7F; }
 @font-face { font-family: Plex; src: url(fonts/thai-600.woff2); font-weight: 600; unicode-range: U+0E00-0E7F; }
@@ -169,7 +173,7 @@ textarea.big { height: 62vh !important; overflow-y: auto !important; }
   <nav>
     <button data-tab="now" class="on"><span class="i">⚡</span>ตอนนี้</button>
     <button data-tab="ideas"><span class="i">💡</span>ไอเดีย</button>
-    <button data-tab="ask"><span class="i">🙋</span>ถามคุณ<span class="badge hidden" id="badge"></span></button>
+    <button data-tab="ask"><span class="i">🙋</span>รอคุณ<span class="badge hidden" id="badge"></span></button>
     <button data-tab="more"><span class="i">⚙️</span>อื่นๆ</button>
   </nav>
 </div>
@@ -347,7 +351,8 @@ function render() {
   const L = data.live || {};
   const d = L.decision || {};
   const open = data.questions.filter((q) => !q.answer && !sentAnswers[q.id]);
-  const b = $("#badge"); b.textContent = open.length; b.classList.toggle("hidden", !open.length);
+  const waiting = open.length + reviewList().length; // questions + finished work not looked at yet (ISSUE-101)
+  const b = $("#badge"); b.textContent = waiting; b.classList.toggle("hidden", !waiting);
   const lastNews = Math.max(L.ts || 0, data.leader?.heartbeat || 0);
   const stale = lastNews && Date.now() / 1000 - lastNews > 45 * 60;
   $("#h-title").textContent = L.current ? "บอทกำลังทำงาน" : L.paused ? "พักบอทอยู่" : "Idea Autopilot";
@@ -509,10 +514,35 @@ function qCard(q) {
   </div>`;
 }
 
+// ---------- review inbox, the same list as "รอคุณ" on the PC (ISSUE-101) ----------
+// what was reviewed is the setting "reviewed" ({from, ids:{idea: time}}), shared with the PC
+function reviewed() {
+  let v = null;
+  try { v = JSON.parse((data.settings || {}).reviewed || "null"); } catch {}
+  return v && typeof v === "object" ? { from: v.from || 0, ids: v.ids || {} } : { from: Date.now() / 1000 - 86400, ids: {} };
+}
+function reviewList() {
+  const r = reviewed();
+  return (data.ideas || [])
+    .filter((i) => ["done", "failed", "ready"].includes(i.status) && (i.updated || 0) > (r.ids[i.id] ?? (i.status === "ready" ? 0 : r.from)))
+    .filter((i) => !data.questions.some((q) => q.idea_id === i.id && !q.answer && !sentAnswers[q.id]))
+    .sort((a, b) => (b.updated || 0) - (a.updated || 0));
+}
+async function markReviewed(id) {
+  const r = reviewed();
+  r.ids[id] = Math.floor(Date.now() / 1000);
+  const value = JSON.stringify({ from: Math.floor(r.from), ids: r.ids });
+  data.settings = { ...(data.settings || {}), reviewed: value };
+  render();
+  try { await send("set", { key: "reviewed", value }); } catch (err) { toast(err.message); }
+}
+
 function renderAsk(open) {
-  $("#tab-ask").innerHTML = open.length
-    ? `<p class="muted small" style="margin:0 0 12px">แตะตัวเลือกได้เลย คำตอบจะถึงคอมฯ ภายในประมาณ 5 นาที</p>${open.map(qCard).join("")}`
-    : `<div class="empty">ไม่มีคำถามรอคุณ 🎉</div>`;
+  const rev = reviewList();
+  $("#tab-ask").innerHTML = open.length || rev.length
+    ? `${open.length ? `<p class="muted small" style="margin:0 0 12px">แตะตัวเลือกได้เลย คำตอบจะถึงคอมฯ ภายในประมาณ 5 นาที</p>${open.map(qCard).join("")}` : ""}
+       ${rev.length ? `<h3 style="margin:14px 0 8px">งานที่เสร็จแล้ว รอคุณดู (${rev.length})</h3>${rev.map((i) => `<div class="rev">${ideaCard(i)}<button class="small" data-reviewed="${i.id}" style="margin:-4px 0 12px;width:100%">✓ ตรวจแล้ว</button></div>`).join("")}` : ""}`
+    : `<div class="empty">ไม่มีอะไรรอคุณ 🎉</div>`;
 }
 
 function renderMore() {
@@ -951,6 +981,7 @@ document.addEventListener("click", async (e) => {
     window.scrollTo(0, 0);
   } else if (t.dataset.close) closeOverlay();
   else if (t.dataset.filter) { filter = t.dataset.filter; renderIdeas(); }
+  else if (t.dataset.reviewed) markReviewed(Number(t.dataset.reviewed));
   else if (t.dataset.answer) {
     if (t.dataset.other) openOther(Number(t.dataset.answer)); else answer(Number(t.dataset.answer), t.dataset.val);
   } else if (t.dataset.act) {

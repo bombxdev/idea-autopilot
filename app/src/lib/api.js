@@ -31,6 +31,8 @@ export const api = {
   refreshUsage: () => invoke("refresh_usage"),
   reports: (days) => invoke("get_reports", { days }),
   exportCsv: () => invoke("export_csv"),
+  usageRuns: (from, to) => invoke("usage_runs", { from, to }),
+  saveExport: (name, data) => invoke("save_export", { name, data }),
   digest: () => invoke("get_digest"),
   makeDigest: () => invoke("make_digest"),
   events: (hours) => invoke("get_events", { hours }),
@@ -188,3 +190,9 @@ export function hm(ts) {
 export function pct(v, d = 0) {
   return v == null ? "—" : `${Number(v).toFixed(d)}%`;
 }
+
+// effort levels as Claude Code names them (xhigh = "Extra"), with a short hint (ISSUE-097)
+export const EFFORT_NAME = { low: "Low", medium: "Medium", high: "High", xhigh: "Extra", max: "Max" };
+export const EFFORT_HINT = { medium: "แนะนำ", max: "ใช้โควต้า 3.5× ขึ้นไป" };
+export const effortName = (e) => EFFORT_NAME[e] ?? e;
+export const effortOption = (e) => `${effortName(e)}${EFFORT_HINT[e] ? ` · ${EFFORT_HINT[e]}` : ""}`;

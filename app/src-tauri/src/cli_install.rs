@@ -165,7 +165,7 @@ fn run(app: &AppHandle, kind: &str, registry: &str) {
                     use std::os::windows::process::CommandExt;
                     c.creation_flags(0x0800_0000);
                 }
-                c.output().ok()
+                crate::runner::output_within(&mut c, 20).ok()
             })
             .map(|o| String::from_utf8_lossy(&o.stdout).lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("").chars().take(80).collect::<String>())
             .unwrap_or_default();

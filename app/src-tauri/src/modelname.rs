@@ -2,7 +2,7 @@
 //! `gpt-6-astra` -> "GPT-6 Astra", `gemini-2.5-pro` -> "Gemini 2.5 Pro". Rules only, no lookups:
 //! a model the rules do not know is shown title-cased instead of being hidden or guessed at.
 
-const FAMILIES: [&str; 3] = ["opus", "sonnet", "haiku"];
+const FAMILIES: [&str; 4] = ["opus", "sonnet", "haiku", "fable"];
 
 fn title(word: &str) -> String {
     match word.to_lowercase().as_str() {
@@ -65,7 +65,7 @@ pub fn label(provider: &str, model_id: Option<&str>, requested: &str) -> String 
         return match r {
             "" | "auto" => format!("{prov} (ค่าเริ่มต้น)"),
             "fast" | "standard" | "strong" => format!("{prov} ({})", tier_th(r)),
-            "haiku" | "sonnet" | "opus" => format!("{} (ล่าสุด)", title(r)),
+            "haiku" | "sonnet" | "opus" | "fable" => format!("{} (ล่าสุด)", title(r)),
             other => claude(other).unwrap_or_else(|| generic(other)),
         };
     }
@@ -95,6 +95,8 @@ mod tests {
     #[test]
     fn names_models_the_way_people_say_them() {
         assert_eq!(label("claude", Some("claude-opus-5-5"), "strong"), "Opus 5.5");
+        assert_eq!(label("claude", Some("claude-fable-5-2"), ""), "Fable 5.2");
+        assert_eq!(label("claude", Some("claude-sonnet-5"), ""), "Sonnet 5");
         assert_eq!(label("claude", Some("claude-sonnet-4-8-20260101"), "standard"), "Sonnet 4.8");
         assert_eq!(label("claude", Some("claude-3-5-sonnet-20241022"), ""), "Sonnet 3.5");
         assert_eq!(label("claude", Some("claude-haiku-5"), "fast"), "Haiku 5");

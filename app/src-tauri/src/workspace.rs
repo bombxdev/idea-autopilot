@@ -284,7 +284,8 @@ fn git(dir: &Path, args: &[&str]) -> std::io::Result<std::process::Output> {
         use std::os::windows::process::CommandExt;
         c.creation_flags(0x0800_0000);
     }
-    c.output()
+    c.env("GIT_TERMINAL_PROMPT", "0");
+    crate::runner::output_within(&mut c, 60)
 }
 
 /// Files over 20 MB outside the ignored folders, relative to `dir` (added to .gitignore at init).

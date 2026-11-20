@@ -5,6 +5,7 @@
   import { api, pct, clock } from "../lib/api.js";
   import IdeaCard from "../components/IdeaCard.svelte";
   import LiveLog from "../components/LiveLog.svelte";
+  import { inbox, markReviewed } from "../lib/review.svelte.js";
 
   let digest = $state(null);
   onMount(async () => {
@@ -14,6 +15,9 @@
   const since = $derived(digest?.body?.since ?? Date.now() / 1000 - 86400);
   const visible = $derived(store.ideas.filter((i) => !["archived", "deleted"].includes(i.status)));
   const asking = $derived(visible.filter((i) => questionsFor(i.id).length > 0));
+  // one list of everything that waits for the owner (ISSUE-100)
+  const box = $derived(inbox());
+  const KIND = { ready: "พร้อมลองเล่น", done: "เสร็จแล้ว", failed: "ติดปัญหา" };
   const ready = $derived(visible.filter((i) => i.status === "ready" && !asking.includes(i)));
   const fresh = $derived(
     visible.filter((i) => i.updated >= since && ["done", "failed"].includes(i.status) && !asking.includes(i)),
@@ -50,26 +54,24 @@
     </section>
   {/if}
 
-  {#if asking.length}
-    <section>
-      <h2><Icon name="user" /> รอคุณตอบ <span class="faint small">แตะเลือกได้เลย</span></h2>
-      <div class="grid">{#each asking as idea (idea.id)}<IdeaCard {idea} />{/each}</div>
-    </section>
-  {/if}
-
-  {#if ready.length}
-    <section>
-      <h2><Icon name="play" /> พร้อมลองเล่น</h2>
-      <div class="grid">{#each ready as idea (idea.id)}<IdeaCard {idea} />{/each}</div>
-    </section>
-  {/if}
-
-  {#if fresh.length}
-    <section>
-      <h2><Icon name="check" /> เสร็จเมื่อคืน</h2>
-      <div class="grid">{#each fresh as idea (idea.id)}<IdeaCard {idea} />{/each}</div>
-    </section>
-  {/if}
+  <section>
+    <h2><Icon name="user" /> รอคุณ {#if box.count}<span class="count">{box.count}</span>{/if}
+      {#if box.count}<span class="faint small">ตอบคำถาม หรือดูงานที่เสร็จแล้วกด “ตรวจแล้ว”</span>{/if}</h2>
+    {#if box.count}
+      <div class="grid">
+        {#each box.asking as idea (idea.id)}<IdeaCard {idea} />{/each}
+        {#each box.rest as idea (idea.id)}
+          <div class="rev">
+            <div class="revbar"><span class="chip {idea.status === 'failed' ? 'red' : 'teal'}">{KIND[idea.status]}</span><span class="grow"></span>
+              <button class="small" onclick={() => markReviewed(idea)} title="เอาออกจากรายการรอคุณ (งานยังอยู่ในบอร์ดและคลังความรู้)"><Icon name="check" /> ตรวจแล้ว</button></div>
+            <IdeaCard {idea} />
+          </div>
+        {/each}
+      </div>
+    {:else}
+      <div class="card done-all"><Icon name="checkCircle" /> ไม่มีอะไรรอคุณ — บอททำงานต่อเองได้</div>
+    {/if}
+  </section>
 
   {#if b?.needs?.length}
     <section>
@@ -112,5 +114,9 @@
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 14px; }
   .empty { text-align: center; padding: 32px; display: flex; flex-direction: column; gap: 4px; align-items: center; }
   .big { font-size: 34px; }
+  .count { background: var(--amber); color: #2a1a00; font-size: 12px; font-weight: 600; border-radius: 999px; padding: 0 8px; align-self: center; }
+  .rev { display: flex; flex-direction: column; gap: 6px; }
+  .revbar { display: flex; align-items: center; gap: 8px; }
+  .done-all { color: var(--text-2); display: flex; gap: 8px; align-items: center; }
   .need ul { margin: 2px 0 10px; }
 </style>

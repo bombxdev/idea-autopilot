@@ -184,7 +184,7 @@
                   {@const best = Math.min(...eco.overall.filter((x) => x.runs >= eco.min_evidence && x.per_good != null).map((x) => x.per_good))}
                   <tr class:best={m.runs >= eco.min_evidence && m.per_good != null && m.per_good === best}>
                     <td>{m.label}</td><td>{m.runs}</td><td>{m.ok_pct}%</td>
-                    <td>{m.estimated ? "~" : ""}${m.avg_cost.toFixed(2)}</td>
+                    <td>{m.avg_cost == null ? "—" : `${m.estimated ? "~" : ""}$${m.avg_cost.toFixed(2)}`}</td>
                     <td><b>{m.per_good == null ? "—" : `${m.estimated ? "~" : ""}$${m.per_good.toFixed(2)}`}</b></td>
                     <td>{m.avg_turns.toFixed(0)}</td><td>{m.avg_min.toFixed(0)}</td>
                   </tr>

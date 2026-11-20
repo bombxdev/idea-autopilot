@@ -15,6 +15,7 @@ mod omniroute;
 mod catalog;
 mod chat;
 mod commands;
+mod connect;
 mod db;
 mod governor;
 mod idea_ai;
@@ -39,6 +40,8 @@ mod skills;
 mod state;
 mod sync;
 mod brain;
+mod chat_usage;
+mod log_tokens;
 mod tray;
 mod update;
 mod ui_translate;
@@ -54,7 +57,12 @@ use state::{AppState, Runtime};
 /// Where data lives — nothing machine-specific is compiled in:
 /// 1. `IDEA_AUTOPILOT_HOME`
 /// 2. portable layout: a `data/` folder next to the exe or one level up (e.g. `<root>/bin/app.exe`)
-/// 3. `%USERPROFILE%\IdeaAutopilot`
+/// 3. a folder a few levels up that already holds the database (a build run from `app\src-tauri\target\release\`)
+/// 4. `%USERPROFILE%\IdeaAutopilot` when it already has data
+/// 5. the data folder this machine used last (remembered in `%LOCALAPPDATA%\IdeaAutopilot\last-root.txt`)
+/// 6. a new `%USERPROFILE%\IdeaAutopilot`
+/// Steps 3 and 5 exist because a copy started from an unexpected place used to open a new, empty data folder and the
+/// owner saw all ideas "gone" (ISSUE-096).
 pub fn root_dir() -> PathBuf {
     if let Ok(p) = std::env::var("IDEA_AUTOPILOT_HOME") {
         return PathBuf::from(p);
@@ -62,16 +70,53 @@ pub fn root_dir() -> PathBuf {
     root_for_exe(&std::env::current_exe().unwrap_or_default())
 }
 
-/// The data folder a copy of the program at `exe` would use (portable layout, else the home folder).
+/// The data folder a copy of the program at `exe` would use (see `root_dir`).
 pub fn root_for_exe(exe: &std::path::Path) -> PathBuf {
+    root_choice(exe, remembered_root(), &dirs::home_dir().unwrap_or_default().join("IdeaAutopilot"))
+}
+
+fn clean(p: PathBuf) -> PathBuf {
+    p.canonicalize().map(|c| PathBuf::from(c.to_string_lossy().trim_start_matches(r"\\?\"))).unwrap_or(p)
+}
+fn has_db(p: &std::path::Path) -> bool {
+    p.join("data").join("quota.db").is_file()
+}
+
+fn root_choice(exe: &std::path::Path, remembered: Option<PathBuf>, home: &std::path::Path) -> PathBuf {
     if let Some(dir) = exe.parent().map(PathBuf::from) {
         for cand in [dir.clone(), dir.join("..")] {
             if cand.join("data").is_dir() {
-                return cand.canonicalize().map(|p| PathBuf::from(p.to_string_lossy().trim_start_matches(r"\\?\"))).unwrap_or(cand);
+                return clean(cand);
             }
         }
+        // e.g. <project>\app\src-tauri\target\release\idea-autopilot.exe → <project> (its data\quota.db)
+        if let Some(up) = dir.ancestors().skip(2).take(5).find(|a| has_db(a)) {
+            return clean(up.to_path_buf());
+        }
     }
-    dirs::home_dir().unwrap_or_default().join("IdeaAutopilot")
+    if has_db(home) {
+        return home.to_path_buf();
+    }
+    if let Some(r) = remembered.filter(|r| has_db(r)) {
+        return r;
+    }
+    home.to_path_buf()
+}
+
+fn last_root_file() -> Option<PathBuf> {
+    dirs::data_local_dir().map(|d| d.join("IdeaAutopilot").join("last-root.txt"))
+}
+fn remembered_root() -> Option<PathBuf> {
+    let t = std::fs::read_to_string(last_root_file()?).ok()?;
+    let t = t.trim();
+    (!t.is_empty()).then(|| PathBuf::from(t))
+}
+/// Remember the data folder in use (only one that has ideas), for a copy started from somewhere unexpected.
+fn remember_root(root: &std::path::Path) {
+    if let Some(f) = last_root_file() {
+        let _ = std::fs::create_dir_all(f.parent().unwrap_or(std::path::Path::new(".")));
+        let _ = std::fs::write(f, root.display().to_string());
+    }
 }
 
 fn same_file(a: &std::path::Path, b: &std::path::Path) -> bool {
@@ -232,6 +277,12 @@ fn keep_awake_thread(app: AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // every AI program the app starts trusts the certificates Windows trusts: on a network that inspects encrypted
+    // traffic (many offices) Node-based CLIs otherwise fail with a certificate error. Ignored by versions that do not
+    // know it; never overrides the owner's own setting (ISSUE-099).
+    if std::env::var_os("NODE_USE_SYSTEM_CA").is_none() {
+        std::env::set_var("NODE_USE_SYSTEM_CA", "1");
+    }
     // started from inside a Claude session (a terminal of the Claude app, a deploy script it ran): its markers and
     // gateway address would be inherited by every Claude Code the bot starts — changing where it connects and turning
     // off Remote Control. Dropped once, before any thread or child exists. An account's own ones are set per run.
@@ -277,6 +328,9 @@ pub fn run() {
             }
             // the program folder moved since last time: say so, and note anything the old location left behind
             let here = root.display().to_string();
+            if !db::is_fresh(&conn) {
+                remember_root(&root);
+            }
             if let Some(prev) = db::get_setting(&conn, "last_root").filter(|p| !p.eq_ignore_ascii_case(&here)) {
                 let _ = db::log_event(&conn, "moved", None, &format!("โฟลเดอร์โปรแกรมย้ายจาก {prev} มาที่ {here} — ปรับ path ที่ผูกไว้ (เปิดพร้อม Windows, skill, ไฟล์ของแต่ละไอเดีย) ให้ตามที่ใหม่แล้ว"));
             }
@@ -393,6 +447,8 @@ pub fn run() {
             commands::refresh_usage,
             commands::get_reports,
             commands::export_csv,
+            commands::usage_runs,
+            commands::save_export,
             commands::get_digest,
             commands::make_digest,
             commands::get_events,
@@ -490,4 +546,32 @@ pub fn run() {
                 remote::stop_all(app);
             }
         });
+}
+
+#[cfg(test)]
+mod root_tests {
+    use super::*;
+
+    #[test]
+    fn a_build_in_target_or_a_stray_copy_finds_the_real_data() {
+        let base = std::env::temp_dir().join(format!("ia-root-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let proj = base.join("proj");
+        std::fs::create_dir_all(proj.join("data")).unwrap();
+        std::fs::write(proj.join("data").join("quota.db"), "x").unwrap();
+        std::fs::create_dir_all(proj.join("bin")).unwrap();
+        std::fs::create_dir_all(proj.join("app/src-tauri/target/release")).unwrap();
+        let home = base.join("home").join("IdeaAutopilot");
+        let same = |a: &std::path::Path, b: &std::path::Path| clean(a.to_path_buf()) == clean(b.to_path_buf());
+        // the copy deploy puts in bin\ (data one level up)
+        assert!(same(&root_choice(&proj.join("bin/idea-autopilot.exe"), None, &home), &proj));
+        // a release build run from target\ (ISSUE-096)
+        assert!(same(&root_choice(&proj.join("app/src-tauri/target/release/idea-autopilot.exe"), None, &home), &proj));
+        // a copy somewhere else: the folder used last time, not a new empty one
+        let stray = base.join("Desktop/idea-autopilot.exe");
+        assert!(same(&root_choice(&stray, Some(proj.clone()), &home), &proj));
+        // nothing known: the home folder
+        assert_eq!(root_choice(&stray, None, &home), home);
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }

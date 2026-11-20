@@ -7,6 +7,9 @@
   import { api } from "../lib/api.js";
   import { LANGS } from "../lib/i18n.js";
   import { refresh, toast } from "../lib/store.svelte.js";
+  import Accounts from "./Accounts.svelte";
+  // install / sign in / add a key without leaving the first-run screen (ISSUE-101)
+  let connectOpen = $state(false);
 
   let prov = $state(null);
   let checking = $state(false);
@@ -38,7 +41,8 @@
     checking = true;
     try {
       prov = await api.providers();
-      if (choice === "auto" && prov.active === "none") choice = "custom";
+      // (no AI found used to jump to "my own command" — the hardest path for a newcomer; it stays on automatic, with
+      // the account list to log in or enter an API key, and "skip for now" (ISSUE-105))
     } finally {
       checking = false;
     }
@@ -79,8 +83,10 @@
   async function finish() {
     saving = true;
     try {
-      await api.setSetting("provider", choice);
-      if (choice === "custom") await api.setSetting("custom_cmd", custom.trim());
+      // "my own command" left empty = not chosen: stay automatic, so the bot waits for an AI instead of failing (ISSUE-105)
+      const pick = choice === "custom" && !custom.trim() ? "auto" : choice;
+      await api.setSetting("provider", pick);
+      if (pick === "custom") await api.setSetting("custom_cmd", custom.trim());
       await api.setSetting("schedule", JSON.stringify(scheduleFor(preset)));
       if (meter === "budget") await api.setSetting("budget_hours_week", String(hours));
       await api.setSetting("language", lang);
@@ -155,8 +161,8 @@
                 <label class="opt" class:sel={choice === "custom"}>
                   <input type="radio" bind:group={choice} value="custom" />
                   <span class="dot"></span>
-                  <span class="grow"><span class="ot">คำสั่งของฉันเอง</span>
-                    <span class="od">ใช้ AI/โปรแกรมอื่นที่รันจาก command line ได้</span></span>
+                  <span class="grow"><span class="ot">คำสั่งของฉันเอง <span class="faint small">(ขั้นสูง)</span></span>
+                    <span class="od">สำหรับนักพัฒนา: ใช้โปรแกรม AI อื่นที่ไม่อยู่ในรายการ โดยพิมพ์คำสั่ง command line เอง — ถ้าไม่แน่ใจ ไม่ต้องเลือกข้อนี้</span></span>
                 </label>
               </div>
               {#if choice === "custom"}
@@ -169,7 +175,13 @@
                 <p class="faint small">ยังไม่ได้ติดตั้ง: {missing.map((p) => p.label).join(", ")}</p>
               {/if}
               {#if prov.active === "none" && choice !== "custom"}
-                <p class="note warn"><Icon name="warning" /> ยังไม่พบ AI ในเครื่อง — ติดตั้งอย่างใดอย่างหนึ่ง (Claude Code, Codex CLI, Gemini CLI, OpenCode) แล้วกด “ตรวจใหม่” หรือใช้ “คำสั่งของฉันเอง”</p>
+                <p class="note warn"><Icon name="warning" /> ยังไม่พบ AI ในเครื่อง — เลือกค่ายด้านล่างแล้วกด “เพิ่มบัญชี” จะล็อกอินหรือใส่ API key ก็ได้ (เช่น Mistral, OpenRouter) โปรแกรมติดตั้งตัวที่ต้องใช้ให้เอง เสร็จแล้วกด “ตรวจใหม่”</p>
+                <p class="faint small">ยังไม่พร้อมตอนนี้ก็กด “ข้ามไปก่อน” ได้ จดไอเดียไว้ได้เลย บอทจะเริ่มทำเมื่อคุณเชื่อม AI ในหน้าตั้งค่า → บัญชี AI</p>
+              {/if}
+              {#if prov.active === "none" || connectOpen}
+                <div class="connect"><Accounts /></div>
+              {:else}
+                <button class="ghost small" onclick={() => (connectOpen = true)}><Icon name="plus" /> ติดตั้ง / เชื่อมบัญชี AI เพิ่ม (ล็อกอินหรือใส่ key)</button>
               {/if}
               <div class="check">
                 <div class="row wrap">
@@ -179,8 +191,13 @@
                 <p class="faint small">ส่งคำสั่งสั้นๆ ให้ AI ตอบว่า OK — ใช้โควต้าน้อยมาก ช่วยเช็กว่า login แล้วจริง</p>
                 {#if test}
                   <div class="note result" class:bad={!test.ok} role="status">
-                    <Icon name={test.ok ? "checkCircle" : "closeCircle"} /> {test.ok ? `ใช้ได้ (${test.seconds} วินาที)` : `ไม่สำเร็จ: ${test.error ?? test.status}`}
-                    {#each test.lines ?? [] as l}<div class="faint">{l}</div>{/each}
+                    <Icon name={test.ok ? "checkCircle" : "closeCircle"} /> {test.ok ? `ใช้ได้ (${test.seconds} วินาที)` : test.diag ? test.diag.cause : `ไม่สำเร็จ: ${test.error ?? test.status}`}
+                    {#if !test.ok && test.diag}
+                      <div>{test.diag.fix}</div>
+                      {#if !connectOpen && prov.active !== "none"}<button class="small primary" onclick={() => (connectOpen = true)}>เปิดรายการบัญชีเพื่อแก้</button>{/if}
+                    {:else}
+                      {#each test.lines ?? [] as l}<div class="faint">{l}</div>{/each}
+                    {/if}
                   </div>
                 {/if}
               </div>
@@ -244,11 +261,11 @@
         {#if step < last && usable}
           <button class="ghost skip" disabled={saving} onclick={finish}>ใช้ค่าแนะนำแล้วเริ่มเลย</button>
         {/if}
-        <button class="primary big" disabled={saving || (!usable && (step === 0 || step === last))} onclick={next}>
-          {#if step < last}ถัดไป <Icon name="arrowRight" />{:else}{saving ? "กำลังบันทึก…" : "เริ่มใช้งาน"}{/if}
+        <button class="primary big" disabled={saving} onclick={next}>
+          {#if step < last}{!usable && step === 0 ? "ข้ามไปก่อน" : "ถัดไป"} <Icon name="arrowRight" />{:else}{saving ? "กำลังบันทึก…" : "เริ่มใช้งาน"}{/if}
         </button>
       </footer>
-      {#if !usable && prov && step === last}<p class="faint small end">เลือก AI ที่ใช้ได้ก่อน (ขั้นที่ 1)</p>{/if}
+      {#if !usable && prov && step === last}<p class="faint small end">ยังไม่ได้เชื่อม AI — เริ่มใช้งานได้เลย บอทจะรอจนกว่าคุณเชื่อมในหน้าตั้งค่า → บัญชี AI</p>{/if}
     </main>
   </div>
 </div>
@@ -358,4 +375,5 @@
     .skip { order: 3; width: 100%; justify-content: center; }
     .big { flex: 1; justify-content: center; }
   }
+  .connect { border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin: 10px 0; }
 </style>

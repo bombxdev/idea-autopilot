@@ -1,7 +1,7 @@
 <script>
   import IconText from "./IconText.svelte";
   import Icon from "./Icon.svelte";
-  import { store, stageLabel } from "../lib/store.svelte.js";
+  import { store, stageLabel, toast } from "../lib/store.svelte.js";
   import { api, isStep, clock } from "../lib/api.js";
   import { t, durIn } from "../lib/i18n.js";
   import { lift } from "../lib/lift.js";
@@ -22,6 +22,27 @@
   // past ~7 minutes it is worth a look
   const idle = $derived(cur ? Math.max(0, store.now - (cur.last_activity || cur.started)) : 0);
   const mood = $derived(idle < 120 ? "ok" : idle < 420 ? "think" : "warn");
+  // ways out of a run that looks stuck (ISSUE-092): stop and start again now, or stop and pick another AI
+  let busy = $state(false);
+  async function stopRetry() {
+    const id = cur?.idea_id;
+    busy = true;
+    try {
+      await api.stopCurrent();
+      setTimeout(() => api.action(id, "run_now").catch(() => {}).finally(() => (busy = false)), 2000);
+      toast("หยุดรอบนี้แล้ว — กำลังเริ่มใหม่", "ok", 4000);
+    } catch (e) {
+      busy = false;
+      toast(String(e), "err");
+    }
+  }
+  async function switchAi() {
+    const id = cur?.idea_id;
+    try { await api.stopCurrent(); } catch {}
+    full = false;
+    store.openIdea = id;
+    toast("หยุดรอบนี้แล้ว — เลือก AI ใหม่ที่ “AI สำหรับไอเดียนี้” แล้วกด ทำเลยตอนนี้", "ok", 7000);
+  }
   const used = $derived(cur ? Math.min(100, Math.round(((store.now - cur.started) / Math.max(1, cur.deadline - cur.started)) * 100)) : 0);
 </script>
 
@@ -52,6 +73,10 @@
       <span class="faint">{t("used", L, { p: used, c: clock(cur.deadline) })}</span></div>
     {#if mood === "warn"}
       <div class="hint small"><IconText text={t("hint", L)} /></div>
+      <div class="row wrap small">
+        <button class="small" disabled={busy} onclick={stopRetry} title="หยุดรอบนี้แล้วเริ่มขั้นเดิมใหม่ทันที ด้วย AI เดิม"><Icon name="stop" /> หยุดแล้วลองใหม่</button>
+        <button class="small" onclick={switchAi} title="หยุดรอบนี้ แล้วเปิดไอเดียให้เลือก AI/โมเดลอื่น"><Icon name="layers" /> เปลี่ยน AI แล้วลองใหม่</button>
+      </div>
     {/if}
   {/if}
   <div class="log" bind:this={box}>

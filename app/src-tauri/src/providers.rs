@@ -161,7 +161,7 @@ fn resolve_on_path(bin: &str) -> Option<PathBuf> {
     let mut c = std::process::Command::new(if cfg!(windows) { "where" } else { "which" });
     c.arg(bin);
     hidden(&mut c);
-    let out = c.output().ok().filter(|o| o.status.success())?;
+    let out = crate::runner::output_within(&mut c, 10).ok().filter(|o| o.status.success())?;
     let paths: Vec<PathBuf> = String::from_utf8_lossy(&out.stdout)
         .lines()
         .map(|l| PathBuf::from(l.trim()))
@@ -545,7 +545,7 @@ fn opencode_models() -> Vec<ModelInfo> {
                         c.arg("--standalone");
                     }
                     hidden(&mut c);
-                    c.output().ok()
+                    crate::runner::output_within(&mut c, 60).ok()
                 })
                 .map(|o| {
                     String::from_utf8_lossy(&o.stdout)

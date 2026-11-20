@@ -20,6 +20,12 @@
     { icon: "sun", label: "ไปหน้าเช้านี้", run: () => (store.page = "morning") },
     { icon: "board", label: "ไปบอร์ด", run: () => (store.page = "board") },
     { icon: "gauge", label: "ไปหน้าโควต้า", run: () => (store.page = "quota") },
+    { icon: "chart", label: "ไปรายงานการใช้", run: () => (store.page = "usage") },
+    { icon: "windows", label: "ไปพื้นที่ทำงาน", run: () => (store.page = "workspace") },
+    { icon: "list", label: "ไปหน้าบันทึก", run: () => (store.page = "activity") },
+    { icon: "link", label: "ไปหน้าเซสชัน", run: () => (store.page = "sessions") },
+    { icon: "toolbox", label: "ไปหน้าสกิล", run: () => (store.page = "skills") },
+    { icon: "gear", label: "ไปหน้าตั้งค่า", run: () => (store.page = "settings") },
     { icon: "book", label: "ไปคลังความรู้", run: () => (store.page = "library") },
   ];
 
