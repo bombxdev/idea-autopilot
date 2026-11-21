@@ -15,7 +15,6 @@ use std::path::{Path, PathBuf};
 
 /// Set in RunSpec.env to the `--agents` file; the runner also adds the Task tool (taken out before the agent starts).
 pub const TEAM_ENV: &str = "IA_TEAM_AGENTS";
-pub const MAX_HELPERS: u32 = 5;
 
 const AGENTS: &str = r#"{
   "helper": {
@@ -90,16 +89,26 @@ pub fn delegate(app: &tauri::AppHandle, a: &serde_json::Value) -> Result<serde_j
         }
     }
     let _release = Release;
-    let model = if acct.is_auto_model() { crate::providers::tier_model(&st.db.lock(), &acct.kind, 1) } else { acct.model.clone() };
+    // the role's own choice first (an exact model on this machine, else its tier), then the account's
+    let role_def = a["role"].as_str().and_then(|r| crate::roles::find(&st.root, r));
+    let model = match &role_def {
+        Some(r) if !r.model_override.is_empty() => r.model_override.clone(),
+        Some(r) if acct.is_auto_model() => crate::providers::tier_model(&st.db.lock(), &acct.kind, crate::roles::tier_index(&r.tier)),
+        _ if acct.is_auto_model() => crate::providers::tier_model(&st.db.lock(), &acct.kind, 1),
+        _ => acct.model.clone(),
+    };
     let checks = crate::model_check::all(&st.db.lock());
     let (model, _) = crate::acct_models::fit(&acct, &st.root, &model, &checks);
     let report = dir.join("HELPER-REPORT.md");
     let _ = std::fs::remove_file(&report);
+    // the owner's team role this AI plays, if the lead named one (roles.rs)
+    let role = a["role"].as_str().and_then(|r| crate::roles::delegate_brief(&st.root, r)).map(|b| format!("{b}\n\n")).unwrap_or_default();
     let prompt = format!(
-        "You are a helper on a team; the lead is another AI. Do ONLY this part, working ONLY inside this folder (it is your current directory):\n\n{task}\n\nWhen done, write a short report to HELPER-REPORT.md in this folder: what you made (files), how to use it, and anything left or uncertain (under 25 lines)."
+        "{role}You are a helper on a team; the lead is another AI. Do ONLY this part, working ONLY inside this folder (it is your current directory):\n\n{task}\n\nWhen done, write a short report to HELPER-REPORT.md in this folder: what you made (files), how to use it, and anything left or uncertain (under 25 lines)."
     );
     st.push_log(format!("🤝 #{idea_id} ส่งงานส่วนหนึ่งให้ {} ({}): {}", acct.id, acct.kind, task.chars().take(80).collect::<String>()));
     let log = idea_dir.join("logs").join(format!("helper-{}-{}.jsonl", acct.id, crate::db::now()));
+    let part = crate::db::team_part_start(&st.db.lock(), idea_id, role_def.as_ref().map(|r| r.slug.as_str()).unwrap_or(""), &acct.id, &model, a["folder"].as_str().unwrap_or(""), &task);
     let _ = std::fs::create_dir_all(idea_dir.join("logs"));
     let env = crate::accounts::env_with_secret(&acct, &st.root);
     let lang = crate::lang::ui();
@@ -122,6 +131,7 @@ pub fn delegate(app: &tauri::AppHandle, a: &serde_json::Value) -> Result<serde_j
         |_| {},
     ))
     .map_err(|e| format!("{e:#}"))?;
+    crate::db::team_part_end(&st.db.lock(), part, &out.status);
     let text = std::fs::read_to_string(&report).unwrap_or_default();
     st.push_log(format!("🤝 #{idea_id} {} ส่งงานกลับแล้ว ({})", acct.id, out.status));
     Ok(serde_json::json!({
@@ -141,19 +151,54 @@ pub fn prompt_others() -> &'static str {
     "\n- นอกจากผู้ช่วยข้างบน ยังส่งงานให้ **AI ค่ายอื่น** ได้ด้วยเครื่องมือ `list_other_ais` (ดูว่ามีบัญชีไหน) และ `ask_other_ai` (account, folder, task) — ใช้เมื่อค่ายอื่นน่าจะทำส่วนนั้นได้ดีกว่าหรือถูกกว่า (เช่น Codex เขียน/แก้โค้ดเป็นชุด Gemini อ่านเอกสารยาว) งานนี้ช้ากว่าผู้ช่วยปกติ ให้ folder แยกกัน และเขียน task ให้ครบในตัว (มันไม่เห็นอะไรนอกจาก task)\n"
 }
 
-/// The `--agents` file (written once per change).
-pub fn agents_file(root: &Path) -> Option<PathBuf> {
+/// The `--agents` file (written once per change): the built-in helpers plus the team's roles that the lead's own
+/// Claude plays (roles.rs).
+pub fn agents_file(root: &Path, roles: &[crate::roles::Role]) -> Option<PathBuf> {
+    let mut all: serde_json::Map<String, serde_json::Value> = serde_json::from_str(AGENTS).ok()?;
+    all.extend(crate::roles::subagents(roles));
+    let text = serde_json::to_string_pretty(&all).ok()?;
     let p = root.join("data").join("team").join("agents.json");
-    if std::fs::read_to_string(&p).ok().as_deref() != Some(AGENTS) {
+    if std::fs::read_to_string(&p).ok().as_deref() != Some(text.as_str()) {
         std::fs::create_dir_all(p.parent()?).ok()?;
-        std::fs::write(&p, AGENTS).ok()?;
+        std::fs::write(&p, &text).ok()?;
     }
     Some(p)
 }
 
 /// Can this run use a team? Claude on Anthropic, a stage with real work, and the owner turned it on.
-pub fn applies(helpers: u32, provider: &str, vendor_needs_model_name: bool, stage: &str) -> bool {
-    helpers > 0 && provider == "claude" && !vendor_needs_model_name && !matches!(stage, "replan" | "verdict")
+/// AIs that can lead a team: they take tools (MCP), so they can hand parts out with `ask_other_ai` (mcp.rs).
+const LEADS: [&str; 5] = ["claude", "codex", "gemini", "opencode", "mistral"];
+
+/// Whether a team can work on this run, and why not when it cannot (shown in the log — never silent).
+pub fn applies(provider: &str, stage: &str, ia_ready: bool) -> Result<(), &'static str> {
+    if matches!(stage, "replan" | "verdict") {
+        return Err("ขั้นนี้สั้นและต้องคิดต่อเนื่อง — ทำคนเดียว");
+    }
+    if !LEADS.contains(&provider) {
+        return Err("AI ตัวนี้รับเครื่องมือ (MCP) ไม่ได้ จึงสั่งงานสมาชิกไม่ได้ — ทำคนเดียว");
+    }
+    if !ia_ready {
+        return Err("ไม่พบ ia.exe (ตัวกลางส่งงานให้สมาชิก) — ทำคนเดียว");
+    }
+    Ok(())
+}
+
+/// Claude on Anthropic can also run helpers inside its own run (subagents, fast); every other lead hands all
+/// parts out through `ask_other_ai`.
+pub fn subagents_ok(provider: &str, vendor_needs_model_name: bool) -> bool {
+    provider == "claude" && !vendor_needs_model_name
+}
+
+/// The lead's brief when it is not Claude on Anthropic: every part goes through `ask_other_ai`.
+pub fn prompt_any(helpers: u32) -> String {
+    format!(
+        "\n\n## ทำงานเป็นทีม (เจ้าของเลือกทีมไว้)\n\n\
+         คุณเป็น**หัวหน้าทีม** ส่งงานให้สมาชิกด้วยเครื่องมือ `ask_other_ai` (account, role, folder, task) พร้อมกันได้ไม่เกิน **{helpers}** งาน:\n\
+         1. แบ่งเฉพาะส่วนที่**ทำแยกกันได้จริง**และใหญ่พอ งานเล็กหรือผูกกันแน่นให้ทำเอง — การแบ่งมีต้นทุน\n\
+         2. แต่ละส่วนได้ folder ของตัวเอง (เช่น parts/ui) ห้ามสองส่วนแก้ไฟล์เดียวกัน เรียกหลายส่วนต่อกันได้เลยไม่ต้องรอทีละตัวถ้าเครื่องมือของคุณเรียกพร้อมกันได้\n\
+         3. task ต้องครบในตัว (เป้าหมาย ไฟล์ที่ต้องทำ วิธีตรวจ) สมาชิกไม่เห็นอะไรนอกจาก task\n\
+         4. รวมงานเอง ตรวจว่าเข้ากันได้ แล้วเขียนใน PROGRESS.md ว่าแบ่งงานอย่างไร ใครทำอะไร\n"
+    )
 }
 
 /// Added to the lead's prompt.
@@ -199,12 +244,15 @@ mod tests {
     }
 
     #[test]
-    fn only_where_it_can_work() {
-        assert!(applies(3, "claude", false, "build"));
-        assert!(!applies(0, "claude", false, "build"));
-        assert!(!applies(3, "codex", false, "build"));
-        assert!(!applies(3, "claude", true, "build")); // StepFun/DeepSeek through Claude Code: no Anthropic helper models
-        assert!(!applies(3, "claude", false, "replan"));
+    fn any_ai_that_takes_tools_can_lead() {
+        for lead in ["claude", "codex", "gemini", "opencode", "mistral"] {
+            assert!(applies(lead, "build", true).is_ok(), "{lead}");
+        }
+        assert!(applies("custom", "build", true).is_err()); // "my own command": no tools, so it works alone — and says so
+        assert!(applies("codex", "replan", true).is_err());
+        assert!(applies("gemini", "build", false).is_err());
+        // only Claude on Anthropic runs helpers inside its own run; StepFun/DeepSeek through Claude Code hand parts out
+        assert!(subagents_ok("claude", false) && !subagents_ok("claude", true) && !subagents_ok("codex", false));
     }
 
     #[test]

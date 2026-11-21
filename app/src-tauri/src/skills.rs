@@ -98,7 +98,7 @@ fn unquote(v: &str) -> String {
     v.to_string()
 }
 
-fn fm_get(fm: &[&str], key: &str) -> String {
+pub(crate) fn fm_get(fm: &[&str], key: &str) -> String {
     let mut i = 0;
     while i < fm.len() {
         let l = fm[i];
@@ -960,7 +960,7 @@ pub fn finish_run(c: &Connection, run_id: i64, log_path: &Path, reported: &[Stri
 
 // ---------- the shop (free public sources, GitHub only) ----------
 
-fn valid_part(s: &str) -> bool {
+pub(crate) fn valid_part(s: &str) -> bool {
     !s.is_empty() && s.len() <= 100 && s != "." && s != ".." && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
@@ -973,7 +973,7 @@ fn valid_path(p: &str) -> bool {
         && p.split('/').all(|seg| !seg.is_empty() && seg != ".." && seg != "." && seg.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ' ' | '@' | '+')))
 }
 
-fn valid_commit(s: &str) -> bool {
+pub(crate) fn valid_commit(s: &str) -> bool {
     s.len() == 40 && s.chars().all(|c| c.is_ascii_hexdigit())
 }
 
@@ -1003,7 +1003,7 @@ pub fn parse_skill_url(url: &str) -> Option<(String, String, String, String)> {
     None
 }
 
-fn http() -> Result<reqwest::Client, String> {
+pub(crate) fn http() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .user_agent("idea-autopilot-skill-shop")
         .timeout(std::time::Duration::from_secs(20))
@@ -1017,7 +1017,7 @@ fn allowed(url: &str) -> bool {
     url.starts_with("https://api.github.com/") || url.starts_with("https://raw.githubusercontent.com/")
 }
 
-async fn gh_get(url: &str) -> Result<Value, String> {
+pub(crate) async fn gh_get(url: &str) -> Result<Value, String> {
     if !allowed(url) {
         return Err("ที่อยู่นี้ไม่อยู่ในรายการที่อนุญาต".into());
     }
@@ -1038,9 +1038,18 @@ async fn gh_get(url: &str) -> Result<Value, String> {
     resp.json::<Value>().await.map_err(err)
 }
 
-async fn raw_get(owner: &str, repo: &str, commit: &str, path: &str) -> Result<String, String> {
-    if !valid_part(owner) || !valid_part(repo) || !valid_commit(commit) || !valid_path(path) {
+pub(crate) async fn raw_get(owner: &str, repo: &str, commit: &str, path: &str) -> Result<String, String> {
+    if !valid_path(path) {
         return Err("ที่อยู่ของสกิลไม่ถูกต้อง".into());
+    }
+    raw_fetch(owner, repo, commit, path).await
+}
+
+/// One text file of a public repo at an exact commit (raw.githubusercontent.com only, size-capped, UTF-8).
+/// The caller checks that `path` is the kind of file it expects.
+pub(crate) async fn raw_fetch(owner: &str, repo: &str, commit: &str, path: &str) -> Result<String, String> {
+    if !valid_part(owner) || !valid_part(repo) || !valid_commit(commit) || path.is_empty() || path.starts_with('/') || path.split('/').any(|seg| seg.is_empty() || seg == "..") {
+        return Err("ที่อยู่ของไฟล์ไม่ถูกต้อง".into());
     }
     let url = format!("https://raw.githubusercontent.com/{owner}/{repo}/{commit}/{path}");
     let resp = http()?.get(&url).send().await.map_err(|x| format!("โหลดไม่ได้: {x}"))?;
@@ -1057,7 +1066,7 @@ async fn raw_get(owner: &str, repo: &str, commit: &str, path: &str) -> Result<St
     String::from_utf8(bytes.to_vec()).map_err(|_| "ไฟล์ไม่ใช่ข้อความ UTF-8".to_string())
 }
 
-fn trust_of(owner: &str) -> &'static str {
+pub(crate) fn trust_of(owner: &str) -> &'static str {
     if KNOWN_OWNERS.contains(&owner.to_lowercase().as_str()) {
         "known"
     } else {

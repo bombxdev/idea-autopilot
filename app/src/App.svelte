@@ -13,6 +13,7 @@
   import Usage from "./pages/Usage.svelte";
   import Library from "./pages/Library.svelte";
   import Skills from "./pages/Skills.svelte";
+  import Roles from "./pages/Roles.svelte";
   import Settings from "./pages/Settings.svelte";
   import Activity from "./pages/Activity.svelte";
   import Sessions from "./pages/Sessions.svelte";
@@ -38,6 +39,7 @@
     { group: "AI" },
     { key: "quota", icon: "gauge", also: ["usage"] },
     { key: "skills", icon: "toolbox" },
+    { key: "roles", icon: "user" },
     { group: "ระบบ" },
     { key: "activity", icon: "list", also: ["sessions"] },
     { key: "settings", icon: "gear" },
@@ -178,14 +180,17 @@
     <header>
       {#if phone}<button class="ghost menubtn" aria-label="เมนู" onclick={() => (menuOpen = !menuOpen)}><Icon name="list" /></button>{/if}
       <QuickAdd />
-      <button class="status {botState.cls}" onclick={togglePause} title="คลิกเพื่อ พัก / ทำต่อ">
-        <span class="dot"></span><span class="ellipsis">{#if botState.power}<Icon name="rocket" /> {/if}{botState.text}{#if botState.step} <span>{botState.step}</span>{/if}</span>
-      </button>
-      {#if busyNow}
-        <button class="ghost small shelve" onclick={pauseAll} title="หยุดบอทและปิดแชตที่ AI กำลังทำ แล้วจำไว้ — ปิดเครื่องได้ทันที กลับมากด ▶ ทำต่อ แล้ว AI จะทำต่อจากเดิม">
-          <Icon name="pause" /> พักทั้งหมด · ปิดเครื่องได้
+      <!-- the bot's state and its stop as one column pinned to the top: it does not float mid-height when the note box grows -->
+      <div class="botctl">
+        <button class="status {botState.cls}" onclick={togglePause} title="คลิกเพื่อ พัก / ทำต่อ">
+          <span class="dot"></span><span class="ellipsis">{#if botState.power}<Icon name="rocket" /> {/if}{botState.text}{#if botState.step} <span>{botState.step}</span>{/if}</span>
         </button>
-      {/if}
+        {#if busyNow}
+          <button class="ghost small shelve" onclick={pauseAll} title="หยุดบอทและปิดแชตที่ AI กำลังทำ แล้วจำไว้ — ปิดเครื่องได้ทันที กลับมากด ▶ ทำต่อ แล้ว AI จะทำต่อจากเดิม">
+            <Icon name="pause" /> พักทั้งหมด · ปิดเครื่องได้
+          </button>
+        {/if}
+      </div>
     </header>
     {#if store.page !== "settings"}
       {#each s?.account_problems ?? [] as p (p.id)}
@@ -210,6 +215,7 @@
       {:else if store.page === "sessions"}<Sessions />
       {:else if store.page === "library"}<Library />
       {:else if store.page === "skills"}<Skills />
+      {:else if store.page === "roles"}<Roles />
       {:else if store.page === "activity"}<Activity />
       {:else}<Settings />{/if}
     </section>
@@ -254,7 +260,10 @@
   .kbd { display: flex; justify-content: space-between; align-items: center; color: var(--text-3); }
   kbd { font-family: inherit; font-size: 11px; border: 1px solid var(--line-2); border-radius: 5px; padding: 0 5px; }
   main { display: flex; flex-direction: column; min-width: 0; height: 100vh; }
-  header { display: flex; gap: 12px; align-items: center; padding: 14px 28px; border-bottom: 1px solid var(--line); }
+  header { display: flex; gap: 20px; align-items: flex-start; padding: 14px 28px; border-bottom: 1px solid var(--line); }
+  .botctl { flex: 0 0 clamp(210px, 20vw, 300px); display: flex; flex-direction: column; align-items: stretch; gap: 6px; padding-top: 4px; }
+  .botctl .status { max-width: none; }
+  .botctl .shelve { justify-content: center; color: var(--text-2); }
   .page { flex: 1; overflow: auto; padding: 24px 28px 60px; }
   .shelve { white-space: nowrap; flex: none; }
   .page.full { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
@@ -289,4 +298,5 @@
   .phone .page:not(.full) { padding: 14px 12px 60px; }
   .phone .connbar { padding: 8px 12px; flex-wrap: wrap; }
   .phone .shelve { white-space: normal; }
+  .phone .botctl { flex: 1 1 100%; flex-direction: row; padding-top: 0; }
 </style>

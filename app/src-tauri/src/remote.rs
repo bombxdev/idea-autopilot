@@ -1556,7 +1556,7 @@ mod tests {
         let auto = ChatAi { account: "auto".into(), model: "".into(), effort: "auto".into() };
         let r = auto.resolved(&c, 5);
         assert_eq!((r.account.as_str(), r.model.as_str(), r.effort.as_str()), ("", "", ""));
-        crate::idea_ai::set(&c, 5, &crate::idea_ai::IdeaAi { account: "claude01".into(), model: "opus".into(), effort: "high".into(), skills: vec![], team: 0 }).unwrap();
+        crate::idea_ai::set(&c, 5, &crate::idea_ai::IdeaAi { account: "claude01".into(), model: "opus".into(), effort: "high".into(), skills: vec![], team: String::new() }).unwrap();
         let r = auto.resolved(&c, 5);
         assert_eq!((r.account.as_str(), r.model.as_str(), r.effort.as_str()), ("claude01", "opus", "high"));
         // another account chosen: the idea's model is not carried over to it

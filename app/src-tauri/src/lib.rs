@@ -37,6 +37,8 @@ mod scheduler;
 mod tuner;
 mod skill;
 mod skillspector;
+mod roles;
+mod teams;
 mod skills;
 mod state;
 mod sync;
@@ -496,6 +498,25 @@ pub fn run() {
             commands::takeover,
             commands::show_main,
             skills::skills_list,
+            roles::roles_list,
+            teams::teams_list,
+            teams::team_save,
+            teams::team_delete,
+            teams::team_preset,
+            teams::team_suggest,
+            teams::team_export,
+            teams::team_check_text,
+            teams::team_import_text,
+            commands::idea_team_parts,
+            roles::role_save,
+            roles::role_delete,
+            roles::role_export,
+            roles::role_check_text,
+            roles::role_import_text,
+            roles::roles_shop_search,
+            roles::roles_shop_browse,
+            roles::roles_shop_preview,
+            roles::roles_shop_install,
             skills::skills_read,
             skills::skills_set,
             skills::skills_delete,
@@ -544,6 +565,7 @@ pub fn run() {
             commands::mcp_local,
             commands::mcp_import,
             commands::mcp_search,
+            commands::mcp_popular,
             commands::mcp_install,
             commands::mcp_set,
             commands::mcp_remove,

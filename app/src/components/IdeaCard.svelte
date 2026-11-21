@@ -42,6 +42,7 @@
     {#if limited}<span class="chip amber" title={limited.why}><Icon name="hourglass" /> ติดลิมิต · รอถึง {clock(limited.until)}</span>{/if}
     {#if usingNow}<span class="chip ai-now" title={usingNow.why}><Icon name={cur ? "bot" : "chat"} /> {usingNow.text}</span>
     {:else if pinned && (pinned.account || pinned.model || pinned.effort)}<span class="chip" title="AI ที่เลือกไว้สำหรับไอเดียนี้"><Icon name="bot" /> {[pinned.account, pinned.model, pinned.effort].filter(Boolean).join(" · ")}</span>{/if}
+    {#if typeof pinned?.team === "string" && pinned.team}<span class="chip" title="ทีมที่ทำไอเดียนี้ (ดูว่าใครทำส่วนไหนในหน้าไอเดีย)"><Icon name="user" /> ทีม</span>{/if}
     {#if idea.knowledge}<span class="chip"><Icon name="book" /> มีในคลัง</span>{/if}
   </div>
 

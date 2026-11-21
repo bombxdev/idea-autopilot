@@ -412,7 +412,8 @@ fn team_mcp(args: &[String]) {
           "inputSchema": { "type": "object", "required": ["account", "folder", "task"], "properties": {
             "account": { "type": "string", "description": "an account id from list_other_ais" },
             "folder": { "type": "string", "description": "sub-folder of the idea folder for this part, e.g. parts/api" },
-            "task": { "type": "string", "description": "the whole task: goal, files to make, how to check it" } } } }
+            "task": { "type": "string", "description": "the whole task: goal, files to make, how to check it" },
+            "role": { "type": "string", "description": "optional: the slug of the owner's team role this AI plays (from the team list in your brief)" } } } }
     ]);
     let stdin = std::io::stdin();
     let mut out = std::io::stdout();
@@ -429,7 +430,7 @@ fn team_mcp(args: &[String]) {
                 let p = &req["params"]["arguments"];
                 let r = match req["params"]["name"].as_str().unwrap_or("") {
                     "list_other_ais" => call("team_accounts", json!({ "exclude": exclude })),
-                    "ask_other_ai" => call_t("delegate", json!({ "idea": idea, "account": p["account"], "folder": p["folder"], "task": p["task"] }), 40 * 60),
+                    "ask_other_ai" => call_t("delegate", json!({ "idea": idea, "account": p["account"], "folder": p["folder"], "task": p["task"], "role": p["role"] }), 40 * 60),
                     other => Err(format!("unknown tool {other}")),
                 };
                 Ok(match r {

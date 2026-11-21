@@ -73,3 +73,18 @@ Like a team: one lead splits the work, several helpers run at the same time, the
   once).
 - **Setting**: per idea "Team mode: off / 2–3 helpers / max", default off; the lead decides whether a stage is worth
   splitting (a small task stays single).
+
+## Proposed 2026-11-21 (after ISSUE-122/123) — to make it more fun and smoother
+Built now: roles with personas (ISSUE-122), popular MCP tools (ISSUE-123). Next, each with the moment to start it:
+| Idea | Why | Trigger to start |
+|---|---|---|
+| **Persona from chat**: a "make my persona" button that asks 6 short questions (tap-to-answer) and drafts the persona; refine from the owner's own chat messages (shown for approval) | The persona the owner asked for, without writing it | After a first role with a persona has run in a real team round |
+| **Team presets**: one click = a whole team ("web app": front-end + back-end + tester + reviewer) from the installed roles | Low friction; the team is ready in one tap | When ≥ 5 roles are installed |
+| **Per-idea team**: pick which roles join this idea (default: all "in the team") | A marketing idea does not need a back-end dev | After team mode has run on 3+ real ideas |
+| **Role stats** like skill stats: parts given, finished OK, tokens per part | Recipes become decisions (philosophy above) | After 10+ team rounds |
+| **Community hub** = a GitHub repo `idea-autopilot-community` with `roles/`, `skills/`; the shop lists it first; stars/👍 = popularity; sharing = a PR the app prepares | Sharing with stars, no server, free | When the first 3 friends share a role |
+| **Tool bundles in roles**: a role can need tools (MCP) like skills do; the run gets them only when that role works | Each member brings its own tools | When a role needs a tool for real |
+| **Command palette actions** (Ctrl+K): "new member", "install tool", "run team on #12" | Faster for power users | Any time — small |
+| **Onboarding tour** (30 s, skippable) and sample idea | New users see value in the first minute | Before the next public announcement |
+| **Health dashboard**: one card "everything OK?" (logins, quota reads, tools reachable, last run) with fix buttons | Fewer silent stalls (see ISSUE-056/058) | When a user reports a stall again |
+

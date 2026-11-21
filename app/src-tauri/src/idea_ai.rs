@@ -22,14 +22,23 @@ pub struct IdeaAi {
     /// skills named with /name when the idea was added: always offered to the AI for this idea
     #[serde(default)]
     pub skills: Vec<String>,
-    /// team mode (team.rs): how many helpers the lead may run at once; 0 = off
-    #[serde(default)]
-    pub team: u32,
+    /// the named team that works on this idea (teams.rs); "" = the AI alone. v0.9.0 stored a helper count:
+    /// any number above 0 reads as the team made from those days ("my-team")
+    #[serde(default, deserialize_with = "team_compat")]
+    pub team: String,
+}
+
+fn team_compat<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    Ok(match Value::deserialize(d)? {
+        Value::String(s) => s,
+        Value::Number(n) if n.as_u64().unwrap_or(0) > 0 => "my-team".into(),
+        _ => String::new(),
+    })
 }
 
 impl IdeaAi {
     pub fn is_empty(&self) -> bool {
-        self.account.is_empty() && self.model_forced().is_none() && self.effort_forced().is_none() && self.skills.is_empty() && self.team == 0
+        self.account.is_empty() && self.model_forced().is_none() && self.effort_forced().is_none() && self.skills.is_empty() && self.team.is_empty()
     }
 
     pub fn model_forced(&self) -> Option<&str> {
@@ -90,16 +99,26 @@ mod tests {
         };
         crate::accounts::save(&c, &[acct("codex01", true), acct("off01", false)]).unwrap();
         // pinned to an account that is switched off: as if not pinned
-        set(&c, 5, &IdeaAi { account: "off01".into(), model: "auto".into(), effort: "auto".into(), skills: vec![], team: 0 }).unwrap();
+        set(&c, 5, &IdeaAi { account: "off01".into(), model: "auto".into(), effort: "auto".into(), skills: vec![], team: String::new() }).unwrap();
         assert!(pinned_account(&c, 5).is_none());
         assert!(get(&c, 3).is_none());
-        set(&c, 3, &IdeaAi { account: "codex01".into(), model: "gpt-6.1-sol".into(), effort: "high".into(), skills: vec![], team: 0 }).unwrap();
+        set(&c, 3, &IdeaAi { account: "codex01".into(), model: "gpt-6.1-sol".into(), effort: "high".into(), skills: vec![], team: String::new() }).unwrap();
         let a = get(&c, 3).unwrap();
         assert_eq!((a.model_forced(), a.effort_forced()), (Some("gpt-6.1-sol"), Some("high")));
         assert_eq!(pinned_account(&c, 3).as_deref(), Some("codex01"));
         assert!(pinned_account(&c, 4).is_none());
         // "auto" everywhere and nothing pinned = no entry at all
-        set(&c, 3, &IdeaAi { account: String::new(), model: "auto".into(), effort: "auto".into(), skills: vec![], team: 0 }).unwrap();
+        set(&c, 3, &IdeaAi { account: String::new(), model: "auto".into(), effort: "auto".into(), skills: vec![], team: String::new() }).unwrap();
         assert!(get(&c, 3).is_none());
+    }
+
+    #[test]
+    fn old_helper_counts_read_as_the_old_team() {
+        let a: IdeaAi = serde_json::from_str(r#"{"team":3}"#).unwrap();
+        assert_eq!(a.team, "my-team");
+        let b: IdeaAi = serde_json::from_str(r#"{"team":0}"#).unwrap();
+        assert!(b.team.is_empty() && b.is_empty());
+        let c: IdeaAi = serde_json::from_str(r#"{"team":"web-app"}"#).unwrap();
+        assert_eq!(c.team, "web-app");
     }
 }

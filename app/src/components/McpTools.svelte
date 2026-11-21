@@ -30,12 +30,19 @@
   }
   onMount(load);
 
-  async function search() {
+  // "popular" = well-known tools from the companies that make them, most GitHub stars first; "new" = newest in the registry
+  let tab = $state("popular");
+  async function search(which = tab) {
+    tab = which;
     searching = true;
     open = null;
-    try { found = (await api.mcpSearch(q.trim())).servers; } catch (e) { found = []; toast(String(e), "err"); }
+    cat = "";
+    try {
+      found = which === "popular" && !q.trim() ? (await api.mcpPopular()).servers : (await api.mcpSearch(q.trim())).servers;
+    } catch (e) { found = []; toast(String(e), "err"); }
     searching = false;
   }
+  onMount(() => search("popular"));
   const catCounts = $derived.by(() => {
     const m = new Map();
     for (const r of found ?? []) m.set(r.category || "other", (m.get(r.category || "other") ?? 0) + 1);
@@ -126,11 +133,16 @@
   {/each}
 {/if}
 
-<h3>ค้นหาจาก MCP Registry (ทางการ · ฟรี)</h3>
-<form class="row" onsubmit={(e) => { e.preventDefault(); search(); }}>
-  <input class="grow" bind:value={q} placeholder="เช่น browser, postgres, github (เว้นว่าง = ตัวใหม่ล่าสุด)" />
+<h3>หาเครื่องมือ (MCP Registry ทางการ · ฟรี)</h3>
+<div class="row wrap">
+  <button class="chip" class:on={tab === "popular" && !q.trim()} onclick={() => { q = ""; search("popular"); }}>ยอดนิยม</button>
+  <button class="chip" class:on={tab === "new" && !q.trim()} onclick={() => { q = ""; search("new"); }}>มาใหม่</button>
+</div>
+<form class="row" onsubmit={(e) => { e.preventDefault(); search("search"); }}>
+  <input class="grow" bind:value={q} placeholder="ค้นหา เช่น browser, postgres, github, notion" />
   <button class="primary" disabled={searching}>{searching ? "กำลังค้นหา…" : "ค้นหา"}</button>
 </form>
+{#if tab === "popular" && !q.trim()}<p class="faint small">เครื่องมือที่ใช้กันมาก จากบริษัทหรือโปรเจกต์ที่ทำเอง เรียงตามดาวบน GitHub · ดาวบอกความนิยม ไม่ได้รับรองความปลอดภัย</p>{/if}
 {#if found}
   {#if catCounts.length > 1}
     <div class="row wrap cats">
@@ -140,7 +152,7 @@
   {/if}
   {#each shown as r (r.name)}
     <div class="card tool">
-      <div class="row wrap"><b class="grow">{r.title || r.name}</b><span class="faint small">{cats[r.category || "other"]}</span><span class="faint small">v{r.version} · {r.published?.slice(0, 10)}</span></div>
+      <div class="row wrap"><b class="grow">{r.title || r.name}</b><span class="faint small">{cats[r.category || "other"]}</span>{#if r.stars != null}<span class="faint small">★ {r.stars.toLocaleString()}</span>{/if}<span class="faint small">v{r.version} · {r.published?.slice(0, 10)}</span></div>
       <div class="muted small">{r.description}</div>
       <div class="row wrap small"><span class="faint mono">{r.name}</span>{#if r.repo}<a href={r.repo} target="_blank" rel="noreferrer">source</a>{/if}
         <span class="grow"></span><button class="small" onclick={() => pick(r)}>ติดตั้ง…</button></div>

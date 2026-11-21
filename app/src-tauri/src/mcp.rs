@@ -213,6 +213,89 @@ fn shop_item(s: &Value, published: &str) -> Value {
     })
 }
 
+/// Well-known tools, each from the company or project that makes it: (registry name, category, GitHub repo for
+/// stars). "Popular" = these, most stars first; everything else is found by searching the registry.
+pub const POPULAR: &[(&str, &str, &str)] = &[
+    ("io.github.github/github-mcp-server", "code", "github/github-mcp-server"),
+    ("io.github.upstash/context7", "docs", "upstash/context7"),
+    ("io.github.ChromeDevTools/chrome-devtools-mcp", "test", "ChromeDevTools/chrome-devtools-mcp"),
+    ("io.github.wonderwhy-er/desktop-commander", "devops", "wonderwhy-er/DesktopCommanderMCP"),
+    ("io.github.oraios/serena", "code", "oraios/serena"),
+    ("io.github.GLips/Figma-Context-MCP", "design", "GLips/Figma-Context-MCP"),
+    ("io.github.firecrawl/firecrawl-mcp-server", "research", "firecrawl/firecrawl-mcp-server"),
+    ("io.github.brave/brave-search-mcp-server", "research", "brave/brave-search-mcp-server"),
+    ("io.github.tavily-ai/tavily-mcp", "research", "tavily-ai/tavily-mcp"),
+    ("ai.exa/exa", "research", "exa-labs/exa-mcp-server"),
+    ("com.notion/mcp", "business", "makenotion/notion-mcp-server"),
+    ("com.supabase/mcp", "data", "supabase-community/supabase-mcp"),
+    ("io.github.mongodb-js/mongodb-mcp-server", "data", "mongodb-js/mongodb-mcp-server"),
+    ("com.atlassian/atlassian-mcp-server", "business", "atlassian/atlassian-mcp-server"),
+    ("app.linear/linear", "business", ""),
+    ("com.stripe/mcp", "business", "stripe/agent-toolkit"),
+    ("co.huggingface/hf-mcp-server", "agents", "huggingface/hf-mcp-server"),
+    ("io.github.arben-adm/mcp-sequential-thinking", "agents", "arben-adm/mcp-sequential-thinking"),
+];
+
+static POPULAR_CACHE: std::sync::Mutex<Option<(std::time::Instant, Value)>> = std::sync::Mutex::new(None);
+
+async fn registry_entry(name: String) -> Option<Value> {
+    let mut url = reqwest::Url::parse(REGISTRY).ok()?;
+    url.query_pairs_mut().append_pair("search", &name).append_pair("version", "latest").append_pair("limit", "20");
+    let c = reqwest::Client::builder().timeout(std::time::Duration::from_secs(20)).build().ok()?;
+    let v: Value = c.get(url).header("User-Agent", "idea-autopilot").send().await.ok()?.json().await.ok()?;
+    v["servers"].as_array()?.iter().find(|x| x["server"]["name"].as_str() == Some(name.as_str())).cloned()
+}
+
+/// The well-known tools with their GitHub stars, most first (kept for 6 hours: GitHub allows few requests).
+pub async fn popular() -> Result<Value, String> {
+    if let Some((t, v)) = POPULAR_CACHE.lock().unwrap().as_ref() {
+        if t.elapsed() < std::time::Duration::from_secs(6 * 3600) {
+            return Ok(v.clone());
+        }
+    }
+    let mut jobs = tokio::task::JoinSet::new();
+    for (i, (name, _, _)) in POPULAR.iter().enumerate() {
+        let n = name.to_string();
+        jobs.spawn(async move { (i, registry_entry(n).await) });
+    }
+    // stars: a few repos per search (a query may be at most 256 characters)
+    let mut stars: BTreeMap<String, i64> = BTreeMap::new();
+    let repos: Vec<&str> = POPULAR.iter().map(|p| p.2).filter(|r| !r.is_empty()).collect();
+    for chunk in repos.chunks(7) {
+        let q = chunk.iter().map(|r| format!("repo:{r}")).collect::<Vec<_>>().join(" ");
+        if let Ok(url) = reqwest::Url::parse_with_params("https://api.github.com/search/repositories", &[("q", q.as_str()), ("per_page", "20")]) {
+            if let Ok(v) = crate::skills::gh_get(url.as_str()).await {
+                for it in v["items"].as_array().into_iter().flatten() {
+                    stars.insert(it["full_name"].as_str().unwrap_or("").to_lowercase(), it["stargazers_count"].as_i64().unwrap_or(0));
+                }
+            }
+        }
+    }
+    let mut items = Vec::new();
+    while let Some(Ok((i, entry))) = jobs.join_next().await {
+        let Some(x) = entry else { continue };
+        let (_, cat, repo) = POPULAR[i];
+        let mut it = shop_item(&x["server"], x["_meta"]["io.modelcontextprotocol.registry/official"]["publishedAt"].as_str().unwrap_or(""));
+        if it["ways"].as_array().is_none_or(|w| w.is_empty()) {
+            continue;
+        }
+        it["category"] = json!(cat);
+        it["stars"] = stars.get(&repo.to_lowercase()).map(|s| json!(s)).unwrap_or(Value::Null);
+        it["popular"] = json!(true);
+        items.push(it);
+    }
+    items.sort_by_key(|v| std::cmp::Reverse(v["stars"].as_i64().unwrap_or(-1)));
+    let out = json!({ "servers": items, "note": if stars.is_empty() { "อ่านจำนวนดาวจาก GitHub ไม่ได้ตอนนี้ — เรียงตามรายการ" } else { "" } });
+    if !items_empty(&out) {
+        *POPULAR_CACHE.lock().unwrap() = Some((std::time::Instant::now(), out.clone()));
+    }
+    Ok(out)
+}
+
+fn items_empty(v: &Value) -> bool {
+    v["servers"].as_array().is_none_or(|a| a.is_empty())
+}
+
 /// Search the registry (newest first when nothing is typed: "try the new ones first").
 pub async fn search(query: &str) -> Result<Value, String> {
     let mut url = reqwest::Url::parse(REGISTRY).map_err(|e| e.to_string())?;
@@ -594,5 +677,18 @@ mod tests {
         assert_eq!(pkg_command(&json!({ "registryType": "pypi", "identifier": "srv", "version": "2" })).unwrap(), ("uvx".into(), vec!["srv==2".into()]));
         assert!(pkg_command(&json!({ "registryType": "oci", "identifier": "img" })).is_none());
         assert_eq!(slug("io.github.someone/My Tool"), "my-tool");
+    }
+
+    /// Talks to the registry and GitHub: `cargo test mcp::tests::live -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn live_popular_tools_resolve_in_the_registry() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let v = rt.block_on(popular()).unwrap();
+        let items = v["servers"].as_array().unwrap();
+        for it in items {
+            println!("{} ★{} {}", it["name"], it["stars"], it["ways"].as_array().unwrap().len());
+        }
+        assert!(items.len() >= POPULAR.len() - 4, "only {} of {} found", items.len(), POPULAR.len());
     }
 }

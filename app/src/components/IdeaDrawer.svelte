@@ -1,4 +1,6 @@
 <script>
+  import TeamPick from "./TeamPick.svelte";
+  import TeamCard from "./TeamCard.svelte";
   import Icon from "./Icon.svelte";
   import { store, stageLabel, refresh, toast, progress, stepGroups, fixing } from "../lib/store.svelte.js";
   import { api, ago, clock, hm, dayBreak, STATUS } from "../lib/api.js";
@@ -49,12 +51,12 @@
       toast(String(e), "err");
     }
   }
-  // team mode (team.rs): the lead may run helpers at once — faster on big work that splits, more quota at once
-  const team = $derived(store.state?.idea_ai?.[id]?.team ?? 0);
-  async function saveTeam(n) {
+  // team mode (teams.rs + team.rs): a named team led by this idea's AI — any AI that takes tools
+  const team = $derived(typeof store.state?.idea_ai?.[id]?.team === "string" ? store.state.idea_ai[id].team : "");
+  async function saveTeam(slug) {
     try {
-      await api.ideaTeamSet(id, Number(n));
-      toast(Number(n) ? `โหมดทีม: ผู้ช่วยพร้อมกันได้ ${n} ตัว (ใช้กับบัญชี Claude)` : "ปิดโหมดทีม", "ok", 2200);
+      await api.ideaTeamSet(id, slug);
+      toast(slug ? "ให้ทีมนี้ทำไอเดียนี้แล้ว — หัวหน้าทีมคือ AI ของไอเดีย" : "ให้ AI ตัวเดียวทำ", "ok", 2200);
       refresh();
     } catch (e) {
       toast(String(e), "err");
@@ -229,15 +231,10 @@
       {/if}
       <div class="row small"><span class="faint">เก็บในชุด</span><Scope value={idea.scope ?? "personal"} onchange={saveScope} /></div>
       <IdeaAi bind:value={aiVal} onchange={saveAi} />
-      <div class="row small teamrow" title="AI หัวหน้าแบ่งงานที่แยกกันได้ให้ผู้ช่วยทำพร้อมกัน (Sonnet งานทั่วไป · Haiku งานง่าย · ตัวตรวจงาน) — เสร็จเร็วขึ้นกับงานใหญ่ แต่ใช้โควต้าเร็วขึ้นตามจำนวนผู้ช่วย งานเล็กหัวหน้าจะทำเอง · ใช้กับบัญชี Claude">
-        <span class="faint"><Icon name="user" /> ทำงานเป็นทีม</span>
-        <select value={String(team)} onchange={(e) => saveTeam(e.currentTarget.value)}>
-          <option value="0">ปิด (AI ตัวเดียว)</option>
-          <option value="2">หัวหน้า + ผู้ช่วย 2</option>
-          <option value="3">หัวหน้า + ผู้ช่วย 3</option>
-          <option value="5">หัวหน้า + ผู้ช่วย 5 (ใช้โควต้าเร็ว)</option>
-        </select>
+      <div class="row small teamrow" title="ให้ทีมแบ่งงานที่แยกกันได้ทำพร้อมกัน — เสร็จเร็วขึ้นกับงานใหญ่ แต่ใช้โควต้าเร็วขึ้น งานเล็กหัวหน้าทำเอง · หัวหน้าเป็น AI ตัวไหนก็ได้ที่รับเครื่องมือ (MCP)">
+        <TeamPick value={team} text={idea.title + " " + (idea.body ?? "")} onchange={saveTeam} />
       </div>
+      {#if team}<TeamCard {id} {team} />{/if}
       <Actions {idea} />
       <!-- the bot's run of this idea, live (the same panel as on the morning page), for every AI -->
       {#if running}<LiveLog />

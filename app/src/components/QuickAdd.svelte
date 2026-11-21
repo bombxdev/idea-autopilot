@@ -5,6 +5,7 @@
   import Attach from "./Attach.svelte";
   import SkillMenu from "./SkillMenu.svelte";
   import IdeaAi from "./IdeaAi.svelte";
+  import TeamPick from "./TeamPick.svelte";
   import Scope from "./Scope.svelte";
   import Icon from "./Icon.svelte";
   import { autogrow } from "../lib/autogrow.js";
@@ -19,7 +20,7 @@
   let att;
   let staged = $state([]);
   let menu;
-  let ai = $state({ account: "", model: "", effort: "" });
+  let ai = $state({ account: "", model: "", effort: "", team: "" });
   let scope = $state("personal"); // starts as the last set used
 
   onMount(async () => {
@@ -52,7 +53,7 @@
       // files only: the idea is named after them
       await api.addIdea(text.trim() ? text : `ไอเดียจากไฟล์แนบ: ${staged.map((s) => s.name).join(", ")}`, staged.map((s) => s.token), ai, scope);
       att?.reset();
-      ai = { account: "", model: "", effort: "" };
+      ai = { account: "", model: "", effort: "", team: "" };
       text = "";
       big = false;
       toast("จดแล้ว — ยังแก้ข้อความได้ในหน้าไอเดียก่อนบอทเริ่มทำ (ประมาณ 1–2 นาที)", "ok", 4500);
@@ -109,6 +110,7 @@
   <Attach bind:this={att} bind:staged fallback priority={1} />
   <Scope bind:value={scope} compact />
   <IdeaAi bind:value={ai} />
+  <TeamPick bind:value={ai.team} {text} />
   {#if err}<span class="err">{err}</span>{/if}
   {#if big}<div class="bigbar"><span class="faint small grow">Ctrl+Enter จดไอเดีย · Esc ย่อกลับ</span><button type="button" class="ghost" onclick={() => (big = false)}>ย่อกลับ</button><button type="button" class="primary" onclick={submit}>จดไอเดีย</button></div>{/if}
 </div>

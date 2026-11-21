@@ -103,7 +103,9 @@
   $effect(() => {
     vendorId;
     const taken = !!machineTaken;
-    if (!isoTouched) isolated = taken;
+    // the machine's own login already belongs to another account: this one must keep its own login (locked on)
+    if (taken) isolated = true;
+    else if (!isoTouched) isolated = false;
   });
   $effect(() => {
     // keep the sign-in method valid for the chosen provider
@@ -529,7 +531,7 @@
           {/if}
         </div>
       {:else}
-        <label class="small"><input type="checkbox" bind:checked={isolated} onchange={() => (isoTouched = true)} /> บัญชีนี้ต่างจากที่ล็อกอินไว้ในเครื่อง (ล็อกอินแยก)</label>
+        <label class="small" class:locked={!!machineTaken} title={machineTaken ? `ล็อกอินของเครื่องใช้กับ “${machineTaken.label || machineTaken.id}” อยู่แล้ว บัญชีใหม่จึงต้องล็อกอินแยก` : ""}><input type="checkbox" bind:checked={isolated} disabled={!!machineTaken} onchange={() => (isoTouched = true)} /> บัญชีนี้ต่างจากที่ล็อกอินไว้ในเครื่อง (ล็อกอินแยก){#if machineTaken}{" "}— บังคับ{/if}</label>
         <div class="small faint">
           {#if isolated}
             ล็อกอินเก็บในโฟลเดอร์ของบัญชีนี้ ไม่ทับล็อกอินหลักของเครื่อง — กด “ล็อกอิน” หลังเพิ่ม{#if machineTaken}{" "}(ล็อกอินของเครื่องใช้กับ “{machineTaken.label || machineTaken.id}” อยู่แล้ว){/if}
@@ -562,6 +564,7 @@
   .grp { margin-top: 6px; font-weight: 600; letter-spacing: 0.02em; }
   .mv { display: inline-flex; flex-direction: column; gap: 1px; }
   .mv button { padding: 0 6px; line-height: 1.1; font-size: 10px; }
+  .locked { opacity: 0.85; cursor: not-allowed; }
   .acc { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; background: var(--bg-2); }
   .acc.active { border-color: var(--teal); }
   .acc.off { opacity: 0.6; }

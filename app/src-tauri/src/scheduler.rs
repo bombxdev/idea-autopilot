@@ -820,18 +820,38 @@ fn launch(app: AppHandle, idea: Idea, stage: String, forced: bool, power: bool) 
         choice.reason
     ));
 
-    // team mode (team.rs): the lead may run helpers at once — only where it can work
-    let helpers = idea_cfg.as_ref().map(|c| c.team).unwrap_or(0);
+    // team mode (teams.rs + team.rs): the idea's team, led by this run's AI — any AI that takes tools (MCP)
+    let team = idea_cfg.as_ref().map(|c| c.team.clone()).filter(|t| !t.is_empty()).and_then(|t| crate::teams::find(&st.root, &t));
     let needs_name = account.as_ref().and_then(|a| crate::catalog::vendor(&a.vendor_id())).is_some_and(crate::catalog::needs_model_name);
-    let team_on = crate::team::applies(helpers, &provider, needs_name, &stage);
-    // other vendors' AIs as helpers too (through `ia team-mcp`), when there are other accounts
     let lead_account = account.as_ref().map(|a| a.id.clone()).unwrap_or_default();
-    let team_others = team_on && !crate::team::other_accounts(&st.db.lock(), &lead_account).is_empty() && crate::video::ia_exe().is_some();
-    let prompt = if team_on {
-        st.push_log(format!("👥 โหมดทีม: หัวหน้า + ผู้ช่วยได้พร้อมกัน {helpers} ตัว{}", if team_others { " + ส่งงานให้ AI ค่ายอื่นได้" } else { "" }));
-        format!("{prompt}{}{}", crate::team::prompt(helpers), if team_others { crate::team::prompt_others() } else { "" })
-    } else {
-        prompt
+    let team_on = match &team {
+        Some(t) => match crate::team::applies(&provider, &stage, crate::video::ia_exe().is_some()) {
+            Ok(()) => true,
+            Err(why) => {
+                st.push_log(format!("👥 ทีม {}: {why}", t.name));
+                false
+            }
+        },
+        None => false,
+    };
+    let subagents_ok = team_on && crate::team::subagents_ok(&provider, needs_name);
+    // a Claude lead uses `ask_other_ai` only when someone works on another account; every other lead always does
+    let team_roles: Vec<crate::roles::Role> = team.as_ref().filter(|_| team_on).map(|t| crate::teams::members(&st.root, t)).unwrap_or_default();
+    let team_others = team_on && (!subagents_ok || team_roles.iter().any(|r| !r.account.is_empty()) || !crate::team::other_accounts(&st.db.lock(), &lead_account).is_empty());
+    let prompt = match team.as_ref().filter(|_| team_on) {
+        Some(t) => {
+            let helpers = t.helpers.max(1);
+            st.push_log(format!(
+                "👥 ทีม {} {}: หัวหน้า {} · สมาชิก {}",
+                t.emoji,
+                t.name,
+                if lead_account.is_empty() { provider.clone() } else { lead_account.clone() },
+                if team_roles.is_empty() { "ผู้ช่วยทั่วไป".to_string() } else { team_roles.iter().map(|r| r.name.clone()).collect::<Vec<_>>().join(", ") }
+            ));
+            let how = if subagents_ok { format!("{}{}", crate::team::prompt(helpers), if team_others { crate::team::prompt_others() } else { "" }) } else { crate::team::prompt_any(helpers) };
+            format!("{prompt}{how}{}", crate::roles::team_prompt(&t.name, &team_roles, &lead_account, subagents_ok))
+        }
+        None => prompt,
     };
 
     tauri::async_runtime::spawn(async move {
@@ -853,8 +873,8 @@ fn launch(app: AppHandle, idea: Idea, stage: String, forced: bool, power: bool) 
                 lang: &lang,
                 env: {
                     let mut env = account.as_ref().map(|a| crate::accounts::env_with_secret(a, &st.root)).unwrap_or_default();
-                    if team_on {
-                        if let Some(p) = crate::team::agents_file(&st.root) {
+                    if subagents_ok {
+                        if let Some(p) = crate::team::agents_file(&st.root, &team_roles) {
                             env.push((crate::team::TEAM_ENV.into(), p.to_string_lossy().into_owned()));
                         }
                     }
@@ -1030,6 +1050,8 @@ fn finish(app: &AppHandle, idea_id: i64, run_id: i64, stage: &str, out: &runner:
         let reported = status.as_ref().map(|s| s.skills_used.clone()).unwrap_or_default();
         let log = dir.join("logs").join(format!("run-{run_id:05}-{stage}.jsonl"));
         crate::skills::finish_run(&st.db.lock(), run_id, &log, &reported);
+        // parts a Claude lead gave to its own helpers (subagents) — the other parts are recorded as they are handed out
+        crate::db::team_parts_from_log(&st.db.lock(), idea_id, &log);
     }
 
     // OmniRoute: which provider/model really did this run (the run itself only knows "auto/coding" or a combo)

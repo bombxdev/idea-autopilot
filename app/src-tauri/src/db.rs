@@ -116,6 +116,18 @@ pub fn open(path: &Path) -> Result<Connection> {
             license TEXT NOT NULL DEFAULT '',
             installed INTEGER NOT NULL DEFAULT 0
         );
+        CREATE TABLE IF NOT EXISTS team_parts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            idea_id INTEGER NOT NULL,
+            role TEXT NOT NULL DEFAULT '',
+            account TEXT NOT NULL DEFAULT '',
+            model TEXT NOT NULL DEFAULT '',
+            folder TEXT NOT NULL DEFAULT '',
+            task TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'running',
+            started INTEGER NOT NULL,
+            ended INTEGER
+        );
         CREATE TABLE IF NOT EXISTS skill_runs (
             run_id INTEGER NOT NULL,
             slug TEXT NOT NULL,
@@ -844,3 +856,44 @@ mod account_usage_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+// ---------- team parts: who did which part of an idea (team mode) ----------
+
+pub fn team_part_start(c: &Connection, idea_id: i64, role: &str, account: &str, model: &str, folder: &str, task: &str) -> i64 {
+    let t: String = task.chars().take(300).collect();
+    let _ = c.execute("INSERT INTO team_parts(idea_id, role, account, model, folder, task, started) VALUES(?1,?2,?3,?4,?5,?6,?7)", rusqlite::params![idea_id, role, account, model, folder, t, now()]);
+    c.last_insert_rowid()
+}
+
+pub fn team_part_end(c: &Connection, id: i64, status: &str) {
+    let _ = c.execute("UPDATE team_parts SET status=?2, ended=?3 WHERE id=?1", rusqlite::params![id, status, now()]);
+}
+
+/// Parts a Claude lead gave to its own helpers: the `Task` calls in the run's log (one line of JSON per event).
+pub fn team_parts_from_log(c: &Connection, idea_id: i64, log: &std::path::Path) {
+    let Ok(text) = std::fs::read_to_string(log) else { return };
+    for line in text.lines().filter(|l| l.contains("\"Task\"") || l.contains("\"Agent\"")) {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+        for it in v["message"]["content"].as_array().into_iter().flatten() {
+            if it["type"] != "tool_use" || !matches!(it["name"].as_str(), Some("Task" | "Agent")) {
+                continue;
+            }
+            let who = it["input"]["subagent_type"].as_str().unwrap_or("helper");
+            let role = who.strip_prefix("role-").unwrap_or(who);
+            let task = it["input"]["description"].as_str().or(it["input"]["prompt"].as_str()).unwrap_or("");
+            let id = team_part_start(c, idea_id, role, "", "", "", task);
+            team_part_end(c, id, "ok");
+        }
+    }
+}
+
+pub fn team_parts(c: &Connection, idea_id: i64) -> Vec<serde_json::Value> {
+    let Ok(mut st) = c.prepare("SELECT role, account, model, folder, task, status, started, ended FROM team_parts WHERE idea_id=?1 ORDER BY id DESC LIMIT 40") else { return vec![] };
+    st.query_map([idea_id], |r| {
+        Ok(serde_json::json!({ "role": r.get::<_, String>(0)?, "account": r.get::<_, String>(1)?, "model": r.get::<_, String>(2)?, "folder": r.get::<_, String>(3)?,
+            "task": r.get::<_, String>(4)?, "status": r.get::<_, String>(5)?, "started": r.get::<_, i64>(6)?, "ended": r.get::<_, Option<i64>>(7)? }))
+    })
+    .map(|it| it.flatten().collect())
+    .unwrap_or_default()
+}
+

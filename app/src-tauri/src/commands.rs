@@ -158,6 +158,11 @@ pub fn mcp_import(st: State<AppState>, id: String) -> R<Value> {
 }
 
 #[tauri::command]
+pub async fn mcp_popular() -> R<Value> {
+    crate::mcp::popular().await
+}
+
+#[tauri::command]
 pub async fn mcp_search(query: String) -> R<Value> {
     crate::mcp::search(&query).await
 }
@@ -222,14 +227,29 @@ pub fn idea_ai_set(st: State<AppState>, id: i64, account: Option<String>, model:
     Ok(())
 }
 
-/// Team mode for one idea (team.rs): how many helpers the lead may run at once, 0 = off.
+/// The named team that works on one idea (teams.rs); "" = the AI alone. A team with a lead also points the idea at
+/// that AI (when the idea has not been pinned to one).
 #[tauri::command]
-pub fn idea_team_set(st: State<AppState>, id: i64, team: u32) -> R<()> {
+pub fn idea_team_set(st: State<AppState>, id: i64, team: String) -> R<()> {
+    let t = if team.is_empty() { None } else { Some(crate::teams::find(&st.root, &team).ok_or("ไม่พบทีมนี้")?) };
     let c = st.db.lock();
     let mut cfg = crate::idea_ai::get(&c, id).unwrap_or_default();
-    cfg.team = team.min(crate::team::MAX_HELPERS);
+    cfg.team = t.as_ref().map(|t| t.slug.clone()).unwrap_or_default();
+    if let Some(lead) = t.as_ref().map(|t| t.lead.clone()).filter(|l| !l.is_empty()) {
+        if cfg.account.is_empty() && crate::accounts::list(&c).iter().any(|a| a.id == lead && a.enabled) {
+            cfg.account = lead;
+        }
+    }
     crate::idea_ai::set(&c, id, &cfg)?;
+    drop(c);
+    st.wake.notify_one();
     Ok(())
+}
+
+/// Who did which part of an idea (team mode), newest first.
+#[tauri::command]
+pub fn idea_team_parts(st: State<AppState>, id: i64) -> Value {
+    json!(crate::db::team_parts(&st.db.lock(), id))
 }
 
 /// Another copy of the program was started from a different folder: quit this one and start that.

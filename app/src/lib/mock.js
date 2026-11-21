@@ -67,7 +67,7 @@ const state = {
     today_allowance: 6.5, bot_used_today: 3.2, five_cap: 95, sprint: false, turbo: false, paused: false, hours_to_reset: 98, next_work_start: now + 12 * H,
   },
   snap: { ts: now - 120, five_pct: 22, five_reset: now + 3 * H, week_pct: 58, week_reset: now + 98 * H, source: "cache" },
-  idea_ai: { 1: { account: "codex01", model: "gpt-6.1-sol", effort: "high", skills: [] } },
+  idea_ai: { 1: { account: "codex01", model: "gpt-6.1-sol", effort: "high", skills: [], team: "web-app" } },
   accounts: [
     { id: "claude01", label: "claude01", kind: "claude", shared: true, active: true,
       decision: { allow: true, reason: "นอกเวลางาน — บอททำงานได้", slot: "off", week_pct: 58, five_pct: 22, reserve: 30, bot_budget: 9, today_allowance: 6.5, bot_used_today: 3.2, five_cap: 95, sprint: false, turbo: false, paused: false, hours_to_reset: 98 },
@@ -206,6 +206,10 @@ const handlers = {
   mcp_list: () => [{ id: "rea", label: "rea", description: "", source: "claude-code", transport: "stdio", command: "cmd.exe /c rea mcp", env_names: [], enabled: true, always: false, skills: ["reverse-engineer-anything"], category: "security", version: "", registry_name: "" }],
   mcp_local: () => [{ id: "rea", command: "cmd.exe /c rea mcp", env_names: [], imported: true }, { id: "chrome-devtools", command: "npx chrome-devtools-mcp@latest", env_names: [], imported: false }],
   mcp_import: () => "chrome-devtools",
+  mcp_popular: () => ({ servers: [
+    { name: "io.github.upstash/context7", title: "Context7", description: "Up-to-date docs for any library", version: "1.0.0", repo: "https://github.com/upstash/context7", category: "docs", published: "2026-10-01", stars: 65196, popular: true, ways: [{ kind: "package", index: 0, command: "npx -y @upstash/context7-mcp", env: [] }] },
+    { name: "io.github.ChromeDevTools/chrome-devtools-mcp", title: "Chrome DevTools", description: "Control and inspect a live Chrome browser", version: "0.9.0", repo: "https://github.com/ChromeDevTools/chrome-devtools-mcp", category: "test", published: "2026-10-01", stars: 58566, popular: true, ways: [{ kind: "package", index: 0, command: "npx -y chrome-devtools-mcp", env: [] }] },
+  ], note: "" }),
   mcp_search: () => ({ servers: [{ name: "io.github.someone/postgres", title: "Postgres", description: "Query a Postgres database", version: "1.2.0", repo: "https://github.com/someone/pg-mcp", category: "data", published: "2026-11-19T00:00:00Z", ways: [{ kind: "package", index: 0, command: "cmd /c npx -y pg-mcp@1.2.0", env: [{ name: "DATABASE_URL", description: "Connection string", required: true, secret: true }] }] }, { name: "com.example/browser", title: "Browser", description: "Open and read web pages", version: "0.4.0", repo: null, category: "research", published: "2026-11-18T00:00:00Z", ways: [{ kind: "remote", index: 0, command: "https://mcp.example.com/mcp", env: [] }] }] }),
   mcp_install: () => "postgres",
   mcp_set: () => null,
@@ -338,6 +342,66 @@ function toEnglish(v) {
   return JSON.parse(j);
 }
 
+// team roles (roles.rs) for the preview
+const demoRoles = [
+  { slug: "bom", name: "บอม", title: "Front-end developer", emoji: "🧑‍💻", description: "ทำหน้าเว็บ Svelte/React ให้สวย ใช้ง่าย รองรับมือถือ", instructions: "You build clean, accessible UIs.", persona: "พูดตรง สั้น เป็นกันเอง ชอบลองของใหม่แต่เลือกทางที่ดูแลง่าย", tier: "balanced", account: "", model_override: "", tools: "", source: "", license: "" },
+  { slug: "nam", name: "น้ำ", title: "Tester", emoji: "🧪", description: "หาบั๊ก เขียนเทสต์ ตรวจว่าใช้งานได้จริง", instructions: "You find bugs and write tests.", persona: "", tier: "fast", account: "codex01", model_override: "", tools: "", source: "https://github.com/VoltAgent/awesome-claude-code-subagents/blob/x/categories/04-quality-security/qa-expert.md", license: "MIT" },
+];
+const roleRender = (r, withPersona) => `---\nname: "${r.name}"\ndescription: "${r.description}"\ntitle: "${r.title}"\ntools: Read, Write, Edit, Bash, Glob, Grep, WebSearch, WebFetch\ntier: ${r.tier}\n---\n\n${r.instructions}\n` + (withPersona && r.persona ? `\n<!-- persona -->\n## Persona\n\n${r.persona}\n<!-- /persona -->\n` : "");
+function rolesMock(cmd, args) {
+  if (cmd === "roles_list") return { roles: structuredClone(demoRoles), tiers: ["auto", "fast", "balanced", "strong"], curated: [] };
+  if (cmd === "role_save") {
+    const r = { ...args.role, slug: args.role.slug || args.role.name.toLowerCase().replace(/[^a-z0-9]+/g, "-") || `role-${demoRoles.length + 1}` };
+    const i = demoRoles.findIndex((x) => x.slug === r.slug);
+    if (i >= 0) demoRoles[i] = r; else demoRoles.push(r);
+    return r;
+  }
+  if (cmd === "role_delete") { demoRoles.splice(demoRoles.findIndex((x) => x.slug === args.slug), 1); return null; }
+  if (cmd === "role_export") { const r = demoRoles.find((x) => x.slug === args.slug); return { text: roleRender(r, args.withPersona), warnings: [], path: args.save ? `C:/IdeaAutopilot/data/exports/${r.slug}.agent.md` : null }; }
+  if (cmd === "roles_shop_search") return { repos: [
+    { repo: "msitarzewski/agency-agents", description: "The Agency: agents with a full personality", stars: 169578, listed: "curated" },
+    { repo: "wshobson/agents", description: "Production-ready subagents", stars: 42744, listed: "curated" },
+    { repo: "VoltAgent/awesome-claude-code-subagents", description: "100+ subagents in categories", stars: 26706, listed: "curated" },
+  ], note: null };
+  if (cmd === "roles_shop_browse") return { repo: args.repo, commit: "0".repeat(40), description: "demo", stars: 169578, license: "MIT", url: `https://github.com/${args.repo}`, total: 4, roles: [
+    { path: "engineering/engineering-frontend-developer.md", name: "engineering frontend developer", category: "engineering", size: 9000, too_big: false },
+    { path: "engineering/engineering-backend-architect.md", name: "engineering backend architect", category: "engineering", size: 9000, too_big: false },
+    { path: "design/design-ui-designer.md", name: "design ui designer", category: "design", size: 8000, too_big: false },
+    { path: "marketing/marketing-growth-hacker.md", name: "marketing growth hacker", category: "marketing", size: 8000, too_big: false },
+  ] };
+  if (cmd === "roles_shop_preview" || cmd === "role_check_text") {
+    const role = { slug: "frontend-developer", name: "Frontend Developer", title: "", emoji: "🖥️", description: "Expert frontend developer", tier: "auto", account: "", model_override: "", instructions: "You are Frontend Developer…", persona: "", tools: "", source: "", license: "MIT" };
+    return { role, text: roleRender(role, false), sha256: "x", size: 100, verdict: "clean", findings: [], domains: [], source: "https://github.com/x", license: "MIT", needs_accept: false };
+  }
+  if (cmd === "roles_shop_install" || cmd === "role_import_text") { const r = { ...demoRoles[0], slug: "frontend-developer", name: "Frontend Developer", emoji: "🖥️", persona: "", team: false }; demoRoles.push(r); return r; }
+  return undefined;
+}
+
+// named teams (teams.rs) for the preview
+const demoTeams = [{ slug: "web-app", name: "ทีมเว็บแอป", emoji: "🌐", description: "สร้างเว็บตั้งแต่หน้าตาถึงหลังบ้าน แล้วทดสอบ", use_for: "เว็บ, แอป, web, app, dashboard", members: ["bom", "nam"], helpers: 3, lead: "" }];
+const teamJson = (t) => ({ ...t, member_roles: t.members.map((m) => demoRoles.find((r) => r.slug === m)).filter(Boolean).map((r) => ({ slug: r.slug, name: r.name, emoji: r.emoji, title: r.title, tier: r.tier, account: r.account })) });
+const demoParts = [
+  { role: "bom", account: "", model: "", folder: "parts/ui", task: "ทำหน้าเลือกการ์ดและหน้าห้องเล่น (Svelte)", status: "ok", started: now - 1500, ended: now - 900 },
+  { role: "nam", account: "codex01", model: "gpt-6.1-sol", folder: "parts/test", task: "เขียนเทสต์กติกาการ์ดและลองเล่นครบ 1 เกม", status: "running", started: now - 400, ended: null },
+];
+function teamsMock(cmd, args) {
+  if (cmd === "teams_list") return { teams: demoTeams.map(teamJson), presets: [
+    { key: "web-app", name: "ทีมเว็บแอป", emoji: "🌐", description: "สร้างเว็บ/แอป", use_for: "" },
+    { key: "research", name: "ทีมค้นคว้า/ตัดสินใจ", emoji: "🔎", description: "หาข้อมูล ให้คะแนน", use_for: "" },
+    { key: "marketing", name: "ทีมการตลาด/คอนเทนต์", emoji: "📣", description: "คอนเทนต์ โพสต์", use_for: "" },
+  ] };
+  if (cmd === "team_save") { const t = { ...args.team, slug: args.team.slug || `team-${demoTeams.length + 1}` }; const i = demoTeams.findIndex((x) => x.slug === t.slug); if (i >= 0) demoTeams[i] = t; else demoTeams.push(t); return teamJson(t); }
+  if (cmd === "team_delete") { demoTeams.splice(demoTeams.findIndex((x) => x.slug === args.slug), 1); return null; }
+  if (cmd === "team_preset") { const t = { slug: `${args.key}-2`, name: args.key === "marketing" ? "ทีมการตลาด/คอนเทนต์" : "ทีมค้นคว้า/ตัดสินใจ", emoji: "🔎", description: "", use_for: "", members: [], helpers: 3, lead: "" }; demoTeams.push(t); return teamJson(t); }
+  if (cmd === "team_suggest") return /เว็บ|web|แอป|app|dashboard/i.test(args.text) ? "web-app" : null;
+  if (cmd === "team_export") { const t = demoTeams.find((x) => x.slug === args.slug); return { text: `---\nname: "${t.name}"\nmembers: ${t.members.join(", ")}\nhelpers: ${t.helpers}\n---\n` + t.members.map((m) => `\n<!-- role: ${m} -->\n` + roleRender(demoRoles.find((r) => r.slug === m), args.withPersona)).join(""), warnings: [], path: args.save ? `C:/IdeaAutopilot/data/exports/${t.slug}.team.md` : null }; }
+  if (cmd === "team_check_text") return { team: { name: "ทีมเพื่อน", emoji: "🤝", description: "จากไฟล์", use_for: "", helpers: 2 }, roles: demoRoles.slice(0, 2), verdict: "clean", findings: [], needs_accept: false };
+  if (cmd === "team_import_text") { const t = { slug: "friends", name: "ทีมเพื่อน", emoji: "🤝", description: "", use_for: "", members: ["bom"], helpers: 2, lead: "" }; demoTeams.push(t); return teamJson(t); }
+  if (cmd === "idea_team_parts") return args.id === 1 ? structuredClone(demoParts) : [];
+  if (cmd === "idea_team_set") { state.idea_ai[args.id] = { ...(state.idea_ai[args.id] ?? {}), team: args.team }; return null; }
+  return undefined;
+}
+
 // the account list as the app keeps it: switched-on first, each group in the order the owner set (ISSUE-121)
 const accState = { on: {}, moves: [] };
 function accountsInOrder(r) {
@@ -353,6 +417,8 @@ function accountsInOrder(r) {
 
 export async function mockInvoke(cmd, args = {}) {
   await new Promise((r) => setTimeout(r, 60));
+  if (cmd.startsWith("role")) { const r = rolesMock(cmd, args); if (r !== undefined) return r; }
+  if (cmd.startsWith("team") || cmd.startsWith("idea_team")) { const r = teamsMock(cmd, args); if (r !== undefined) return r; }
   if (cmd === "account_update" && args.enabled != null) { accState.on[args.id] = args.enabled; return null; }
   if (cmd === "account_move") { accState.moves.push([args.id, args.dir]); return null; }
   if (cmd === "accounts_list") return accountsInOrder(DEMO_LANG === "en" ? toEnglish(handlers.accounts_list()) : structuredClone(handlers.accounts_list()));
