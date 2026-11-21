@@ -7,6 +7,12 @@
 
 ---
 
+## ISSUE-138 · 2026-11-21 · แก้แล้ว — build ตัวติดตั้ง Mac Intel บน GitHub ค้าง "Waiting for a runner" ไม่เริ่มเลย
+- **อาการ:** รอบ Bundles ของ v0.11.0 ผ่าน 5 งาน แต่ `bundle (macos-13, app,dmg)` รอเครื่องมา 40 นาทีโดยไม่เริ่ม
+- **สาเหตุ:** GitHub เลิกให้บริการเครื่อง `macos-13` (Mac Intel) แล้ว งานที่ขอเครื่องนี้จึงไม่มีเครื่องรับจนหมดเวลา
+- **วิธีแก้:** เปลี่ยนเป็น `macos-15-intel` ใน `.github/workflows/bundles.yml`
+- **ไฟล์:** `.github/workflows/bundles.yml`
+
 ## ISSUE-137 · 2026-11-21 · เพิ่มแล้ว — build Windows ARM64 แยกจาก x64 และ build แอป iPhone (Swift) บน GitHub โดยไม่ต้องมี Mac
 
 **ที่มา:** ผู้ใช้ถามว่ามีทางไหน build Swift ได้บ้าง (ผ่าน skill หรือ MCP ก็ได้) และอยากได้ Windows ARM64 แยกจาก x64 ค้นแล้วไม่มี skill หรือ MCP ที่ build iOS บน Windows ได้ (MCP สาย Xcode ต้องรันบน Mac) ทางที่ฟรีคือใช้เครื่อง macOS ของ GitHub Actions
