@@ -109,6 +109,7 @@ export const api = {
   accountUpdate: (id, patch) => invoke("account_update", { id, label: patch.label ?? null, enabled: patch.enabled ?? null, model: patch.model ?? null, effort: patch.effort ?? null }),
   accountRemove: (id) => invoke("account_remove", { id }),
   accountLogin: (id) => invoke("account_login", { id }),
+  accountMove: (id, dir) => invoke("account_move", { id, dir }),
   accountsSeries: (days = 7) => invoke("accounts_series", { days }),
   uiDict: (lang) => invoke("ui_dict", { lang }),
   uiTranslateStart: (lang) => invoke("ui_translate_start", { lang }),

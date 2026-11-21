@@ -338,8 +338,24 @@ function toEnglish(v) {
   return JSON.parse(j);
 }
 
+// the account list as the app keeps it: switched-on first, each group in the order the owner set (ISSUE-121)
+const accState = { on: {}, moves: [] };
+function accountsInOrder(r) {
+  let v = r.accounts.map((a) => (a.id in accState.on ? { ...a, enabled: accState.on[a.id] } : a));
+  v = [...v.filter((a) => a.enabled), ...v.filter((a) => !a.enabled)];
+  for (const [id, dir] of accState.moves) {
+    v = [...v.filter((a) => a.enabled), ...v.filter((a) => !a.enabled)];
+    const i = v.findIndex((a) => a.id === id), j = i + (dir < 0 ? -1 : 1);
+    if (i >= 0 && j >= 0 && j < v.length && v[j].enabled === v[i].enabled) [v[i], v[j]] = [v[j], v[i]];
+  }
+  return { ...r, accounts: v };
+}
+
 export async function mockInvoke(cmd, args = {}) {
   await new Promise((r) => setTimeout(r, 60));
+  if (cmd === "account_update" && args.enabled != null) { accState.on[args.id] = args.enabled; return null; }
+  if (cmd === "account_move") { accState.moves.push([args.id, args.dir]); return null; }
+  if (cmd === "accounts_list") return accountsInOrder(DEMO_LANG === "en" ? toEnglish(handlers.accounts_list()) : structuredClone(handlers.accounts_list()));
   const h = handlers[cmd];
   if (h) return DEMO_LANG === "en" ? toEnglish(h(args)) : structuredClone(h(args));
   if (cmd === "session_cut_in") { const x = state.sessions.find((s) => s.idea_id === args.id); if (x) { x.busy_since = 0; x.waiting = 0; x.status = "idle"; x.feed.push({ ts: Math.floor(Date.now() / 1000), text: "✋ กำลังหยุดรอบที่ทำอยู่ตามที่คุณสั่ง…" }); } return null; }

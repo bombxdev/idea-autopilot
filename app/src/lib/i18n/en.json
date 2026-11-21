@@ -2192,5 +2192,10 @@
   "{0}(ล็อกอินของเครื่องใช้กับ “{1}” อยู่แล้ว)": "{0}(the machine's login is already used by “{1}”)",
   "บัญชีนี้ต่างจากที่ล็อกอินไว้ในเครื่อง (ล็อกอินแยก)": "This account is different from the one logged in on this computer (separate login)",
   "ล็อกอินเก็บในโฟลเดอร์ของบัญชีนี้ ไม่ทับล็อกอินหลักของเครื่อง — กด “ล็อกอิน” หลังเพิ่ม": "The login is kept in this account's own folder and does not replace the computer's main login — press “Log in” after adding",
-  "ใช้บัญชีเดียวกับที่ล็อกอินไว้ใน {0} ของเครื่องนี้ — ไม่ต้องล็อกอินใหม่": "Uses the account already logged in to {0} on this computer — no new login needed"
+  "ใช้บัญชีเดียวกับที่ล็อกอินไว้ใน {0} ของเครื่องนี้ — ไม่ต้องล็อกอินใหม่": "Uses the account already logged in to {0} on this computer — no new login needed",
+  "เปิดใช้อยู่ — บอทใช้บัญชีจากบนลงล่าง": "Switched on — the bot uses accounts from the top down",
+  "เลื่อนขึ้น": "Move up",
+  "เลื่อนขึ้น (ภายในกลุ่มเดียวกัน)": "Move up (within the same group)",
+  "เลื่อนลง": "Move down",
+  "เลื่อนลง (ภายในกลุ่มเดียวกัน)": "Move down (within the same group)"
 }

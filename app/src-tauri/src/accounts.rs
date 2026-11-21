@@ -122,7 +122,27 @@ pub fn save(c: &Connection, v: &[Account]) -> Result<(), String> {
             return Err(format!("ชื่อ “{}” ซ้ำกัน", a.id));
         }
     }
-    db::set_setting(c, "ai_accounts", &serde_json::to_string(v).map_err(|e| e.to_string())?).map_err(|e| e.to_string())
+    // always stored switched-on first, so every way of changing the list keeps that order
+    db::set_setting(c, "ai_accounts", &serde_json::to_string(&grouped(v.to_vec())).map_err(|e| e.to_string())?).map_err(|e| e.to_string())
+}
+
+/// Switched-on accounts first, then switched-off ones; each group keeps its own order (the bot tries the
+/// switched-on ones from the top, so the order is the owner's preference).
+pub fn grouped(mut v: Vec<Account>) -> Vec<Account> {
+    v.sort_by_key(|a| !a.enabled); // stable: the order inside each group stays
+    v
+}
+
+/// Move one account a place up (`dir` < 0) or down (`dir` > 0) among the accounts of its own group
+/// (switched on / switched off). At the edge of its group it stays where it is.
+pub fn move_in_group(v: Vec<Account>, id: &str, dir: i32) -> Result<Vec<Account>, String> {
+    let mut v = grouped(v);
+    let i = v.iter().position(|a| a.id == id).ok_or("ไม่พบบัญชี")?;
+    let j = if dir < 0 { i.checked_sub(1) } else { Some(i + 1).filter(|j| *j < v.len()) };
+    if let Some(j) = j.filter(|j| v[*j].enabled == v[i].enabled) {
+        v.swap(i, j);
+    }
+    Ok(v)
 }
 
 pub fn find(c: &Connection, id: &str) -> Option<Account> {
@@ -307,6 +327,20 @@ mod tests {
     }
 
     #[test]
+    fn moving_stays_inside_its_group_and_on_comes_first() {
+        let mk = |id: &str, on: bool| Account { enabled: on, ..acc(id, "claude", "") };
+        let v = vec![mk("a", true), mk("x", false), mk("b", true), mk("y", false)];
+        let ids = |v: &[Account]| v.iter().map(|a| a.id.clone()).collect::<Vec<_>>().join(",");
+        assert_eq!(ids(&grouped(v.clone())), "a,b,x,y");
+        assert_eq!(ids(&move_in_group(v.clone(), "b", -1).unwrap()), "b,a,x,y");
+        // the last switched-on account cannot drop into the switched-off group, nor the first off one climb out
+        assert_eq!(ids(&move_in_group(v.clone(), "b", 1).unwrap()), "a,b,x,y");
+        assert_eq!(ids(&move_in_group(v.clone(), "x", -1).unwrap()), "a,b,x,y");
+        assert_eq!(ids(&move_in_group(v.clone(), "x", 1).unwrap()), "a,b,y,x");
+        assert_eq!(ids(&move_in_group(v.clone(), "y", 1).unwrap()), "a,b,x,y");
+        assert!(move_in_group(v, "nope", 1).is_err());
+    }
+
     fn save_rejects_duplicates_and_unknown_kinds() {
         let p = std::env::temp_dir().join(format!("ia-acc-{}-{:?}.db", std::process::id(), std::thread::current().id()));
         let _ = std::fs::remove_file(&p);

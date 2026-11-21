@@ -517,6 +517,7 @@ pub fn run() {
             commands::accounts_list,
             commands::account_add,
             commands::account_update,
+            commands::account_move,
             commands::account_omni_dup_ok,
             commands::account_remove,
             commands::idea_ai_set,

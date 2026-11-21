@@ -241,6 +241,22 @@
       return { ...k, count: mine.length, on: mine.filter((a) => a.enabled).length, mine };
     }),
   );
+  // switched-on accounts first, then switched-off ones; the bot tries the switched-on ones from the top (ISSUE-121)
+  const ordered = $derived([...data.accounts.filter((a) => a.enabled), ...data.accounts.filter((a) => !a.enabled)]);
+  const firstOff = $derived(ordered.findIndex((a) => !a.enabled));
+  // can this account move one place up / down without leaving its group?
+  const canMove = (i, dir) => {
+    const j = i + dir;
+    return j >= 0 && j < ordered.length && ordered[j].enabled === ordered[i].enabled;
+  };
+  async function move(a, dir) {
+    try {
+      await api.accountMove(a.id, dir);
+      await load();
+    } catch (e) {
+      toast(String(e), "err");
+    }
+  }
   async function setKind(k, enabled) {
     try {
       for (const a of k.mine) if (a.enabled !== enabled) await api.accountUpdate(a.id, { enabled });
@@ -315,9 +331,15 @@
     </div>
   {/if}
 
-  {#each data.accounts as a (a.id)}
+  {#each ordered as a, i (a.id)}
+    {#if i === 0 && a.enabled}<div class="grp small faint">เปิดใช้อยู่ — บอทใช้บัญชีจากบนลงล่าง</div>{/if}
+    {#if i === firstOff}<div class="grp small faint">ปิดชั่วคราว</div>{/if}
     <div class="acc" class:off={!a.enabled} class:active={a.active}>
       <div class="row wrap">
+        <span class="mv">
+          <button class="small ghost" disabled={!canMove(i, -1)} onclick={() => move(a, -1)} title="เลื่อนขึ้น (ภายในกลุ่มเดียวกัน)" aria-label="เลื่อนขึ้น">▲</button>
+          <button class="small ghost" disabled={!canMove(i, 1)} onclick={() => move(a, 1)} title="เลื่อนลง (ภายในกลุ่มเดียวกัน)" aria-label="เลื่อนลง">▼</button>
+        </span>
         <label class="sw" title="เปิด/ปิดบัญชีนี้ชั่วคราว"><input type="checkbox" checked={a.enabled} onchange={(e) => upd(a, { enabled: e.currentTarget.checked })} /></label>
         <b>{a.label || a.id}</b>
         <span class="faint small">({a.id})</span>
@@ -537,6 +559,9 @@
   .kind { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; background: var(--bg-2); }
   .kind.off { opacity: 0.55; }
   .kind.missing { border-style: dashed; }
+  .grp { margin-top: 6px; font-weight: 600; letter-spacing: 0.02em; }
+  .mv { display: inline-flex; flex-direction: column; gap: 1px; }
+  .mv button { padding: 0 6px; line-height: 1.1; font-size: 10px; }
   .acc { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; background: var(--bg-2); }
   .acc.active { border-color: var(--teal); }
   .acc.off { opacity: 0.6; }

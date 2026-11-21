@@ -1672,6 +1672,18 @@ pub fn account_update(st: State<AppState>, id: String, label: Option<String>, en
     if let Some(v) = effort {
         a.effort = if crate::accounts::EFFORTS.contains(&v.as_str()) { v } else { "auto".into() };
     }
+    crate::accounts::save(&c, &list)?; // switching on/off moves it into the other group (on ones first)
+    drop(c);
+    st.wake.notify_one();
+    Ok(())
+}
+
+/// Move an account one place up or down within its group (switched on / off). The bot tries the switched-on
+/// accounts from the top, so this is how the owner sets which one is used first.
+#[tauri::command]
+pub fn account_move(st: State<AppState>, id: String, dir: i32) -> R<()> {
+    let c = st.db.lock();
+    let list = crate::accounts::move_in_group(crate::accounts::list(&c), &id, dir)?;
     crate::accounts::save(&c, &list)?;
     drop(c);
     st.wake.notify_one();
