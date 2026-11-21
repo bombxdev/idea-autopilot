@@ -178,7 +178,7 @@ pub fn applies(provider: &str, stage: &str, ia_ready: bool) -> Result<(), &'stat
         return Err("AI ตัวนี้รับเครื่องมือ (MCP) ไม่ได้ จึงสั่งงานสมาชิกไม่ได้ — ทำคนเดียว");
     }
     if !ia_ready {
-        return Err("ไม่พบ ia.exe (ตัวกลางส่งงานให้สมาชิก) — ทำคนเดียว");
+        return Err("ไม่พบ ia (ตัวกลางส่งงานให้สมาชิก) — ทำคนเดียว");
     }
     Ok(())
 }

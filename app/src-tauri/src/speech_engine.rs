@@ -67,6 +67,14 @@ pub fn find_dll(dir: &Path, name: &str) -> Option<PathBuf> {
     std::fs::read_dir(dir).ok()?.flatten().map(|e| e.path()).filter(|p| p.is_dir()).find_map(|d| d.join(name).is_file().then(|| d.join(name)))
 }
 
+/// The engine's library as each system names it (transcribe.cpp release archives).
+#[cfg(windows)]
+pub const LIB_NAME: &str = "transcribe.dll";
+#[cfg(target_os = "macos")]
+pub const LIB_NAME: &str = "libtranscribe.dylib";
+#[cfg(all(not(windows), not(target_os = "macos")))]
+pub const LIB_NAME: &str = "libtranscribe.so";
+
 #[cfg(windows)]
 unsafe fn load(dll: &Path) -> Result<libloading::Library, String> {
     // its ggml-*.dll neighbours must be found next to it, not on PATH
@@ -92,7 +100,7 @@ pub fn cli(args: &[String]) -> Result<(), String> {
         None => vec![(0.0, pcm.len() as f64 / 16000.0)],
     };
     let limit: usize = flag(args, "--limit").and_then(|x| x.parse().ok()).unwrap_or(usize::MAX);
-    let dll = find_dll(&dir, if cfg!(windows) { "transcribe.dll" } else { "libtranscribe.so" }).ok_or("ไม่พบไฟล์ของเครื่องมือถอดเสียง (ติดตั้งส่วนเสริมใหม่)")?;
+    let dll = find_dll(&dir, LIB_NAME).ok_or("ไม่พบไฟล์ของเครื่องมือถอดเสียง (ติดตั้งส่วนเสริมใหม่)")?;
     unsafe {
         let lib = load(&dll)?;
         let sym = |n: &[u8]| -> Result<*const c_void, String> {

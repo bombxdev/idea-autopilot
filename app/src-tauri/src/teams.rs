@@ -172,6 +172,8 @@ const PRESETS: &[(&str, &str, &str, &str, &str, &[&str])] = &[
     ("web-app", "ทีมเว็บแอป", "🌐", "สร้างเว็บ/แอปตั้งแต่หน้าตาถึงหลังบ้าน แล้วทดสอบ", "เว็บ, แอป, web, app, ui, หน้าเว็บ, ระบบ, dashboard, api", &["front", "back", "full", "test", "qa", "review", "ui", "design"]),
     ("research", "ทีมค้นคว้า/ตัดสินใจ", "🔎", "หาข้อมูล เปรียบเทียบ ให้คะแนน แล้วสรุปให้ตัดสินใจ", "ค้นคว้า, research, ตลาด, market, เปรียบเทียบ, ขายได้ไหม, คุ้มไหม, วิเคราะห์", &["research", "analyst", "data", "strateg", "product", "trend", "finance"]),
     ("marketing", "ทีมการตลาด/คอนเทนต์", "📣", "เขียนคอนเทนต์ โพสต์ แคมเปญ และภาพประกอบ", "การตลาด, marketing, โพสต์, content, คอนเทนต์, facebook, seo, โฆษณา", &["market", "content", "seo", "social", "copy", "growth", "brand", "writer"]),
+    ("office", "ทีมงานเอกสาร/รายงาน", "🗂️", "ทำรายงาน ตาราง Excel สไลด์นำเสนอ และเกลาภาษาให้พร้อมส่ง", "รายงาน, report, excel, ตาราง, สไลด์, slide, นำเสนอ, presentation, เอกสาร, สรุป", &["report", "excel", "editor", "slide", "present", "writer"]),
+    ("fix", "ทีมแก้บั๊ก", "🛠️", "หาสาเหตุจริงของปัญหา แก้ให้น้อยที่สุด ทดสอบ แล้วตรวจซ้ำ", "บั๊ก, bug, แก้, error, พัง, ไม่ทำงาน, fix, crash", &["bug", "debug", "test", "qa", "review"]),
 ];
 
 fn preset_members(root: &Path, keys: &[&str]) -> Vec<String> {
@@ -276,7 +278,7 @@ pub fn teams_list(st: State<AppState>) -> Value {
     let teams = list(&st.root);
     json!({
         "teams": teams.iter().map(|t| to_json(&st.root, t)).collect::<Vec<_>>(),
-        "presets": PRESETS.iter().map(|(k, n, e, d, u, _)| json!({ "key": k, "name": n, "emoji": e, "description": d, "use_for": u })).collect::<Vec<_>>(),
+        "presets": PRESETS.iter().map(|(k, n, e, d, u, _)| json!({ "key": k, "name": n, "emoji": e, "description": d, "use_for": u, "starter": crate::starter_roles::preview(k), "installed": teams.iter().any(|t| t.name == *n) })).collect::<Vec<_>>(),
     })
 }
 
@@ -301,11 +303,18 @@ pub fn team_delete(st: State<AppState>, slug: String) -> R<()> {
     std::fs::remove_file(dir(&st.root).join(format!("{slug}.md"))).map_err(|e| e.to_string())
 }
 
-/// A ready-made team from the roles already installed (it may start with few or no members).
+/// A ready-made team, complete: its starter roles are installed first (an existing one is kept as it is), then other
+/// installed roles that fit are added — so a new owner gets a working team in one press.
 #[tauri::command]
 pub fn team_preset(st: State<AppState>, key: String) -> R<Value> {
     let (_, name, emoji, desc, use_for, keys) = PRESETS.iter().find(|p| p.0 == key).ok_or("ไม่พบทีมสำเร็จรูปนี้")?;
-    let t = Team { slug: free_slug(&st.root, name), name: name.to_string(), emoji: emoji.to_string(), description: desc.to_string(), use_for: use_for.to_string(), members: preset_members(&st.root, keys), helpers: MAX_HELPERS, lead: String::new() };
+    let mut members = crate::starter_roles::install(&st.root, &key)?;
+    for m in preset_members(&st.root, keys) {
+        if members.len() < 6 && !members.contains(&m) {
+            members.push(m);
+        }
+    }
+    let t = Team { slug: free_slug(&st.root, name), name: name.to_string(), emoji: emoji.to_string(), description: desc.to_string(), use_for: use_for.to_string(), members, helpers: MAX_HELPERS, lead: String::new() };
     write(&st.root, &t)?;
     Ok(to_json(&st.root, &t))
 }

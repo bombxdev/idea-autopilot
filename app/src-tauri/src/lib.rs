@@ -54,6 +54,7 @@ mod video;
 mod docs;
 mod mcp;
 mod team;
+mod starter_roles;
 #[cfg(test)]
 mod speech_engine;
 

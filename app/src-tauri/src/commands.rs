@@ -719,10 +719,44 @@ fn looks_like_command(s: &str) -> bool {
             || first.starts_with("./"))
 }
 
+#[cfg(windows)]
 fn open_in_console(dir: &std::path::Path, command: &str) -> R<()> {
     let mut c = std::process::Command::new("cmd");
     c.current_dir(dir).args(["/c", "start", "Idea Autopilot", "cmd", "/k", command]);
     c.spawn().map(|_| ()).map_err(e)
+}
+
+/// macOS/Linux: a new terminal window that runs `command` in `dir` and stays open (Terminal.app on macOS; on Linux
+/// the first terminal found of x-terminal-emulator, gnome-terminal, konsole, xfce4-terminal, xterm).
+#[cfg(not(windows))]
+fn open_in_console(dir: &std::path::Path, command: &str) -> R<()> {
+    let line = format!("cd {} && {command}", sh_quote(&dir.to_string_lossy()));
+    terminal_window(&line)
+}
+
+/// Single-quote for sh: it's → 'it'\''s' — nothing inside is expanded.
+#[cfg(not(windows))]
+fn sh_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', r"'\''"))
+}
+
+#[cfg(target_os = "macos")]
+fn terminal_window(line: &str) -> R<()> {
+    let quoted = line.replace('\\', "\\\\").replace('"', "\\\"");
+    let script = format!("tell application \"Terminal\"\nactivate\ndo script \"{quoted}\"\nend tell");
+    std::process::Command::new("osascript").args(["-e", &script]).spawn().map(|_| ()).map_err(e)
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn terminal_window(line: &str) -> R<()> {
+    // keep the window open after the command ends so its output can be read
+    let keep = format!("{line}; echo; exec \"${{SHELL:-sh}}\"");
+    for (term, flag) in [("x-terminal-emulator", "-e"), ("gnome-terminal", "--"), ("konsole", "-e"), ("xfce4-terminal", "-x"), ("xterm", "-e")] {
+        if std::process::Command::new(term).args([flag, "sh", "-c", &keep]).spawn().is_ok() {
+            return Ok(());
+        }
+    }
+    Err("ไม่พบโปรแกรม terminal ในเครื่อง — รันคำสั่งนี้เอง: ".to_string() + line)
 }
 
 /// Start what the bot built (the user clicked ▶). Prefers what can't go wrong:
@@ -1757,8 +1791,9 @@ pub fn account_login(st: State<AppState>, id: String) -> R<()> {
     }
     #[cfg(not(windows))]
     {
-        let _ = bin;
-        Err("เปิดหน้าต่างล็อกอินอัตโนมัติได้เฉพาะ Windows — รันคำสั่งล็อกอินของ AI ตัวนี้เองใน terminal".into())
+        let sets: String = crate::accounts::env_for(&a).iter().map(|(k, v)| format!("{k}={} ", sh_quote(v))).collect();
+        let args: String = crate::accounts::login_args(&a.kind).iter().map(|x| format!(" {}", sh_quote(x))).collect();
+        terminal_window(&format!("{sets}{}{args}", sh_quote(&bin.to_string_lossy())))
     }
 }
 

@@ -62,6 +62,11 @@ pub fn current() -> &'static str {
 /// dev: a build run from `target\`.
 fn install_mode() -> &'static str {
     let Ok(exe) = std::env::current_exe() else { return "portable" };
+    // macOS/Linux: the swap scripts below are PowerShell and the releases carry a Windows installer, so a
+    // .dmg/.AppImage/.deb copy is only told about new versions and updated from the Releases page (ISSUE-131)
+    if !cfg!(windows) {
+        return if exe.components().any(|c| c.as_os_str() == "target") { "dev" } else { "os-package" };
+    }
     let p = exe.display().to_string().to_lowercase().replace('/', "\\");
     if p.contains("\\scoop\\") {
         "scoop"
@@ -166,6 +171,9 @@ fn sha256_hex(b: &[u8]) -> String {
 pub async fn apply(app: &AppHandle) -> Result<(), String> {
     let mode = install_mode();
     if !self_updating(mode) {
+        if mode == "os-package" {
+            return Err("บน macOS/Linux อัปเดตในโปรแกรมยังไม่ได้ — โหลดรุ่นใหม่จากหน้า GitHub Releases".into());
+        }
         return Err("อัปเดตในโปรแกรมใช้ได้กับเครื่องที่ติดตั้งด้วยตัวติดตั้งหรือแบบพกพา — แบบ Scoop ใช้ scoop update idea-autopilot".into());
     }
     let r = latest_release().await?;

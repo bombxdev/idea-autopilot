@@ -16,6 +16,7 @@
   import Languages from "./Languages.svelte";
   import { lift } from "../lib/lift.js";
   import { wsOpen } from "../lib/workspace.svelte.js";
+  import { ask } from "../lib/dialog.svelte.js";
 
   // embedded: a window on the Workspace page (ISSUE-087) instead of the side drawer — full size, two columns when
   // wide, with minimize and "take off the Workspace" in place of close
@@ -120,11 +121,20 @@
   // when nothing runs: how the last run ended and what the bot is waiting for, so a short run never leaves a blank
   const lastRun = $derived((data?.runs ?? []).reduce((a, r) => (!a || r.started > a.started ? r : a), null));
   const pinnedAcct = $derived(store.state?.idea_ai?.[id]?.account || "");
+  // an open chat (or "I'm talking about this idea") keeps the bot off this idea: say so, and offer to hand it back
+  // (ISSUE-128 — the progress stopped at 88% while the chat had the idea, with nothing on screen saying why)
+  const chat = $derived((store.state?.sessions ?? []).find((x) => x.idea_id === id));
+  // the same rule as the bot (remote.rs chat_has): a chat holds the idea while its AI works or until it is quiet 10 min
+  const chatHolds = $derived(!!chat && (chat.status === "working" || chat.status === "starting" || (chat.quiet ?? 0) < 600));
+  const held = $derived(chatHolds || (store.state?.holds ?? []).includes(id));
   const waitText = $derived.by(() => {
     const st = store.state;
     if (!st) return "";
     if (st.force === id) return "อยู่ในคิว “ทำเลย” — เริ่มเมื่องานที่รันอยู่จบ";
     if (st.paused) return "บอทถูก Pause อยู่";
+    if (chat?.status === "working") return "AI ในแชตของไอเดียนี้กำลังทำงานให้คุณ — บอทพักขั้นที่เหลือไว้ (แถบ % จะเดินต่อเมื่อบอททำขั้นถัดไป)";
+    if (chatHolds) return `แชตของไอเดียนี้เพิ่งคุยกันอยู่ — บอทรอให้คุณคุยจบก่อน ถ้าแชตเงียบอีก ${Math.max(1, Math.ceil((600 - (chat.quiet ?? 0)) / 60))} นาที บอททำขั้นที่เหลือต่อเอง`;
+    if (held) return "คุณกด “กำลังคุยไอเดียนี้” ไว้ — บอทเว้นไอเดียนี้ไว้ 3 ชั่วโมง";
     const lim = pinnedAcct && st.account_limits?.[pinnedAcct];
     if (lim) return `บัญชี ${pinnedAcct} ติดลิมิต — รอถึง ${clock(lim.until)} (${lim.why})`;
     const d = (pinnedAcct && st.accounts?.find((a) => a.id === pinnedAcct)?.decision) || st.decision;
@@ -132,6 +142,18 @@
     return d.allow ? "บอทจะหยิบงานขั้นถัดไปของไอเดียนี้ตามลำดับคิว" : `บอทรอ: ${d.reason}`;
   });
   const RESULT = { ok: "สำเร็จ", error: "ไม่สำเร็จ", timeout: "หมดเวลา", cancelled: "ถูกยกเลิก", rate_limited: "ติดลิมิต" };
+  async function resumeBot() {
+    if (chat?.status === "working" && !(await ask("AI ในแชตยังทำงานอยู่ — ปิดแชตแล้วให้บอททำขั้นที่เหลือต่อเลยไหม? (บทสนทนายังเก็บไว้ เปิดคุยต่อได้ทีหลัง)", { ok: "ให้บอททำต่อ" }))) return;
+    try {
+      if (chat) await api.sessionClose(id, false);
+      await api.hold(id, false);
+      await api.action(id, "run_now");
+      toast("ให้บอททำขั้นที่เหลือต่อแล้ว — เริ่มเมื่องานที่รันอยู่จบ", "ok", 4000);
+      refresh();
+    } catch (e) {
+      toast(String(e), "err");
+    }
+  }
   const powerOn = $derived(store.state?.power?.mode === "all" || (store.state?.power?.ideas ?? []).includes(id));
   async function togglePower() {
     await api.powerSetIdea(id, !powerOn);
@@ -244,9 +266,11 @@
             <div><span class="faint">รอบล่าสุด:</span> {stageLabel(lastRun.stage)} · <b class="st-{lastRun.status}">{RESULT[lastRun.status] ?? lastRun.status}</b>
               {#if lastRun.ended} · จบ {clock(lastRun.ended)} ({Math.max(1, Math.round((lastRun.ended - lastRun.started) / 60))} นาที){/if}
               {#if lastRun.model_label || lastRun.model}· {lastRun.model_label || lastRun.model}{/if}</div>
-            {#if lastRun.error && lastRun.status !== "ok"}<div class="faint err">{lastRun.error.slice(0, 260)}</div>{/if}
+            {#if lastRun.error && lastRun.status !== "ok"}<div class="faint err">{lastRun.error.slice(0, 260)}</div>
+            {:else if lastRun.status === "cancelled"}<div class="faint">หยุดกลางทาง — มักเพราะเปิดแชตของไอเดียนี้ (บอทหลบให้คุณคุย) หรือกดหยุด/พัก · บอทจะทำขั้นนี้ใหม่เมื่อว่าง</div>{/if}
           {/if}
           {#if waitText}<div><span class="faint">ตอนนี้:</span> {waitText}</div>{/if}
+          {#if held && !store.state?.paused}<div><button class="small primary" onclick={resumeBot}><Icon name="play" /> ให้บอททำขั้นที่เหลือต่อตอนนี้</button></div>{/if}
         </div>
       {/if}
       <AttachList {id} />

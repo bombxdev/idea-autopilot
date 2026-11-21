@@ -4,6 +4,13 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Idea Autopilot</title>
+<!-- iPhone/iPad: the same page as a home-screen web app (Safari → Share → Add to Home Screen); see docs/IOS.md -->
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="apple-touch-icon" href="icon-192.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="theme-color" content="#0f1218" />
 <script>
 // the phone's font size, applied to the whole page at once so the input box and its drawn text grow together (ISSUE-104)
 try { var fs = window.IAApp && IAApp.fontScale(); if (fs > 0.5 && fs < 3 && Math.abs(fs - 1) > 0.01) document.documentElement.style.zoom = fs; } catch (e) {}
@@ -135,6 +142,10 @@ textarea.big { height: 62vh !important; overflow-y: auto !important; }
 .setup { padding: 40px 22px; display: flex; flex-direction: column; gap: 14px; }
 .setup ol { color: var(--text2); padding-left: 20px; font-size: 14px; }
 .err { color: var(--red); font-size: 13px; }
+/* iPhone home-screen app draws under the notch and home bar: keep clear of them (0 on Android, whose shell pads) */
+body { padding-top: env(safe-area-inset-top); }
+nav { padding-bottom: calc(6px + env(safe-area-inset-bottom)); }
+.sheet { padding-bottom: calc(40px + env(safe-area-inset-bottom)); }
 </style>
 </head>
 <body>

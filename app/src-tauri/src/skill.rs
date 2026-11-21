@@ -11,7 +11,7 @@ pub fn install(st: &AppState) {
         return;
     }
     let Some(bin) = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_path_buf())) else { return };
-    let ia = bin.join("ia.exe");
+    let ia = bin.join(crate::video::exe("ia"));
     if !ia.exists() {
         return; // dev build without the CLI next to it
     }

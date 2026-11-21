@@ -56,7 +56,7 @@
   async function preset(k) {
     try {
       const t = await api.teamPreset(k);
-      toast(t.members.length ? `สร้าง “${t.name}” จากสมาชิกที่มี ${t.members.length} คนแล้ว — แก้ได้` : `สร้าง “${t.name}” แล้ว แต่ยังไม่มีสมาชิกที่เข้ากัน — ไปที่ “ค้นหาต้นแบบ” เพื่อติดตั้ง`);
+      toast(`ติดตั้ง “${t.name}” พร้อมสมาชิก ${t.members.length} คนแล้ว — เลือกทีมนี้ที่ “ใครทำ” ตอนจดไอเดีย หรือในหน้าไอเดีย · แก้สมาชิกได้`, "ok", 6000);
       await load();
     } catch (e) { toast(String(e), "err"); }
   }
@@ -203,8 +203,18 @@
   {#if tab === "teams"}
     <div class="row wrap">
       <button class="primary" onclick={() => (editTeam = blankTeam())}><Icon name="plus" /> สร้างทีม</button>
-      <span class="faint small">ทีมสำเร็จรูป:</span>
-      {#each presets as p (p.key)}<button class="small" onclick={() => preset(p.key)} title={p.description}>{p.emoji} {p.name}</button>{/each}
+    </div>
+    <!-- ready-made teams come with their members (starter_roles.rs): one press = a working team to try -->
+    <h3 class="presethead">ทีมสำเร็จรูป — ติดตั้งพร้อมสมาชิก ลองใช้ได้ทันที</h3>
+    <div class="presets">
+      {#each presets as p (p.key)}
+        <div class="card preset">
+          <div class="row"><b class="grow">{p.emoji} {p.name}</b>{#if p.installed}<span class="chip teal small">มีแล้ว</span>{/if}</div>
+          <div class="muted small">{p.description}</div>
+          <div class="row wrap members">{#each p.starter ?? [] as m (m.slug)}<span class="chip small" title={m.name}>{m.emoji} {m.title || m.name}</span>{/each}</div>
+          <button class="small" class:primary={!p.installed} onclick={() => preset(p.key)}><Icon name="download" /> {p.installed ? "ติดตั้งอีกชุด" : "ติดตั้งทีมนี้"}</button>
+        </div>
+      {/each}
     </div>
     <p class="faint small">หัวหน้าทีม = AI ของไอเดียที่เลือกทีมนี้ (ตัวไหนก็ได้ที่รับเครื่องมือ MCP: Claude, Codex, Gemini, OpenCode, Mistral) · Claude ของ Anthropic เรียกสมาชิกได้เร็วกว่าในรอบเดียวกัน ค่ายอื่นส่งงานให้สมาชิกทีละส่วนผ่าน “ask_other_ai” (พร้อมกันไม่เกิน 3 งาน)</p>
 
@@ -430,4 +440,9 @@
   .red { color: var(--red); }
   .amber { color: var(--amber); }
   .repo { display: flex; flex-direction: column; gap: 4px; }
+  .presethead { margin: 14px 0 6px; font-size: 14px; }
+  .presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr)); gap: 10px; margin-bottom: 12px; }
+  .preset { display: flex; flex-direction: column; gap: 8px; }
+  .preset .members { gap: 4px; }
+  .preset button { align-self: flex-start; margin-top: auto; }
 </style>

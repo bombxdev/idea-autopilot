@@ -228,8 +228,9 @@ pub fn status(root: &Path) -> Value {
 /// "uv" or "conv:<id>" (uv comes along when missing). Called from video::install, which owns the progress job.
 pub async fn install(root: &Path, part: &str, uv_dl: &Download) -> Result<()> {
     if uv(root).is_none() {
+        let f = uv_dl.here().ok_or_else(|| crate::video::no_build("uv", "ติดตั้ง uv เอง (curl -LsSf https://astral.sh/uv/install.sh | sh หรือ brew install uv) แล้วกดตรวจอีกครั้ง"))?;
         crate::video::job_message(format!("กำลังดาวน์โหลด {}", uv_dl.label));
-        crate::video::fetch_unpacked(&uv_dl.url, &uv_dl.sha256, uv_dl.size_mb, &tools(root).join("uv")).await?;
+        crate::video::fetch_unpacked(&f.url, &f.sha256, f.size_mb, &tools(root).join("uv")).await?;
     }
     if part == "uv" {
         return Ok(());

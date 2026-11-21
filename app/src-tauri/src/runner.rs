@@ -165,9 +165,20 @@ pub fn kill_tree(pid: u32) {
     let _ = c.status();
 }
 
+/// macOS/Linux: the whole tree like `taskkill /T` — an AI CLI starts node/python children that would otherwise
+/// keep running (and spending) after the stop. Children are found with `pgrep -P` before anything is killed.
 #[cfg(not(windows))]
 pub fn kill_tree(pid: u32) {
-    let _ = std::process::Command::new("kill").args(["-9", &pid.to_string()]).status();
+    let mut all = vec![pid];
+    let mut i = 0;
+    while i < all.len() && all.len() < 512 {
+        if let Ok(o) = std::process::Command::new("pgrep").args(["-P", &all[i].to_string()]).output() {
+            all.extend(String::from_utf8_lossy(&o.stdout).split_whitespace().filter_map(|s| s.parse::<u32>().ok()));
+        }
+        i += 1;
+    }
+    let ids: Vec<String> = all.iter().map(u32::to_string).collect();
+    let _ = std::process::Command::new("kill").arg("-9").args(&ids).status();
 }
 
 /// Live quota from `rate_limit_event` lines (utilization comes as a 0–1 fraction).

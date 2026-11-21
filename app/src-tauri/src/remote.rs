@@ -502,7 +502,7 @@ pub fn session_name(id: i64, title: &str) -> String {
 pub fn ia_path() -> String {
     std::env::current_exe()
         .ok()
-        .and_then(|e| e.parent().map(|p| p.join("ia.exe")))
+        .and_then(|e| e.parent().map(|p| p.join(crate::video::exe("ia"))))
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| "ia".into())
 }
@@ -558,13 +558,19 @@ or from the Claude app through Remote Control. This is not the overnight bot. Re
 /// brief as context; every other session in this project sees nothing.
 fn ensure_hook(root: &std::path::Path) -> Result<(), String> {
     const CMD: &str = "[Console]::OutputEncoding = [Text.Encoding]::UTF8; if ($env:IDEA_AUTOPILOT_BRIEF) { Get-Content -Raw -Encoding UTF8 $env:IDEA_AUTOPILOT_BRIEF }";
+    // macOS/Linux: Claude Code runs hooks with sh there (no PowerShell)
+    const SH: &str = "[ -n \"$IDEA_AUTOPILOT_BRIEF\" ] && cat \"$IDEA_AUTOPILOT_BRIEF\" || true";
     let path = root.join(".claude").join("settings.json");
     let mut v: Value = std::fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_else(|| serde_json::json!({}));
     if let Some(list) = v.pointer_mut("/hooks/SessionStart").and_then(Value::as_array_mut) {
         list.retain(|e| !e.to_string().contains("IDEA_AUTOPILOT_IDEA_DIR")); // earlier design
     }
     if !v.to_string().contains("IDEA_AUTOPILOT_BRIEF") {
-        let entry = serde_json::json!({ "matcher": "", "hooks": [{ "type": "command", "command": CMD, "shell": "powershell", "timeout": 10 }] });
+        let entry = if cfg!(windows) {
+            serde_json::json!({ "matcher": "", "hooks": [{ "type": "command", "command": CMD, "shell": "powershell", "timeout": 10 }] })
+        } else {
+            serde_json::json!({ "matcher": "", "hooks": [{ "type": "command", "command": SH, "timeout": 10 }] })
+        };
         let hooks = v.as_object_mut().ok_or("settings.json is not an object")?.entry("hooks").or_insert_with(|| serde_json::json!({}));
         let list = hooks.as_object_mut().ok_or("hooks is not an object")?.entry("SessionStart").or_insert_with(|| serde_json::json!([]));
         list.as_array_mut().ok_or("SessionStart is not a list")?.push(entry);
@@ -668,10 +674,29 @@ fn type_in(p: &mut Pty, text: &str) {
     let _ = p.writer.flush();
 }
 
-/// Is the bot supposed to leave this idea alone (open session or manual hold)?
+/// A chat that answered and then stayed quiet this long gives the idea back to the bot, without waiting for the chat
+/// to close itself (45 min by default): the progress stopped for the better part of an hour for nothing (ISSUE-128).
+/// The owner's next message takes it back (send() stops the bot on this idea).
+pub const CHAT_QUIET_SECS: i64 = 10 * 60;
+
+/// Does an open chat still have this idea? While its AI works, or until it has been quiet CHAT_QUIET_SECS.
+pub fn chat_has(info: &RemoteInfo) -> bool {
+    info.status == "working" || info.status == "starting" || info.quiet < CHAT_QUIET_SECS
+}
+
+/// Is the bot supposed to leave this idea alone (a chat that still has it, or a manual hold)?
 pub fn held(st: &AppState, idea_id: i64) -> bool {
     let rt = st.rt.lock();
-    rt.sessions.contains_key(&idea_id) || rt.holds.get(&idea_id).map(|t| *t > db::now()).unwrap_or(false)
+    rt.sessions.get(&idea_id).is_some_and(chat_has) || rt.holds.get(&idea_id).map(|t| *t > db::now()).unwrap_or(false)
+}
+
+/// The owner talks to this idea again: stop the bot's run on it, if any (they take over, as when a chat opens).
+fn take_over(st: &AppState, id: i64) {
+    if st.rt.lock().current.as_ref().map(|c| c.idea_id) == Some(id) {
+        if let Some(c) = st.rt.lock().cancel.clone() {
+            c.notify_one();
+        }
+    }
 }
 
 pub fn hold(app: &AppHandle, id: i64, on: bool) -> Result<(), String> {
@@ -1052,6 +1077,9 @@ fn send(app: &AppHandle, id: i64, text: &str, ai: &ChatAi, owner: bool) -> Resul
     let text = text.trim();
     if text.is_empty() {
         return Err("พิมพ์สิ่งที่อยากให้ AI ทำก่อน".into());
+    }
+    if owner {
+        take_over(&app.state::<AppState>(), id);
     }
     // asking a chat to change something that was ready/done: the board shows it as being fixed
     // "carry on with what I asked" (↻ button) is not a new order: it must not pile up in DIRECTIVES.md
@@ -1519,6 +1547,14 @@ pub fn note(app: &AppHandle, id: i64, text: &str) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_quiet_chat_gives_the_idea_back_to_the_bot() {
+        let s = |status: &str, quiet: i64| RemoteInfo { status: status.into(), quiet, ..Default::default() };
+        assert!(chat_has(&s("working", 3600))); // its AI is still working, however long
+        assert!(chat_has(&s("idle", 60))); // just answered: the owner may type again
+        assert!(!chat_has(&s("idle", CHAT_QUIET_SECS))); // quiet 10 minutes: the bot carries on
+    }
 
     #[test]
     fn automatic_chat_without_claude_uses_an_installed_ai() {

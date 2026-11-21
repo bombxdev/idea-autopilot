@@ -104,13 +104,20 @@
   const d = $derived(s?.decision);
   // the badge counts everything waiting for the owner: questions and finished work not looked at yet (ISSUE-100)
   const openQ = $derived(inbox().count);
+  // two fixed lines (ISSUE-121): a short headline that always fits, and the details under it ("…" when long, the whole
+  // text on hover) — so the header never changes width or height when the state changes
   const botState = $derived.by(() => {
-    if (!s) return { cls: "idle", text: "กำลังโหลด…" };
-    if (s.role === "follower") return { cls: "idle", text: "เครื่องรอง · บอทรันที่เครื่องหลัก" };
-    if (s.paused) return { cls: "paused", text: "พักบอทอยู่" };
-    if (s.current) return { cls: "run", power: s.current.power, text: `กำลังทำ · ${s.current.title}`, step: s.current.stage_total ? `(ขั้น ${s.current.stage_no}/${s.current.stage_total})` : "" };
-    if (d?.allow) return { cls: "ready", text: "พร้อมทำงาน · คิวว่าง" };
-    return { cls: "idle", text: d?.reason ?? "รอ" };
+    if (!s) return { cls: "idle", head: "กำลังโหลด…", detail: "" };
+    if (s.role === "follower") return { cls: "idle", head: "เครื่องรอง", detail: "บอทรันที่เครื่องหลัก" };
+    if (s.paused) return { cls: "paused", head: "พักบอทอยู่", detail: "คลิกเพื่อให้ทำต่อ" };
+    if (s.current) {
+      const step = s.current.stage_total ? ` · ขั้น ${s.current.stage_no}/${s.current.stage_total}` : "";
+      return { cls: "run", power: s.current.power, head: `กำลังทำ #${s.current.idea_id}${step}`, detail: s.current.title };
+    }
+    // the governor's reason reads "situation — what the bot does": the situation is the detail line
+    const [why, what] = String(d?.reason ?? "").split(" — ");
+    if (d?.allow) return { cls: "ready", head: "พร้อมทำงาน", detail: ["คิวว่าง", why].filter(Boolean).join(" · ") };
+    return { cls: "idle", head: what ? why : "รออยู่", detail: what ?? why ?? "" };
   });
 
   // something is running: one press stops it all and remembers it, so the PC can be switched off (ISSUE-067)
@@ -124,6 +131,8 @@
     }
     refresh();
   }
+
+  const statusTip = $derived([botState.head, botState.detail].filter(Boolean).join("\n") + "\n\nคลิกเพื่อ พัก / ทำต่อ");
 
   async function togglePause() {
     await api.setPaused(!s?.paused);
@@ -182,14 +191,17 @@
       <QuickAdd />
       <!-- the bot's state and its stop as one column pinned to the top: it does not float mid-height when the note box grows -->
       <div class="botctl">
-        <button class="status {botState.cls}" onclick={togglePause} title="คลิกเพื่อ พัก / ทำต่อ">
-          <span class="dot"></span><span class="ellipsis">{#if botState.power}<Icon name="rocket" /> {/if}{botState.text}{#if botState.step} <span>{botState.step}</span>{/if}</span>
+        <button class="status {botState.cls}" onclick={togglePause} title={statusTip}>
+          <span class="dot"></span>
+          <span class="lines">
+            <span class="head ellipsis">{#if botState.power}<Icon name="rocket" /> {/if}{botState.head}</span>
+            <span class="detail ellipsis">{botState.detail || "\u00a0"}</span>
+          </span>
         </button>
-        {#if busyNow}
-          <button class="ghost small shelve" onclick={pauseAll} title="หยุดบอทและปิดแชตที่ AI กำลังทำ แล้วจำไว้ — ปิดเครื่องได้ทันที กลับมากด ▶ ทำต่อ แล้ว AI จะทำต่อจากเดิม">
-            <Icon name="pause" /> พักทั้งหมด · ปิดเครื่องได้
-          </button>
-        {/if}
+        <!-- always in the same place; dim when nothing runs, so it never pushes the header around -->
+        <button class="ghost small shelve" disabled={!busyNow} onclick={pauseAll} title={busyNow ? "หยุดบอทและปิดแชตที่ AI กำลังทำ แล้วจำไว้ — ปิดเครื่องได้ทันที กลับมากด ▶ ทำต่อ แล้ว AI จะทำต่อจากเดิม" : "ตอนนี้ไม่มีงานที่ทำอยู่ — ปิดเครื่องได้เลย"}>
+          <Icon name="pause" /> พักทั้งหมด · ปิดเครื่องได้
+        </button>
       </div>
     </header>
     {#if store.page !== "settings"}
@@ -261,8 +273,12 @@
   kbd { font-family: inherit; font-size: 11px; border: 1px solid var(--line-2); border-radius: 5px; padding: 0 5px; }
   main { display: flex; flex-direction: column; min-width: 0; height: 100vh; }
   header { display: flex; gap: 20px; align-items: flex-start; padding: 14px 28px; border-bottom: 1px solid var(--line); }
-  .botctl { flex: 0 0 clamp(210px, 20vw, 300px); display: flex; flex-direction: column; align-items: stretch; gap: 6px; padding-top: 4px; }
-  .botctl .status { max-width: none; }
+  .botctl { flex: 0 0 clamp(210px, 20vw, 300px); width: clamp(210px, 20vw, 300px); min-width: 0; display: flex; flex-direction: column; align-items: stretch; gap: 6px; padding-top: 4px; }
+  .botctl .status { max-width: none; min-width: 0; border-radius: 12px; align-items: center; text-align: left; padding: 7px 14px; }
+  .botctl .lines { flex: 1; display: flex; flex-direction: column; min-width: 0; line-height: 1.35; }
+  .botctl .head { color: var(--text); font-weight: 500; }
+  .botctl .detail { font-size: 12px; color: var(--text-3); }
+  .botctl .shelve:disabled { opacity: .45; cursor: default; }
   .botctl .shelve { justify-content: center; color: var(--text-2); }
   .page { flex: 1; overflow: auto; padding: 24px 28px 60px; }
   .shelve { white-space: nowrap; flex: none; }
@@ -295,6 +311,9 @@
   .phone header { padding: 8px 12px; gap: 8px; flex-wrap: wrap; }
   .phone header :global(.qa) { flex: 1 1 calc(100% - 52px); min-width: 0; }
   .phone .status { max-width: none; flex: 1 1 auto; }
+  /* phone: the state gets its own row under the note box (status left, pause right) */
+  .phone .botctl { flex: 1 1 100%; width: auto; flex-direction: row; align-items: center; padding-top: 0; }
+  .phone .botctl .shelve { flex: none; width: auto; white-space: nowrap; }
   .phone .page:not(.full) { padding: 14px 12px 60px; }
   .phone .connbar { padding: 8px 12px; flex-wrap: wrap; }
   .phone .shelve { white-space: normal; }

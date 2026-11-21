@@ -47,7 +47,7 @@ fn on_path(cli: &str) -> bool {
 
 pub fn orca_exe() -> Option<PathBuf> {
     let p = dirs::data_local_dir()?.join("Programs").join("orca").join("resources").join("bin").join("orca.exe");
-    if p.is_file() {
+    if cfg!(windows) && p.is_file() {
         return Some(p);
     }
     on_path("orca").then(|| PathBuf::from("orca"))

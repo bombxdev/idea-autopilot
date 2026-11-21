@@ -1,0 +1,104 @@
+name: Bundles
+# Builds the desktop app for Windows, macOS and Linux with `tauri build` and keeps the files as workflow
+# artifacts (download them from the run page). Nothing is published or signed: the macOS build is unsigned
+# (first open: right-click → Open), the Windows installer is unsigned (SmartScreen warns).
+# GitHub-hosted runners are free for public repositories.
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  bundle:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest # x64
+            bundles: nsis
+          - os: windows-11-arm # ARM64 (Snapdragon / Copilot+ PCs) — a separate installer, built natively.
+            # Free runner for PUBLIC repositories only; in a private repo this job fails to start (the others still run).
+            bundles: nsis
+          - os: macos-latest # Apple silicon
+            bundles: app,dmg
+          - os: macos-13 # Intel
+            bundles: app,dmg
+          - os: ubuntu-22.04 # oldest glibc we support → the AppImage runs on more distros
+            bundles: appimage,deb
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+      - name: Linux build packages (WebKitGTK, tray, rsvg)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf file
+      - name: UI
+        working-directory: app
+        run: |
+          npm ci
+          npm run build
+      - name: ia CLI
+        working-directory: app/src-tauri
+        run: cargo build --release --bin ia
+      - name: Bundle (Windows) — ia.exe goes next to the app as a resource, like package.ps1
+        if: runner.os == 'Windows'
+        working-directory: app
+        shell: pwsh
+        run: |
+          Set-Content src-tauri/ci-bundle.json '{"bundle":{"resources":{"target/release/ia.exe":"ia.exe"}}}'
+          npx tauri build --bundles ${{ matrix.bundles }} --config src-tauri/ci-bundle.json
+      - name: Bundle (macOS/Linux) — ia ships as a sidecar next to the app, like package.sh
+        if: runner.os != 'Windows'
+        working-directory: app
+        run: |
+          triple=$(rustc -vV | sed -n 's/^host: //p')
+          mkdir -p src-tauri/binaries
+          cp src-tauri/target/release/ia "src-tauri/binaries/ia-$triple"
+          echo '{"bundle":{"externalBin":["binaries/ia"]}}' > src-tauri/ci-bundle.json
+          npx tauri build --bundles ${{ matrix.bundles }} --config src-tauri/ci-bundle.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: idea-autopilot-${{ matrix.os }}
+          if-no-files-found: error
+          path: |
+            app/src-tauri/target/release/bundle/nsis/*.exe
+            app/src-tauri/target/release/bundle/dmg/*.dmg
+            app/src-tauri/target/release/bundle/appimage/*.AppImage
+            app/src-tauri/target/release/bundle/deb/*.deb
+
+  # The iPhone/iPad shell (mobile-ios/, Swift). Builds an UNSIGNED .ipa — no Apple account in CI, nothing paid.
+  # To put it on your own iPhone: sign + install it with a free Apple ID in Sideloadly or AltStore
+  # (free-account installs stop opening after 7 days; install again). See docs/IOS.md.
+  ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Xcode project from the XcodeGen spec
+        working-directory: mobile-ios
+        run: |
+          brew install xcodegen
+          xcodegen
+      - name: Build (device, unsigned)
+        working-directory: mobile-ios
+        run: |
+          xcodebuild -project IdeaAutopilot.xcodeproj -target IdeaAutopilot -sdk iphoneos -configuration Release \
+            SYMROOT="$PWD/build" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+      - name: Pack .ipa (Payload/<app>.app, zipped)
+        working-directory: mobile-ios
+        run: |
+          mkdir -p Payload
+          cp -R "build/Release-iphoneos/Idea Autopilot.app" Payload/
+          zip -qry IdeaAutopilot-unsigned.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: idea-autopilot-ios-unsigned
+          if-no-files-found: error
+          path: mobile-ios/IdeaAutopilot-unsigned.ipa

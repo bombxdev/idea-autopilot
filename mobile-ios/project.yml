@@ -1,0 +1,32 @@
+# XcodeGen spec (free: `brew install xcodegen`, then `xcodegen` in this folder makes IdeaAutopilot.xcodeproj).
+# The web page is NOT copied: the app bundles mobile/app/src/main/assets as-is, so Android and iOS stay one page.
+name: IdeaAutopilot
+options:
+  bundleIdPrefix: app.ideaautopilot
+  deploymentTarget:
+    iOS: "15.0"
+targets:
+  IdeaAutopilot:
+    type: application
+    platform: iOS
+    sources:
+      - path: IdeaAutopilot
+      - path: ../mobile/app/src/main/assets
+        type: folder # a folder reference: lands in the bundle as assets/
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.ideaautopilot.mobile
+        PRODUCT_NAME: Idea Autopilot
+        MARKETING_VERSION: "0.10.1"
+        CURRENT_PROJECT_VERSION: "1"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SWIFT_VERSION: "5.0"
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Idea Autopilot
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIStatusBarStyle: UIStatusBarStyleLightContent
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
+        # the page's photo picker offers the camera too; iOS closes an app that uses it without this text
+        INFOPLIST_KEY_NSCameraUsageDescription: แนบรูปถ่ายไปกับไอเดีย

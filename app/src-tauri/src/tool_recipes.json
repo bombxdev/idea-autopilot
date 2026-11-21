@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "about": "Recipes for the add-ons (video.rs, docs.rs). Data, not code: a better tool or model replaces an entry here. A copy at data/tools/recipes.json on the machine wins over this one (same shape).",
+  "about": "Recipes for the add-ons (video.rs, docs.rs). Data, not code: a better tool or model replaces an entry here. A copy at data/tools/recipes.json on the machine wins over this one (same shape). The main url/sha256 of a download is the Windows x86_64 file; other systems use their own entry under `platforms` (key = <os>-<arch>, e.g. macos-aarch64, linux-x86_64) or get no download.",
   "ffmpeg": {
     "label": "ffmpeg 7.1.1 (essentials, gyan.dev)",
     "license": "GPL-3.0",
@@ -8,7 +8,8 @@
     "url": "https://github.com/GyanD/codexffmpeg/releases/download/7.1.1/ffmpeg-7.1.1-essentials_build.zip",
     "sha256": "04861d3339c5ebe38b56c19a15cf2c0cc97f5de4fa8910e4d47e5e6404e4a2d4",
     "size_mb": 88,
-    "unpack": true
+    "unpack": true,
+    "platforms_note": "No macOS/Linux entry on purpose: there is no free, versioned, long-lived static build URL (BtbN prunes old autobuilds; evermeet.cx is x86_64 only). On those systems the app uses the ffmpeg on PATH (brew install ffmpeg / apt install ffmpeg)."
   },
   "engines": [
     {
@@ -20,7 +21,29 @@
       "url": "https://github.com/handy-computer/transcribe.cpp/releases/download/v0.4.2/transcribe-native-0.4.2-windows-x86_64-cpu-vulkan.tar.gz",
       "sha256": "6094102cf57b404b050707ceb258b12ce647b92e801b5d46077214e5b030c8aa",
       "size_mb": 17,
-      "unpack": true
+      "unpack": true,
+      "platforms": {
+        "macos-aarch64": {
+          "url": "https://github.com/handy-computer/transcribe.cpp/releases/download/v0.4.2/transcribe-native-0.4.2-macos-arm64-metal.tar.gz",
+          "sha256": "75ea3a705f3edec09942fdbb1b2b5509d7ecd75bda55158a47a3ab1e2d1105b3",
+          "size_mb": 3
+        },
+        "macos-x86_64": {
+          "url": "https://github.com/handy-computer/transcribe.cpp/releases/download/v0.4.2/transcribe-native-0.4.2-macos-x86_64-cpu.tar.gz",
+          "sha256": "ca414e5b28706a2f2ecea1479b3e1c5f47d0f11f43aba86e289ae5c10b1ca40c",
+          "size_mb": 2
+        },
+        "linux-x86_64": {
+          "url": "https://github.com/handy-computer/transcribe.cpp/releases/download/v0.4.2/transcribe-native-0.4.2-linux-x86_64-cpu-vulkan.tar.gz",
+          "sha256": "4fe87db8919ea34e461db7987713b580f54e6f3ed610457c5d8fb8eac1a15046",
+          "size_mb": 22
+        },
+        "linux-aarch64": {
+          "url": "https://github.com/handy-computer/transcribe.cpp/releases/download/v0.4.2/transcribe-native-0.4.2-linux-aarch64-cpu-vulkan.tar.gz",
+          "sha256": "5e9cc7b244949fc686d1272e796e965411e80cc768533f1704c3c53e4c7d695e",
+          "size_mb": 18
+        }
+      }
     }
   ],
   "speech_models": [
@@ -66,7 +89,29 @@
     "url": "https://github.com/astral-sh/uv/releases/download/0.12.10/uv-x86_64-pc-windows-msvc.zip",
     "sha256": "f65744f94072152b1f86ba2aace4d01f1124d9a8ecb235805039e3718c36cac2",
     "size_mb": 17,
-    "unpack": true
+    "unpack": true,
+    "platforms": {
+      "macos-aarch64": {
+        "url": "https://github.com/astral-sh/uv/releases/download/0.12.10/uv-aarch64-apple-darwin.tar.gz",
+        "sha256": "51c6170e8e3a01cef9f33b94f582b7b81ac65046f55d40afb35f9cff5a68c179",
+        "size_mb": 16
+      },
+      "macos-x86_64": {
+        "url": "https://github.com/astral-sh/uv/releases/download/0.12.10/uv-x86_64-apple-darwin.tar.gz",
+        "sha256": "5296d5aa2b9143360405eea866f8ef4d5dc8986b164eb0dc35e8f876a9304d30",
+        "size_mb": 19
+      },
+      "linux-x86_64": {
+        "url": "https://github.com/astral-sh/uv/releases/download/0.12.10/uv-x86_64-unknown-linux-gnu.tar.gz",
+        "sha256": "173d95a0c32d18c896c46ba6fafbf3cf9c14ab74b033f81b76c883ef492a976b",
+        "size_mb": 19
+      },
+      "linux-aarch64": {
+        "url": "https://github.com/astral-sh/uv/releases/download/0.12.10/uv-aarch64-unknown-linux-gnu.tar.gz",
+        "sha256": "9ff6b9d4665edcdd3a88dcc73cd1eb641754deb927f14e8c62ebfde6bf4f5f5e",
+        "size_mb": 18
+      }
+    }
   },
   "doc_converters": [
     {

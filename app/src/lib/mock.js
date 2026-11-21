@@ -386,7 +386,8 @@ const demoParts = [
 ];
 function teamsMock(cmd, args) {
   if (cmd === "teams_list") return { teams: demoTeams.map(teamJson), presets: [
-    { key: "web-app", name: "ทีมเว็บแอป", emoji: "🌐", description: "สร้างเว็บ/แอป", use_for: "" },
+    { key: "web-app", name: "ทีมเว็บแอป", emoji: "🌐", description: "สร้างเว็บ/แอปตั้งแต่หน้าตาถึงหลังบ้าน แล้วทดสอบ", use_for: "", installed: true, starter: [{ slug: "product-planner", name: "Product Planner", emoji: "🧭", title: "วางแผนผลิตภัณฑ์" }, { slug: "ux-designer", name: "UX/UI Designer", emoji: "🎨", title: "ออกแบบหน้าจอ" }, { slug: "frontend-dev", name: "Front-end Developer", emoji: "🖥️", title: "นักพัฒนา front-end" }, { slug: "backend-dev", name: "Back-end Developer", emoji: "🗄️", title: "นักพัฒนา back-end" }, { slug: "qa-tester", name: "QA Tester", emoji: "🧪", title: "ทดสอบระบบ" }, { slug: "code-reviewer", name: "Code Reviewer", emoji: "🔍", title: "ตรวจโค้ด" }] },
+    { key: "office", name: "ทีมงานเอกสาร/รายงาน", emoji: "🗂️", description: "ทำรายงาน ตาราง Excel สไลด์นำเสนอ", use_for: "", starter: [{ slug: "report-analyst", name: "Report & Excel Analyst", emoji: "🧮", title: "ทำรายงาน/Excel" }, { slug: "editor", name: "Editor", emoji: "📝", title: "บรรณาธิการ/พิสูจน์อักษร" }, { slug: "slide-designer", name: "Presentation Designer", emoji: "🖼️", title: "ทำสไลด์นำเสนอ" }] },
     { key: "research", name: "ทีมค้นคว้า/ตัดสินใจ", emoji: "🔎", description: "หาข้อมูล ให้คะแนน", use_for: "" },
     { key: "marketing", name: "ทีมการตลาด/คอนเทนต์", emoji: "📣", description: "คอนเทนต์ โพสต์", use_for: "" },
   ] };

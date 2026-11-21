@@ -37,6 +37,48 @@ pub struct Download {
     pub sha256: String,
     pub size_mb: u64,
     pub unpack: bool,
+    /// other systems' own files, keyed "macos-aarch64", "linux-x86_64", … (the fields above are the Windows x86_64 one)
+    pub platforms: BTreeMap<String, PlatformFile>,
+}
+
+/// One system's build of a download: its own address and checksum.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct PlatformFile {
+    pub url: String,
+    pub sha256: String,
+    pub size_mb: u64,
+}
+
+/// "windows-x86_64", "macos-aarch64", "linux-x86_64", … — the key of a recipe's `platforms`.
+pub fn platform_key() -> String {
+    format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
+}
+
+/// The file for this machine: its `platforms` entry, else the main fields on Windows x86_64, else none (the
+/// recipe has no build for this system, so nothing is downloaded — never a Windows file on a Mac).
+fn pick(url: &str, sha: &str, size: u64, platforms: &BTreeMap<String, PlatformFile>, key: &str) -> Option<PlatformFile> {
+    if let Some(p) = platforms.get(key).filter(|p| !p.url.is_empty()) {
+        return Some(p.clone());
+    }
+    (key == "windows-x86_64" && !url.is_empty()).then(|| PlatformFile { url: url.into(), sha256: sha.into(), size_mb: size })
+}
+
+impl Download {
+    pub fn here(&self) -> Option<PlatformFile> {
+        pick(&self.url, &self.sha256, self.size_mb, &self.platforms, &platform_key())
+    }
+}
+
+impl Engine {
+    pub fn here(&self) -> Option<PlatformFile> {
+        pick(&self.url, &self.sha256, self.size_mb, &self.platforms, &platform_key())
+    }
+}
+
+/// What to tell someone whose system has no download in the recipes.
+pub(crate) fn no_build(what: &str, hint: &str) -> anyhow::Error {
+    anyhow::anyhow!("ยังไม่มี {what} ให้ดาวน์โหลดสำหรับ {} — {hint}", platform_key())
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -52,6 +94,7 @@ pub struct Engine {
     pub sha256: String,
     pub size_mb: u64,
     pub unpack: bool,
+    pub platforms: BTreeMap<String, PlatformFile>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -114,7 +157,15 @@ pub fn recipes(root: &Path) -> Recipes {
         .unwrap_or_else(|| serde_json::from_str(DEFAULT_RECIPES).expect("tool_recipes.json"))
 }
 
-fn exe(name: &str) -> String {
+/// transcribe.cpp's library as each system names it (same as speech_engine::LIB_NAME, which lives in the `ia` binary).
+#[cfg(windows)]
+const TRANSCRIBE_LIB: &str = "transcribe.dll";
+#[cfg(target_os = "macos")]
+const TRANSCRIBE_LIB: &str = "libtranscribe.dylib";
+#[cfg(all(not(windows), not(target_os = "macos")))]
+const TRANSCRIBE_LIB: &str = "libtranscribe.so";
+
+pub(crate) fn exe(name: &str) -> String {
     if cfg!(windows) { format!("{name}.exe") } else { name.to_string() }
 }
 
@@ -149,7 +200,7 @@ pub fn engine_dir(root: &Path, id: &str) -> PathBuf {
 
 pub fn engine_ready(root: &Path, e: &Engine) -> bool {
     match e.kind.as_str() {
-        "transcribe-dll" => find_file(&engine_dir(root, &e.id), if cfg!(windows) { "transcribe.dll" } else { "libtranscribe.so" }, 2).is_some(),
+        "transcribe-dll" => find_file(&engine_dir(root, &e.id), TRANSCRIBE_LIB, 2).is_some(),
         _ => false,
     }
 }
@@ -749,10 +800,19 @@ pub(crate) async fn download(url: &str, sha: &str, to: &Path, total_mb: f64) -> 
     Ok(())
 }
 
-/// Unpack an archive with the system's own `tar` (Windows 10+ reads .zip and .tar.gz).
+/// Where there is no ffmpeg build in the recipes (macOS/Linux): the system's own package manager has one.
+const FFMPEG_HINT: &str = "ติดตั้ง ffmpeg ของระบบเอง (macOS: brew install ffmpeg · Linux: sudo apt install ffmpeg) แล้วกดตรวจอีกครั้ง";
+
+/// Unpack an archive with the system's own `tar` (Windows 10+ reads .zip and .tar.gz; macOS bsdtar reads both;
+/// GNU tar on Linux reads .tar.* only, so a .zip goes to `unzip` there).
 fn unpack(archive: &Path, into: &Path) -> Result<()> {
     std::fs::create_dir_all(into)?;
-    let out = run(Command::new("tar").arg("-xf").arg(archive).arg("-C").arg(into))?;
+    let zip = archive.extension().is_some_and(|x| x.eq_ignore_ascii_case("zip"));
+    let out = if zip && cfg!(target_os = "linux") {
+        run(Command::new("unzip").arg("-q").arg("-o").arg(archive).arg("-d").arg(into))?
+    } else {
+        run(Command::new("tar").arg("-xf").arg(archive).arg("-C").arg(into))?
+    };
     if !out.status.success() {
         bail!("แตกไฟล์ไม่ได้: {}", String::from_utf8_lossy(&out.stderr).trim());
     }
@@ -775,19 +835,22 @@ pub async fn install(root: PathBuf, part: String) -> Result<()> {
         return crate::docs::install(&root, &part, &r.uv).await;
     }
     if part == "ffmpeg" {
+        let f = r.ffmpeg.here().ok_or_else(|| no_build("ffmpeg", FFMPEG_HINT))?;
         set_job(|j| j.message = format!("กำลังดาวน์โหลด {}", r.ffmpeg.label));
-        return fetch_unpacked(&r.ffmpeg.url, &r.ffmpeg.sha256, r.ffmpeg.size_mb, &tools(&root).join("ffmpeg")).await;
+        return fetch_unpacked(&f.url, &f.sha256, f.size_mb, &tools(&root).join("ffmpeg")).await;
     }
     let id = part.strip_prefix("model:").context("ไม่รู้จักส่วนที่จะติดตั้ง")?;
     let m = r.speech_models.iter().find(|m| m.id == id).context("ไม่รู้จักโมเดลนี้")?.clone();
     let e = r.engines.iter().find(|e| e.id == m.engine).context("ไม่รู้จักเครื่องมือถอดเสียงของโมเดลนี้")?.clone();
     if ffmpeg(&root).is_none() {
+        let f = r.ffmpeg.here().ok_or_else(|| no_build("ffmpeg", FFMPEG_HINT))?;
         set_job(|j| j.message = format!("กำลังดาวน์โหลด {} (ใช้แยกเสียงจากวิดีโอ)", r.ffmpeg.label));
-        fetch_unpacked(&r.ffmpeg.url, &r.ffmpeg.sha256, r.ffmpeg.size_mb, &tools(&root).join("ffmpeg")).await?;
+        fetch_unpacked(&f.url, &f.sha256, f.size_mb, &tools(&root).join("ffmpeg")).await?;
     }
     if !engine_ready(&root, &e) {
+        let f = e.here().ok_or_else(|| no_build(&e.label, "ใช้ได้เฉพาะคำบรรยาย/ภาพจากวิดีโอในเครื่องนี้"))?;
         set_job(|j| j.message = format!("กำลังดาวน์โหลด {}", e.label));
-        fetch_unpacked(&e.url, &e.sha256, e.size_mb, &engine_dir(&root, &e.id)).await?;
+        fetch_unpacked(&f.url, &f.sha256, f.size_mb, &engine_dir(&root, &e.id)).await?;
     }
     if !model_path(&root, &m).is_file() {
         set_job(|j| j.message = format!("กำลังดาวน์โหลด {}", m.label));
