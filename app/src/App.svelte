@@ -89,6 +89,15 @@
     return () => window.removeEventListener("keydown", onKey, true);
   });
 
+  // window width → layout: wide (full menu) · rail (icons only, tablet or Workspace) · phone (menu in a drawer)
+  let winW = $state(typeof window === "undefined" ? 1280 : window.innerWidth);
+  let menuOpen = $state(false);
+  const phone = $derived(winW < 760);
+  const rail = $derived(!phone && (store.page === "workspace" || winW < 1100));
+  $effect(() => {
+    store.page;
+    menuOpen = false; // picking a page closes the drawer
+  });
   const s = $derived(store.state);
   const d = $derived(s?.decision);
   // the badge counts everything waiting for the owner: questions and finished work not looked at yet (ISSUE-100)
@@ -137,7 +146,9 @@
   </div>
 {/if}
 <!-- on the Workspace page the menu shrinks to icons so the windows get the whole width (ISSUE-087) -->
-<div class="shell" class:rail={store.page === "workspace"}>
+<svelte:window bind:innerWidth={winW} />
+<div class="shell" class:rail class:phone class:menu={menuOpen}>
+  {#if phone && menuOpen}<button class="scrim" aria-label="ปิดเมนู" onclick={() => (menuOpen = false)}></button>{/if}
   <aside>
     <div class="brand">
       <div class="logo"><Icon name="logo" size="22" /></div>
@@ -165,6 +176,7 @@
 
   <main>
     <header>
+      {#if phone}<button class="ghost menubtn" aria-label="เมนู" onclick={() => (menuOpen = !menuOpen)}><Icon name="list" /></button>{/if}
       <QuickAdd />
       <button class="status {botState.cls}" onclick={togglePause} title="คลิกเพื่อ พัก / ทำต่อ">
         <span class="dot"></span><span class="ellipsis">{#if botState.power}<Icon name="rocket" /> {/if}{botState.text}{#if botState.step} <span>{botState.step}</span>{/if}</span>
@@ -261,4 +273,20 @@
   .status.paused .dot { background: var(--red); }
   .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--card-2); border: 1px solid var(--line-2); padding: 8px 18px; border-radius: 999px; animation: rise .2s ease-out; z-index: 50; }
   .toast.err { border-color: var(--red); color: var(--red); }
+
+  /* tablet: icons-only menu (rail) and tighter gutters */
+  .rail .page:not(.full) { padding: 20px 20px 60px; }
+  .ptabs { overflow-x: auto; scrollbar-width: none; }
+  /* phone: the menu becomes a drawer, the header stacks */
+  .shell.phone { grid-template-columns: 1fr; }
+  .phone aside { position: fixed; inset: 0 auto 0 0; width: 260px; max-width: 85vw; z-index: 70; transform: translateX(-105%); transition: transform .18s ease-out; overflow-y: auto; box-shadow: 4px 0 24px rgba(0, 0, 0, .35); }
+  .phone.menu aside { transform: none; }
+  .scrim { position: fixed; inset: 0; z-index: 65; background: rgba(0, 0, 0, .45); border: none; border-radius: 0; padding: 0; }
+  .menubtn { flex: none; padding: 6px 8px; }
+  .phone header { padding: 8px 12px; gap: 8px; flex-wrap: wrap; }
+  .phone header :global(.qa) { flex: 1 1 calc(100% - 52px); min-width: 0; }
+  .phone .status { max-width: none; flex: 1 1 auto; }
+  .phone .page:not(.full) { padding: 14px 12px 60px; }
+  .phone .connbar { padding: 8px 12px; flex-wrap: wrap; }
+  .phone .shelve { white-space: normal; }
 </style>

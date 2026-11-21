@@ -112,6 +112,12 @@ input:focus, textarea:focus, select:focus { border-color: var(--teal); }
 .row { display: flex; align-items: center; gap: 8px; }
 .wrap { flex-wrap: wrap; }
 .grow { flex: 1; min-width: 0; }
+/* nothing a page holds may push it wider than the window (narrow windows, tablets, phones) */
+select, input, textarea, img, video, pre, table { max-width: 100%; }
+pre { overflow-x: auto; }
+.row > select, .row > input, .row > textarea { min-width: 0; flex-shrink: 1; }
+label > select { max-width: 100%; }
+@media (max-width: 760px) { .row > label { min-width: 0; max-width: 100%; } input[style*="width"] { max-width: 100%; } }
 .ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 10px; border: 3px solid var(--bg); }

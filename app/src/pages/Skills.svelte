@@ -1,5 +1,6 @@
 <script>
   import Icon from "../components/Icon.svelte";
+  import McpTools from "../components/McpTools.svelte";
   import { onMount } from "svelte";
   import { api } from "../lib/api.js";
   import { toast } from "../lib/store.svelte.js";
@@ -79,14 +80,26 @@
   let installing = $state(false);
   let deep = $state(null); // SkillSpector result for the open preview
   let deepLocal = $state(null); // ... for the pasted text
+  // what each collection is for (skills.rs category_of) and how the list is ordered
+  const CATS = { design: "ออกแบบ / UI", code: "เขียนโค้ด", test: "ทดสอบ / QA", security: "ความปลอดภัย", docs: "เอกสาร / Office", data: "ข้อมูล / กราฟ", research: "ค้นคว้า / เว็บ", media: "ภาพ / เสียง / วิดีโอ", business: "ธุรกิจ / การตลาด", devops: "DevOps / Cloud", agents: "AI agent / อัตโนมัติ", other: "อื่นๆ" };
+  const SORTS = [["popular", "ยอดนิยม", "star"], ["trending", "กำลังมาแรง", "flame"], ["new", "มาใหม่ (90 วัน)", "sparkle"]];
+  let sort = $state("popular");
+  let cat = $state("");
+  const catCounts = $derived.by(() => {
+    const m = new Map();
+    for (const r of repos ?? []) m.set(r.category || "other", (m.get(r.category || "other") ?? 0) + 1);
+    return [...m.entries()].sort((a, b) => b[1] - a[1]);
+  });
+  const shown = $derived((repos ?? []).filter((r) => !cat || (r.category || "other") === cat));
 
   async function search() {
     searching = true;
     repo = null;
     preview = null;
     try {
-      const r = await api.shopSearch(q.trim());
+      const r = await api.shopSearch(q.trim(), sort);
       repos = r.repos;
+      if (cat && !r.repos.some((x) => (x.category || "other") === cat)) cat = "";
       repoNote = r.note ?? "";
     } catch (e) {
       repos = [];
@@ -187,6 +200,7 @@
     <button class="f" class:on={tab === "mine"} onclick={() => (tab = "mine")}>สกิลของฉัน ({data.skills.length})</button>
     <button class="f" class:on={tab === "shop"} onclick={() => { tab = "shop"; if (!repos) search(); }}><Icon name="cart" /> ช็อปสกิล (ฟรี)</button>
     <button class="f" class:on={tab === "write"} onclick={() => (tab = "write")}><Icon name="pencil" /> เขียน / วางเอง</button>
+    <button class="f" class:on={tab === "tools"} onclick={() => (tab = "tools")}><Icon name="plug" /> เครื่องมือ (MCP)</button>
   </div>
 
   {#if tab === "mine"}
@@ -252,10 +266,24 @@
 
     {#if !repo && repos}
       {#if repoNote}<div class="warnbox small">{repoNote}</div>{/if}
-      {#each repos as r (r.repo)}
+      <div class="row wrap sorts">
+        {#each SORTS as [k, label, icon] (k)}
+          <button class="f" class:on={sort === k} disabled={searching} onclick={() => { sort = k; search(); }}><Icon name={icon} /> {label}</button>
+        {/each}
+      </div>
+      {#if catCounts.length > 1}
+        <div class="row wrap cats">
+          <button class="chip" class:on={!cat} onclick={() => (cat = "")}>ทุกหมวด ({repos.length})</button>
+          {#each catCounts as [k, n] (k)}
+            <button class="chip" class:on={cat === k} onclick={() => (cat = cat === k ? "" : k)}>{CATS[k] ?? k} ({n})</button>
+          {/each}
+        </div>
+      {/if}
+      {#each shown as r (r.repo)}
         <button class="card repo" onclick={() => browse(r.repo)}>
           <div class="row wrap"><b class="grow">{r.repo}</b><span class="chip {r.trust === 'known' ? 'blue' : 'amber'}">{r.trust === "known" ? "แหล่งที่รู้จัก" : "ชุมชน"}</span>
-            {#if r.stars != null}<span class="faint small"><Icon name="star" /> {r.stars}</span>{/if}{#if r.license}<span class="faint small">{r.license}</span>{/if}</div>
+            {#if r.stars != null}<span class="faint small"><Icon name="star" /> {r.stars}</span>{/if}{#if sort === "trending" && r.stars_per_day}<span class="faint small"><Icon name="flame" /> {r.stars_per_day}/วัน</span>{/if}{#if r.license}<span class="faint small">{r.license}</span>{/if}</div>
+          <div class="row wrap small"><span class="faint">{CATS[r.category || "other"]}</span>{#if r.created}<span class="faint">· สร้าง {r.created.slice(0, 10)}</span>{/if}</div>
           {#if r.description}<div class="muted small">{r.description}</div>{/if}
         </button>
       {:else}
@@ -312,6 +340,10 @@
     {/if}
   {/if}
 
+  {#if tab === "tools"}
+    <McpTools skills={data.skills} cats={CATS} />
+  {/if}
+
   {#if tab === "write"}
     <p class="muted small">เขียนสกิลของคุณเอง หรือวางสกิลที่ได้มาจากที่อื่น จะผ่านตัวสแกนเดียวกัน ต้องมี <code>name</code> และ <code>description</code> ใน front-matter</p>
     <textarea rows="14" bind:value={text} placeholder={TEMPLATE} oninput={() => (checked = null)}></textarea>
@@ -338,6 +370,9 @@
   .tabs { gap: 6px; }
   .f { border-radius: 999px; font-size: 13px; padding: 4px 14px; }
   .f.on { background: var(--card-2); border-color: var(--teal); }
+  .sorts, .cats { gap: 6px; margin: 6px 0; }
+  button.chip { cursor: pointer; border: 1px solid var(--line, #333); background: transparent; font-size: 12px; padding: 2px 10px; border-radius: 999px; color: var(--muted, inherit); }
+  button.chip.on { border-color: var(--teal); color: var(--teal); }
   .group { display: flex; flex-direction: column; gap: 8px; }
   .gh { font-size: 13px; color: var(--text-2); padding: 0 4px; }
   .sk { display: flex; flex-direction: column; gap: 6px; }

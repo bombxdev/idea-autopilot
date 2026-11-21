@@ -153,6 +153,12 @@
   .search input { border: 0; background: transparent; outline: none; padding: 6px 0; width: 220px; color: inherit; }
   .found { margin: 0 0 10px; }
   .board { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; align-items: start; }
+  /* narrow window: the columns keep a readable width and the board scrolls sideways, like any kanban */
+  @media (max-width: 1100px) {
+    .board { grid-template-columns: repeat(5, minmax(240px, 1fr)); overflow-x: auto; padding-bottom: 8px; scroll-snap-type: x proximity; }
+    .board > :global(*) { scroll-snap-align: start; }
+    .search input { width: 140px; }
+  }
   .col { background: var(--bg-2); border: 1px solid var(--line); border-radius: 14px; padding: 12px; display: flex; flex-direction: column; gap: 8px; min-height: 200px; }
   .colhead { display: flex; justify-content: space-between; }
   .hint { margin-top: -6px; }

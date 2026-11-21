@@ -196,7 +196,7 @@ pub fn ask(app: &AppHandle, id: i64, text: &str, ai: &ChatAi) -> Result<(), Stri
         );
         db::log_event(&st.db.lock(), "remote", Some(id), "เปิดแชตกับ Codex");
     }
-    feed(app, id, format!("🙋 คุณ: {}", short(text, 400)), None);
+    feed(app, id, format!("🙋 คุณ: {}", short(&crate::remote::shown(text), 400)), None);
     let start_worker = {
         let mut m = CHATS.lock();
         let c = m.entry(id).or_default();

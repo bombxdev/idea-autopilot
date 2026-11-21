@@ -12,7 +12,7 @@ use crate::state::AppState;
 
 const HELP: &str = "สั่ง Idea Autopilot จาก Telegram
 
-พิมพ์อะไรก็ได้ = จดไอเดีย (! นำหน้า = ด่วน, ? = ขอแค่ research)
+/new <ไอเดีย>  จดไอเดียใหม่ (หรือพิมพ์ข้อความเฉยๆ ก็ได้ · ! นำหน้า = ด่วน, ? = ขอแค่ research)
 ตอบกลับ (reply) ข้อความของไอเดีย = สั่งงานไอเดียนั้น
 
 /status  สถานะบอทและโควต้า
@@ -26,6 +26,20 @@ const HELP: &str = "สั่ง Idea Autopilot จาก Telegram
 /pause  /resume  /turbo [ชม.]
 /digest  สรุปล่าสุด
 /log [วัน]  บอททำอะไรไปบ้าง";
+
+/// What Telegram lists when the owner types "/".
+const MENU: &[(&str, &str)] = &[
+    ("new", "จดไอเดียใหม่: /new ไอเดียที่อยากทำ"),
+    ("status", "สถานะบอทและโควต้า"),
+    ("list", "รายการไอเดีย"),
+    ("q", "คำถามที่รอคุณตอบ"),
+    ("show", "รายละเอียดไอเดีย: /show เลขไอเดีย"),
+    ("ask", "ให้ AI แก้/ทำต่อ: /ask เลขไอเดีย คำสั่ง"),
+    ("digest", "สรุปล่าสุด"),
+    ("pause", "พักบอท"),
+    ("resume", "ให้บอททำต่อ"),
+    ("help", "คำสั่งทั้งหมด"),
+];
 
 fn setting(app: &AppHandle, k: &str) -> Option<String> {
     db::get_setting(&app.state::<AppState>().db.lock(), k).filter(|v| !v.trim().is_empty())
@@ -99,11 +113,16 @@ pub async fn run_loop(app: AppHandle) {
             tokio::time::sleep(Duration::from_secs(30)).await;
             continue;
         };
-        if token != cur_token {
+        let fresh_token = token != cur_token;
+        if fresh_token {
             cur_token = token.clone();
             offset = 0;
         }
         let tg = Tg { http: http.clone(), token };
+        if fresh_token {
+            // the "/" menu in every Telegram app (iPhone included): commands with a short line each
+            let _ = tg.call("setMyCommands", json!({ "commands": MENU.iter().map(|(c, d)| json!({ "command": c, "description": d })).collect::<Vec<_>>() }), 15).await;
+        }
         let chat: Option<i64> = setting(&app, "telegram_chat").and_then(|c| c.parse().ok());
         if let Some(c) = chat {
             push_questions(&app, &tg, c, &mut threads).await;
@@ -238,6 +257,14 @@ fn on_text(app: &AppHandle, text: &str, reply_to: Option<i64>) -> (String, Optio
 
     let r: Result<(String, Option<Value>, Option<i64>), String> = (|| match cmd.as_str() {
         "start" | "help" => Ok((HELP.into(), None, None)),
+        // "/new อยากทำแอปจดรายจ่าย": a new idea (the same as typing it without a command)
+        "new" | "add" | "idea" | "a" => {
+            let idea = text.split_once(char::is_whitespace).map(|(_, t)| t.trim()).filter(|t| !t.is_empty()).ok_or("พิมพ์ไอเดียต่อท้าย เช่น /new อยากได้แอปจดรายจ่ายด้วยเสียง")?;
+            match dispatch(app, "add", json!({ "text": idea }))? {
+                v if v.as_i64() == Some(0) => Ok(("ส่งไปเครื่องหลักแล้ว จะเข้าคิวรอบ sync ถัดไป".into(), None, None)),
+                v => Ok((format!("จดแล้ว #{v} ✓ AI จะเริ่มคิดเมื่อมีโควต้าว่าง"), None, v.as_i64())),
+            }
+        }
         "status" | "st" => dispatch(app, "status", Value::Null).map(|v| (fmt_status(&v), None, None)),
         "list" | "ls" => dispatch(app, "ideas", Value::Null).map(|v| (fmt_list(&v), None, None)),
         "q" | "questions" => {

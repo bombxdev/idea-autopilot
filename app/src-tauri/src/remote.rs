@@ -724,6 +724,9 @@ pub fn start_with(app: &AppHandle, id: i64, ai: &ChatAi) -> Result<(), String> {
     }
     let ai = ai.resolved(&st.db.lock(), id);
     let acct = if ai.account.is_empty() { None } else { Some(crate::accounts::find(&st.db.lock(), &ai.account).ok_or("ไม่พบบัญชี AI นี้")?) };
+    if acct.is_none() && !crate::providers::installed("claude") {
+        return Err(NO_CLAUDE.into());
+    }
     if let Some(a) = &acct {
         if a.kind != "claude" {
             return Err("แชตในแอปใช้ได้กับบัญชีที่ใช้ Claude Code เท่านั้น — ค่ายอื่นจะเปิดใน terminal/Orca".into());
@@ -1006,6 +1009,34 @@ pub fn start_with(app: &AppHandle, id: i64, ai: &ChatAi) -> Result<(), String> {
     Ok(())
 }
 
+/// Put before a message the owner edited after stopping the AI: the AI drops the earlier request (ISSUE-108).
+pub const EDIT_MARK: &str = "[The owner stopped you and edited their previous message. Drop that earlier request and anything left of it; do this instead:]
+";
+
+/// The owner's message as the feed shows it: an edited one marked with ✏️ instead of the note for the AI.
+pub fn shown(text: &str) -> String {
+    match text.strip_prefix(EDIT_MARK) {
+        Some(t) => format!("✏️ {t}"),
+        None => text.to_string(),
+    }
+}
+
+const NO_CLAUDE: &str = "เครื่องนี้ไม่มี Claude Code — เลือก “AI สำหรับไอเดียนี้” เป็น AI ที่ติดตั้งไว้ (เช่น Mistral) แล้วส่งใหม่ หรือเพิ่ม AI ที่ ตั้งค่า → AI ที่ใช้";
+
+/// Chat set to "automatic" (no account) on a machine without Claude Code: the first usable non-Claude account
+/// (id, kind) that can chat. `None` = Claude is there, open it as before.
+fn auto_fallback(claude_installed: bool, usable: &[(String, String)]) -> Result<Option<(String, String)>, String> {
+    if claude_installed {
+        return Ok(None);
+    }
+    usable
+        .iter()
+        .find(|(_, k)| k == "codex" || crate::agent_chat::KINDS.contains(&k.as_str()))
+        .cloned()
+        .map(Some)
+        .ok_or_else(|| NO_CLAUDE.to_string())
+}
+
 /// Send an instruction to the idea's session, opening (or reopening) it first when needed.
 pub fn ask(app: &AppHandle, id: i64, text: &str) -> Result<(), String> {
     ask_with(app, id, text, &ChatAi::default())
@@ -1072,6 +1103,15 @@ fn send(app: &AppHandle, id: i64, text: &str, ai: &ChatAi, owner: bool) -> Resul
         }
         // no account named: the open Codex chat carries on
         return crate::codex_chat::ask(app, id, text, ai);
+    }
+    // "automatic" opens Claude Code — on a machine without Claude (a friend with only Mistral) that died with
+    // "cannot find the file specified": use the first AI the bot itself may use instead (ISSUE-106)
+    if !claude_open && want_kind.is_none() {
+        let usable: Vec<(String, String)> = crate::accounts::usable(&app.state::<AppState>().db.lock()).into_iter().map(|a| (a.id, a.kind)).collect();
+        if let Some((acct, kind)) = auto_fallback(crate::providers::installed("claude"), &usable)? {
+            let w = ChatAi { account: acct, ..Default::default() };
+            return if kind == "codex" { crate::codex_chat::ask(app, id, text, &w) } else { crate::agent_chat::ask(app, id, &kind, text, &w) };
+        }
     }
     let open = claude_open;
     if !open {
@@ -1188,6 +1228,7 @@ pub fn set_request(app: &AppHandle, rid: i64, state: &str, note: &str, by_owner:
 /// shortened at a line end when very long.
 fn chat_request(text: &str) -> String {
     const MARK: &str = "Request from the owner:";
+    let text = text.strip_prefix(EDIT_MARK).unwrap_or(text);
     let t = if text.starts_with("Use the skill") { text.rfind(MARK).map(|i| &text[i + MARK.len()..]).unwrap_or(text) } else { text };
     let t = t.trim();
     if t.chars().count() <= 1500 {
@@ -1263,7 +1304,12 @@ pub fn revive(app: &AppHandle, id: i64) -> Result<(), String> {
 /// Called from the scheduler: close sessions of archived/deleted ideas, and idle ones nobody is using any more.
 /// The owner cuts in on a one-message-at-a-time AI: stop its running reply so the waiting message goes now.
 pub fn cut_in(app: &AppHandle, id: i64) -> Result<(), String> {
-    if crate::agent_chat::cut_in(id) || crate::codex_chat::cut_in(id) {
+    // Claude Code: Esc stops what it is doing, as in its own console; the conversation stays open
+    let claude = !crate::agent_chat::active(app, id) && !crate::codex_chat::active(app, id) && {
+        let mut ptys = PTYS.lock();
+        ptys.get_mut(&id).is_some_and(|p| p.writer.write_all(b"").and_then(|_| p.writer.flush()).is_ok())
+    };
+    if claude || crate::agent_chat::cut_in(id) || crate::codex_chat::cut_in(id) {
         push_feed(app, id, "✋ กำลังหยุดรอบที่ทำอยู่ตามที่คุณสั่ง…".into(), None);
         Ok(())
     } else {
@@ -1475,6 +1521,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn automatic_chat_without_claude_uses_an_installed_ai() {
+        let acc = |id: &str, k: &str| (id.to_string(), k.to_string());
+        // Claude installed: unchanged, open Claude Code
+        assert_eq!(auto_fallback(true, &[acc("m1", "mistral")]), Ok(None));
+        // only Mistral: chat goes to Mistral
+        assert_eq!(auto_fallback(false, &[acc("m1", "mistral")]), Ok(Some(acc("m1", "mistral"))));
+        assert_eq!(auto_fallback(false, &[acc("x", "custom"), acc("c1", "codex")]), Ok(Some(acc("c1", "codex"))));
+        // nothing that can chat: a readable message, not "cannot find the file specified"
+        assert_eq!(auto_fallback(false, &[]), Err(NO_CLAUDE.to_string()));
+    }
+
+    #[test]
     fn a_dropped_remote_control_is_spotted_and_parent_markers_are_dropped() {
         let screen = "● Remote Control disconnected — OAuth token unavailable — run /login to restore Remote Control";
         assert!(rc_dropped(&squash(screen)));
@@ -1498,7 +1556,7 @@ mod tests {
         let auto = ChatAi { account: "auto".into(), model: "".into(), effort: "auto".into() };
         let r = auto.resolved(&c, 5);
         assert_eq!((r.account.as_str(), r.model.as_str(), r.effort.as_str()), ("", "", ""));
-        crate::idea_ai::set(&c, 5, &crate::idea_ai::IdeaAi { account: "claude01".into(), model: "opus".into(), effort: "high".into(), skills: vec![] }).unwrap();
+        crate::idea_ai::set(&c, 5, &crate::idea_ai::IdeaAi { account: "claude01".into(), model: "opus".into(), effort: "high".into(), skills: vec![], team: 0 }).unwrap();
         let r = auto.resolved(&c, 5);
         assert_eq!((r.account.as_str(), r.model.as_str(), r.effort.as_str()), ("claude01", "opus", "high"));
         // another account chosen: the idea's model is not carried over to it

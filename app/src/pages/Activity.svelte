@@ -249,6 +249,12 @@
   .wrapx { max-width: 1100px; display: flex; flex-direction: column; gap: 18px; }
   .head p { margin: 4px 0 0; }
   .tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+  @media (max-width: 900px) {
+    .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .two { grid-template-columns: 1fr !important; }
+    .wrow { grid-template-columns: 96px 1fr 64px !important; }
+    .labels, .time { width: 72px !important; }
+  }
   .tile { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; display: flex; flex-direction: column; gap: 2px; }
   .lbl { font-size: 13px; color: var(--text-2); }
   .num { font-size: 26px; font-weight: 600; }
@@ -303,4 +309,9 @@
   .log { max-height: 300px; overflow: auto; background: var(--bg-2); border-radius: 8px; padding: 10px 12px; font-size: 13px; white-space: pre-wrap; margin: 4px 0 6px; }
   .log .tool { color: var(--text-3); font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
   .ev { padding: 6px 4px; border-bottom: 1px solid var(--line); }
+  @media (max-width: 760px) {
+    .w80 { width: auto; min-width: 0; }
+    .w60 { display: none; }
+    .rhead { flex-wrap: wrap; }
+  }
 </style>

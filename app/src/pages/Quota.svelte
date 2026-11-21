@@ -209,7 +209,7 @@
   .wrapx { max-width: 1100px; display: flex; flex-direction: column; gap: 24px; }
   .head p { margin: 4px 0 0; }
   .warn { background: var(--amber-bg); color: var(--amber); padding: 8px 12px; border-radius: 8px; }
-  .plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 14px; }
+  .plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr)); gap: 14px; }
   .plans.single { grid-template-columns: 1fr; }
   .ctrl { gap: 10px; align-items: center; }
   .top { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
@@ -251,4 +251,8 @@
   .eco { width: 100%; border-collapse: collapse; font-size: 13px; }
   .eco th, .eco td { text-align: left; padding: 4px 6px; border-bottom: 1px solid rgba(128,128,128,.2); }
   .eco tr.best td { color: var(--teal); }
+  @media (max-width: 900px) {
+    .top, .two { grid-template-columns: 1fr; }
+    .days { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  }
 </style>

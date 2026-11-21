@@ -1,3 +1,8 @@
+<script module>
+  // what the owner last sent in each idea's chat, whole (the feed keeps only the first 400 characters)
+  const lastSent = new Map();
+</script>
+
 <script>
   import FeedText from "./FeedText.svelte";
   import { autogrow } from "../lib/autogrow.js";
@@ -124,7 +129,40 @@
     feedEl?.scrollTo({ top: feedEl.scrollHeight, behavior: "smooth" });
   });
 
-  async function send() {
+  // stop the AI and think again: while it works, or to edit the last message and send it in place of the old one
+  const working = $derived(!!s && (s.status === "working" || s.status === "starting" || busyMin >= 0));
+  const inApp = $derived(picked?.via === "app");
+  let editing = $state(false);
+  const lastMine = $derived.by(() => {
+    const kept = lastSent.get(id);
+    if (kept) return kept;
+    const me = [...(s?.feed ?? [])].reverse().find((f) => f.text.startsWith("🙋"));
+    return me ? me.text.replace(/^🙋[^:：]*[:：]\s*/u, "").replace(/^✏️\s*/u, "") : "";
+  });
+  async function stopAi() {
+    cutting = true;
+    try {
+      await api.sessionCutIn(id);
+      toast("สั่งหยุดแล้ว — ไฟล์ที่ AI ทำไปแล้วยังอยู่ แก้ข้อความแล้วส่งใหม่ได้เลย");
+    } catch (e) {
+      toast(String(e), "err");
+    } finally {
+      cutting = false;
+      refresh();
+    }
+  }
+  async function editLast() {
+    if (working) await stopAi();
+    text = lastMine;
+    editing = true;
+    requestAnimationFrame(() => box?.focus());
+  }
+  function cancelEdit() {
+    editing = false;
+    text = "";
+  }
+
+  async function send(replace = editing) {
     const t = text.trim();
     if ((!t && !staged.length) || sending) return;
     if (att?.pending()) {
@@ -138,11 +176,18 @@
       if (picked.via !== "app") {
         toast(await api.handoff(id, picked.id, t, files, ai));
       } else {
-        await api.ask(id, t, files, ai);
-        toast(s ? "ส่งเข้า session เดิมแล้ว" : "กำลังเปิด session แล้วส่งคำสั่งให้ AI…");
+        // in place of the old message: stop what the AI is doing first, so it starts over on this one
+        if (replace && working) {
+          await api.sessionCutIn(id).catch(() => {});
+          await new Promise((r) => setTimeout(r, 800));
+        }
+        await api.ask(id, t, files, ai, replace);
+        toast(replace ? "ส่งข้อความใหม่แทนอันเดิมแล้ว — AI จะทิ้งคำสั่งเดิมแล้วคิดใหม่" : s ? "ส่งเข้า session เดิมแล้ว" : "กำลังเปิด session แล้วส่งคำสั่งให้ AI…");
+        if (t) lastSent.set(id, t);
       }
       att?.reset();
       text = "";
+      editing = false;
       refresh();
     } catch (e) {
       toast(String(e), "err");
@@ -189,6 +234,9 @@
     {:else if st}<span class="badge {st.cls}">{#if s.status === "working" || s.status === "starting"}<i class="pulse"></i>{/if}{st.label}</span>{/if}
     {#if s?.ai}<span class="badge ai" title="AI ที่คุยอยู่ในแชตนี้ (บัญชี · โมเดลที่ตอบจริง)"><Icon name="bot" /> {s.ai}</span>{/if}
     <span class="grow"></span>
+    {#if working && inApp}
+      <button class="small stop" disabled={cutting} onclick={stopAi} title="หยุดสิ่งที่ AI กำลังคิด/ทำอยู่ (ไฟล์ที่ทำไปแล้วยังอยู่) แล้วแก้ข้อความหรือพิมพ์ใหม่ส่งไปแทน"><Icon name="stop" /> หยุด AI</button>
+    {/if}
     {#if s}
       <button class="ghost small" onclick={() => (store.page = "sessions")} title="ดูและจัดการ session ทั้งหมด">จัดการ session</button>
       <button class="ghost small" onclick={close} title="ปิด session (คุยต่อจากเดิมได้ภายหลัง)">ปิด session</button>
@@ -216,6 +264,12 @@
     </div>
   {/if}
 
+  {#if editing}
+    <div class="editing small">
+      <span class="grow">✏️ กำลังแก้ข้อความล่าสุด — ส่งแล้ว AI จะทิ้งคำสั่งเดิมและคิดใหม่จากข้อความนี้</span>
+      <button type="button" class="ghost small" onclick={cancelEdit}>ยกเลิกการแก้</button>
+    </div>
+  {/if}
   <div class="compose" class:big use:lift={big}>
     {#if big}<b class="bigtitle"><Icon name="wrench" /> สั่ง AI แก้ / ทำต่อ — Idea #{id}</b>{/if}
     <div class="tw">
@@ -232,6 +286,7 @@
         if (menu?.key(e)) return;
         if (e.key === "Escape" && big) big = false;
         if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.isComposing) send();
+        if (e.key === "Escape" && editing && !big) cancelEdit();
       }}
     ></textarea>
     </div>
@@ -241,8 +296,14 @@
       {#if canCarry && !text.trim()}
         <button class="ghost small" disabled={sending} onclick={carryOn} title="รอบก่อนพัง ค้าง หรือโปรแกรมติดบั๊ก: ให้ AI ทำคำสั่งล่าสุดที่ยังไม่เสร็จต่อเลย ไม่ต้องพิมพ์ซ้ำ (มันเห็นบทสนทนาเดิมและคำสั่งทั้งหมดของไอเดียนี้)"><Icon name="refresh" /> ทำต่อจากที่สั่งไว้</button>
       {/if}
+      {#if inApp && lastMine && !editing && !text.trim()}
+        <button class="ghost small" disabled={sending || cutting} onclick={editLast} title={working ? "หยุด AI แล้วเอาข้อความล่าสุดมาแก้ — ส่งแล้วจะใช้แทนอันเดิม" : "เอาข้อความล่าสุดมาแก้ แล้วส่งใหม่แทนอันเดิม"}>✏️ แก้ข้อความล่าสุด</button>
+      {/if}
       <span class="grow"></span>
-      <button class="primary send" onclick={send} disabled={sending || (!text.trim() && !staged.length)}>{sending ? "กำลังส่ง…" : `ส่งให้ ${sendTo}`}</button>
+      {#if inApp && working && !editing && text.trim()}
+        <button class="small" disabled={sending} onclick={() => send(true)} title="หยุดสิ่งที่ AI ทำอยู่ แล้วให้คิดใหม่จากข้อความนี้แทนคำสั่งเดิม">หยุดแล้วส่งอันนี้แทน</button>
+      {/if}
+      <button class="primary send" onclick={() => send()} disabled={sending || (!text.trim() && !staged.length)}>{sending ? "กำลังส่ง…" : editing ? `ส่งแทนอันเดิม` : `ส่งให้ ${sendTo}`}</button>
     </div>
   </div>
   <div class="aiwrap"><IdeaAi bind:value={ai} title="AI สำหรับแชตนี้" autoNote="ถ้าไม่เลือก ใช้ AI/โมเดลที่ตั้งไว้ให้ไอเดียนี้ ไม่ก็ค่าเริ่มต้นของ Claude" /></div>
@@ -316,6 +377,8 @@
   .line.me .x { color: var(--teal); font-weight: 500; }
   .line.done .x { color: var(--teal); }
   .line.warn .x { color: var(--amber); }
+  .stop { color: var(--red); border-color: var(--red); }
+  .editing { display: flex; align-items: center; gap: 8px; border: 1px solid var(--teal); background: var(--teal-bg); border-radius: 10px; padding: 6px 10px; }
   .compose { display: flex; flex-direction: column; gap: 8px; }
   .compose textarea { flex: 1; resize: none; min-height: 64px; width: 100%; line-height: 1.5; }
   /* the big editor, over a dimmed window */

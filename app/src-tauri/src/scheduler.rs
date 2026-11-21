@@ -764,6 +764,7 @@ fn launch(app: AppHandle, idea: Idea, stage: String, forced: bool, power: bool) 
         id
     };
     // recipes for this run: one variant per family, copied into the idea folder (the agent may only work there)
+    let mut offered_slugs: Vec<String> = vec![];
     {
         let c = st.db.lock();
         let mut offers = crate::skills::select(&c);
@@ -776,6 +777,7 @@ fn launch(app: AppHandle, idea: Idea, stage: String, forced: bool, power: bool) 
         }
         crate::skills::record_offered(&c, run_id, &offers);
         crate::skills::materialize(&st.root, &dir, &offers);
+        offered_slugs = offers.iter().map(|o| o.slug.clone()).collect();
         if !offers.is_empty() {
             let names: Vec<&str> = offers.iter().map(|o| o.name.as_str()).collect();
             drop(c);
@@ -818,6 +820,20 @@ fn launch(app: AppHandle, idea: Idea, stage: String, forced: bool, power: bool) 
         choice.reason
     ));
 
+    // team mode (team.rs): the lead may run helpers at once — only where it can work
+    let helpers = idea_cfg.as_ref().map(|c| c.team).unwrap_or(0);
+    let needs_name = account.as_ref().and_then(|a| crate::catalog::vendor(&a.vendor_id())).is_some_and(crate::catalog::needs_model_name);
+    let team_on = crate::team::applies(helpers, &provider, needs_name, &stage);
+    // other vendors' AIs as helpers too (through `ia team-mcp`), when there are other accounts
+    let lead_account = account.as_ref().map(|a| a.id.clone()).unwrap_or_default();
+    let team_others = team_on && !crate::team::other_accounts(&st.db.lock(), &lead_account).is_empty() && crate::video::ia_exe().is_some();
+    let prompt = if team_on {
+        st.push_log(format!("👥 โหมดทีม: หัวหน้า + ผู้ช่วยได้พร้อมกัน {helpers} ตัว{}", if team_others { " + ส่งงานให้ AI ค่ายอื่นได้" } else { "" }));
+        format!("{prompt}{}{}", crate::team::prompt(helpers), if team_others { crate::team::prompt_others() } else { "" })
+    } else {
+        prompt
+    };
+
     tauri::async_runtime::spawn(async move {
         let st = app.state::<AppState>();
         let log_path = dir.join("logs").join(format!("run-{run_id:05}-{stage}.jsonl"));
@@ -835,7 +851,23 @@ fn launch(app: AppHandle, idea: Idea, stage: String, forced: bool, power: bool) 
                 timeout_mins: minutes + 5,
                 log_path: &log_path,
                 lang: &lang,
-                env: account.as_ref().map(|a| crate::accounts::env_with_secret(a, &st.root)).unwrap_or_default(),
+                env: {
+                    let mut env = account.as_ref().map(|a| crate::accounts::env_with_secret(a, &st.root)).unwrap_or_default();
+                    if team_on {
+                        if let Some(p) = crate::team::agents_file(&st.root) {
+                            env.push((crate::team::TEAM_ENV.into(), p.to_string_lossy().into_owned()));
+                        }
+                    }
+                    // tools (MCP) that a skill offered to this run needs (mcp.rs) — only those, they cost tokens every turn
+                    let extra: Vec<(String, serde_json::Value)> = if team_others { crate::team::team_server(idea.id, &lead_account).into_iter().collect() } else { vec![] };
+                    if let Some(p) = crate::mcp::run_config(&st.root, &offered_slugs, &format!("idea{}", idea.id), &extra) {
+                        let mut names: Vec<String> = crate::mcp::for_run(&st.root, &offered_slugs).into_iter().map(|s| s.id).collect();
+                        names.extend(extra.iter().map(|(k, _)| k.clone()));
+                        st.push_log(format!("🔌 เครื่องมือ (MCP) ที่ให้รอบนี้: {}", names.join(", ")));
+                        env.push((crate::runner::MCP_CONFIG_ENV.into(), p.to_string_lossy().into_owned()));
+                    }
+                    env
+                },
             },
             cancel,
             move |line| {

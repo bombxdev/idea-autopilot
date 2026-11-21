@@ -124,7 +124,7 @@
   .addwrap { position: relative; flex: none; }
   .addbtn { display: flex; align-items: center; gap: 6px; font-size: 13px; padding: 6px 12px; border-style: dashed; white-space: nowrap; }
   .addbtn.on { border-color: var(--teal); color: var(--teal); }
-  .picker { position: fixed; margin-top: 6px; width: 380px; max-height: 60vh; display: flex; flex-direction: column; background: var(--bg-2); border: 1px solid var(--line-2); border-radius: 12px; box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45); z-index: 30; overflow: hidden; }
+  .picker { position: fixed; margin-top: 6px; width: min(380px, calc(100vw - 24px)); max-height: 60vh; display: flex; flex-direction: column; background: var(--bg-2); border: 1px solid var(--line-2); border-radius: 12px; box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45); z-index: 30; overflow: hidden; }
   .picker input { margin: 8px; }
   .plist { overflow: auto; padding: 0 6px 6px; }
   .pick { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; border: none; background: transparent; padding: 7px 8px; border-radius: 8px; font-size: 13px; }
@@ -132,6 +132,9 @@
   .pick .chip { margin-left: auto; flex: none; }
   .windows { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr; }
   .windows.two { grid-template-columns: 1fr 1fr; }
+  @media (max-width: 900px) {
+    .windows.two { grid-template-columns: 1fr; grid-auto-rows: minmax(0, 1fr); }
+  }
   .win { min-width: 0; min-height: 0; display: flex; container: ideawin / inline-size; }
   .windows.two .win + .win { border-left: 1px solid var(--line); }
   .empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--text-3); text-align: center; padding: 24px; }

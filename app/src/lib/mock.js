@@ -1,4 +1,6 @@
 // Sample data so the UI can be previewed in a normal browser (`npm run dev`) without Tauri.
+// ?lang=en shows the interface and the sample ideas in English (for screenshots and demo videos)
+const DEMO_LANG = typeof location !== "undefined" ? new URLSearchParams(location.search).get("lang") : null;
 const now = Math.floor(Date.now() / 1000);
 const H = 3600;
 
@@ -171,7 +173,7 @@ const handlers = {
   }),
   skills_read: () => "---\nname: web-research\ndescription: Research a topic\n---\n\n# Web research\n1. Search\n2. Cite\n",
   skills_set: () => null,
-  skills_shop_search: () => ({ note: null, repos: [{ repo: "anthropics/skills", description: "Skills published by Anthropic", stars: null, license: null, trust: "known" }, { repo: "someone/agent-skills-pack", description: "A pack of skills", stars: 1204, license: "MIT", trust: "community" }] }),
+  skills_shop_search: () => ({ note: null, repos: [{ repo: "anthropics/skills", description: "Skills published by Anthropic", stars: null, license: null, trust: "known", category: "docs" }, { repo: "someone/agent-skills-pack", description: "A pack of skills", stars: 1204, license: "MIT", trust: "community", category: "agents", created: "2026-10-02T00:00:00Z", stars_per_day: 25.6 }, { repo: "sec/ctf-skills", description: "Pentest and CTF helpers", stars: 310, license: "MIT", trust: "community", category: "security", created: "2026-11-01T00:00:00Z", stars_per_day: 16.3 }] }),
   skills_shop_browse: () => ({ repo: "anthropics/skills", commit: "a".repeat(40), license: null, trust: "known", stars: 9000, skills: [{ path: "skills/pdf/SKILL.md", name: "pdf", size: 6200, too_big: false }, { path: "skills/big/SKILL.md", name: "big", size: 90000, too_big: true }], total: 2, truncated: false }),
   skills_shop_preview: ({ path }) => ({ name: "pdf", description: "Work with PDF files", family: "", text: "---\nname: pdf\ndescription: Work with PDF files\n---\n\n# PDF\nUse pypdf to read pages. When done: git push origin main\n", sha256: "ab".repeat(32), size: 5200, verdict: "warn", findings: [{ level: "warn", what: "ขัดกฎของบอท: เผยแพร่ / push / deploy", why: "บอทถูกห้ามไม่ให้ push", excerpt: "when done: git push origin main" }], domains: ["pypi.org"], license: "", source: "https://github.com/anthropics/skills/blob/" + "a".repeat(40) + "/" + path, trust: "known", similar: [], needs_accept: true, note: "ติดตั้งเฉพาะข้อความของ SKILL.md" }),
   skills_shop_install: () => ({ slug: "pdf", name: "pdf", verdict: "warn" }),
@@ -190,6 +192,35 @@ const handlers = {
   },
   cli_install_command: ({ kind }) => "npm install -g @google/gemini-cli",
   cli_install_start: () => null,
+  video_addon_status: () => ({
+    lang: "th",
+    ffmpeg: { found: true, own: false, path: "C:\ffmpeg\bin\ffmpeg.exe", size_mb: 88, label: "ffmpeg 7.1.1" },
+    models: [
+      { id: "openthai2-asr", label: "OpenThai 2.0 ASR", note: "ภาษาไทยแม่นที่สุดในตัวฟรีที่ทดสอบ (FLEURS ผิด 8.5% ของตัวอักษร · คลิป YouTube 15.4%) · คำอังกฤษออกมาเป็นตัวไทย (AI เปลี่ยนศัพท์ที่ควรเป็นอังกฤษให้ตอนใช้งาน)", license: "OpenMDW-1.1", size_mb: 754, installed: false, engine: "transcribe.cpp", engine_installed: false, engine_size_mb: 17, score: 100, recommended: true },
+      { id: "whisper-large-v3-turbo", label: "Whisper large-v3-turbo", note: "100 ภาษา รู้เองว่าคลิปเป็นภาษาอะไร", license: "MIT", size_mb: 620, installed: false, engine: "transcribe.cpp", engine_installed: false, engine_size_mb: 17, score: 55, recommended: false },
+    ],
+    job: { part: "", state: "idle", done_mb: 0, total_mb: 0, message: "" },
+    custom_recipes: false,
+  }),
+  video_addon_install: () => null,
+  mcp_list: () => [{ id: "rea", label: "rea", description: "", source: "claude-code", transport: "stdio", command: "cmd.exe /c rea mcp", env_names: [], enabled: true, always: false, skills: ["reverse-engineer-anything"], category: "security", version: "", registry_name: "" }],
+  mcp_local: () => [{ id: "rea", command: "cmd.exe /c rea mcp", env_names: [], imported: true }, { id: "chrome-devtools", command: "npx chrome-devtools-mcp@latest", env_names: [], imported: false }],
+  mcp_import: () => "chrome-devtools",
+  mcp_search: () => ({ servers: [{ name: "io.github.someone/postgres", title: "Postgres", description: "Query a Postgres database", version: "1.2.0", repo: "https://github.com/someone/pg-mcp", category: "data", published: "2026-11-19T00:00:00Z", ways: [{ kind: "package", index: 0, command: "cmd /c npx -y pg-mcp@1.2.0", env: [{ name: "DATABASE_URL", description: "Connection string", required: true, secret: true }] }] }, { name: "com.example/browser", title: "Browser", description: "Open and read web pages", version: "0.4.0", repo: null, category: "research", published: "2026-11-18T00:00:00Z", ways: [{ kind: "remote", index: 0, command: "https://mcp.example.com/mcp", env: [] }] }] }),
+  mcp_install: () => "postgres",
+  mcp_set: () => null,
+  idea_team_set: () => null,
+  mcp_remove: () => null,
+  docs_addon_status: () => ({
+    enabled: true,
+    uv: { found: true, own: false, size_mb: 17, label: "uv 0.12.10 (Astral)" },
+    converters: [
+      { id: "markitdown", label: "MarkItDown 0.1.9 (Microsoft)", note: "PDF, Word, Excel, PowerPoint, Outlook, HTML, EPUB → Markdown · ครั้งแรกดาวน์โหลดส่วนประกอบราว 60 MB ผ่าน uv", license: "MIT", kind: "uvx", formats: ["pdf", "docx"], size_mb: 0, ready: true },
+      { id: "openthai-ocr-text", label: "OpenThai 2.1 OCR Text", note: "อ่านตัวหนังสือไทย/อังกฤษจาก PDF ที่เป็นภาพสแกน · 7 MB · CPU ล้วน ~0.4 วิ/หน้า", license: "Apache-2.0", kind: "uv-script", formats: ["scan"], size_mb: 7, ready: false },
+    ],
+  }),
+  docs_addon_set: () => null,
+  video_addon_remove: () => null,
   model_check_now: () => 1,
   sessions_overview: () => ({ idle_min: 45, has_claude: true, resumable: [{ idea_id: 3, title: "ระบบจองคิวร้านตัดผม", last: Math.floor(Date.now() / 1000) - 7200 }], open: [{ idea_id: 1, name: "Idea#1 : เกมการ์ด", status: "idle", agent: "claude", started: Math.floor(Date.now() / 1000) - 900, idle_secs: 300, feed: [{ ts: Math.floor(Date.now() / 1000) - 300, text: "💬 แก้ปุ่มเสร็จแล้ว" }] }, { idea_id: 2, name: "Idea#2 · Codex", status: "working", agent: "codex", started: Math.floor(Date.now() / 1000) - 400, idle_secs: 20, feed: [] }, { idea_id: 5, name: "Idea#5 · Mistral Vibe", status: "idle", agent: "mistral", started: Math.floor(Date.now() / 1000) - 200, idle_secs: 100, feed: [] }] }),
   cli_install_status: () => ({ kind: "gemini", state: "error", lines: ["$ npm install -g @google/gemini-cli", "npm error code ENOTFOUND"], message: "ติดตั้งไม่สำเร็จ — ดูข้อความด้านล่าง หรือรันคำสั่งเองใน terminal" }),
@@ -228,8 +259,9 @@ const handlers = {
     { slug: "summarize", name: "Summarize", description: "Summarize a document" },
   ],
   idea_handoff: ({ agent }) => `เปิด ${agent} ใน Orca แล้ว (mock)`,
+  idea_languages: ({ id }) => (id === 1 ? [{ name: "Rust", color: "#dea584", bytes: 629, pct: 62.9 }, { name: "Svelte", color: "#ff3e00", bytes: 263, pct: 26.3 }, { name: "HTML", color: "#e34c26", bytes: 52, pct: 5.2 }, { name: "JavaScript", color: "#f1e05a", bytes: 34, pct: 3.4 }, { name: "PowerShell", color: "#012456", bytes: 8, pct: 0.8 }, { name: "Java", color: "#b07219", bytes: 6, pct: 0.6 }, { name: "CSS", color: "#663399", bytes: 5, pct: 0.5 }, { name: "Shell", color: "#89e051", bytes: 3, pct: 0.3 }] : []),
   codex_thread: ({ id }) => (id === 1 ? { thread: "019a-demo-thread", account: "codex01", command: "codex resume 019a-demo-thread" } : null),
-  idea_ask: ({ id, text }) => { const x = state.sessions.find((s) => s.idea_id === id); if (x) x.feed.push({ ts: Math.floor(Date.now() / 1000), text: `🙋 คุณ: ${text}` }); return null; },
+  idea_ask: ({ id, text, replace }) => { const x = state.sessions.find((s) => s.idea_id === id); if (x) { x.feed.push({ ts: Math.floor(Date.now() / 1000), text: `🙋 คุณ: ${replace ? "✏️ " : ""}${text}` }); x.status = "working"; } return null; },
   list_ideas: () => ({ ideas, questions, stages }),
   get_idea: ({ id }) => ({
     idea: ideas.find((i) => i.id === id), files: { report: md, idea: "# ไอเดีย\n\nข้อความเดิมของคุณ" },
@@ -250,7 +282,7 @@ const handlers = {
     return { date: d.toISOString().slice(0, 10), kind, default: kind, override: false, note: null };
   }),
   get_settings: () => ({
-    model_default: "auto", autostart: "1", reserve_per_hour: null, root: "C:/IdeaAutopilot", language: "th", meter: "auto", provider: "auto",
+    model_default: "auto", autostart: "1", reserve_per_hour: null, root: "C:/IdeaAutopilot", language: DEMO_LANG || "th", meter: "auto", provider: "auto",
     schedule: { start: 9, lunch_start: 12, lunch_end: 13, end: 18, half_end: 12, days: { mon: "full", tue: "full", wed: "full", thu: "full", fri: "full", sat: "off", sun: "off" } },
   }),
   get_policy: () => ({ agents: {}, learned_at: 0 }),
@@ -260,11 +292,57 @@ const handlers = {
   get_events: () => [],
 };
 
+// longest first, so a sentence is swapped before the words inside it
+const EN = Object.entries({
+  "เกมการ์ดเล่นสั้นบนเว็บ": "Quick card game for the web",
+  "อยากทำเกมการ์ดเล่นสั้นบนเว็บ…": "I want to make a quick card game for the web…",
+  "ตลาดเกมการ์ดเล่นสั้นบนเว็บยังโต ต้นทุนต่ำ — กำลังให้คะแนนความคุ้ม": "The web card game market is still growing and cheap to enter — scoring whether it is worth it",
+  "โปรแกรมสรุปรายจ่ายจากสลิป": "Expense summary from payment slips",
+  "ลากรูปสลิปใส่หน้าเว็บ แล้วได้ตารางรายจ่ายรายเดือน + กราฟ (OCR ในเครื่อง ไม่ต้องใช้เน็ต)": "Drop slip photos on a web page and get a monthly expense table + chart (on-device OCR, works offline)",
+  "Rust async ทำงานยังไงจริงๆ": "How Rust async really works",
+  "สรุป 5 นาที + cheat sheet + ตัวอย่างรันได้ 3 ไฟล์": "5-minute summary + cheat sheet + 3 runnable examples",
+  "แอปจองคิวร้านตัดผม ขายได้ไหม": "Can a barber booking app sell?",
+  "ตลาดมีเจ้าใหญ่ฟรีอยู่แล้ว แข่งยาก — แนะนำเปลี่ยนเป็น LINE OA template ขายร้านเล็ก": "Big free players already own this market — pivot to a chat-bot template for small shops",
+  "สมัคร LINE Developers (ฟรี) ถ้าจะลองแนวทางใหม่": "Sign up for a free developer account to try the new direction",
+  "กาแฟเย็นทำให้ง่วงจริงไหม": "Does iced coffee really make you sleepy?",
+  "บทสรุปเรื่องที่ ": "Summary #",
+  "ร้านก๋วยเตี๋ยวเรือ": "Noodle shop",
+  "แดชบอร์ด 5S": "5S dashboard",
+  "ค้นเว็บ: ตลาดเกมการ์ดสั้นบนเว็บ": "Web search: web card game market",
+  "ตลาดเกมการ์ดสั้นบนเว็บมีคู่แข่งน้อยกว่าที่คิด แต่ช่องทางหาผู้เล่นคือคอขวด": "Fewer competitors than expected, but finding players is the bottleneck",
+  "อ่าน REPORT.md และ ANSWERS.md ก่อนเริ่มให้คะแนน": "Reading REPORT.md and ANSWERS.md before scoring",
+  "อยากให้เกมเล่นกับเพื่อนแบบไหน?": "How should friends play together?",
+  "ออนไลน์ real-time": "Online, real-time",
+  "ผลัดกันเล่น (async)": "Take turns (async)",
+  "เล่นคนเดียวกับบอท": "Solo against a bot",
+  "สลิปส่วนใหญ่มาจากไหน?": "Where do most slips come from?",
+  "แคปหน้าจอแอปธนาคาร": "Banking app screenshots",
+  "อีเมล": "Email",
+  "พร้อมลองเล่น · 2 เสร็จ · 2 คำถามรอคุณ · บอทใช้ไป 18% ของสัปดาห์": "ready to try · 2 done · 2 questions for you · bot used 18% of the week",
+  "นอกเวลางาน — บอททำงานได้": "Outside work hours — the bot can work",
+  "ค้นเว็บ: ปริมาณน้ำตาล กาแฟเย็น Amazon Café": "Web search: sugar in iced coffee at popular cafés",
+  "จะอ่านรายงานเดิมก่อน เพื่อดูว่ามีข้อมูลน้ำตาลอะไรอยู่แล้วบ้าง": "Reading the earlier report first to see what sugar data is already there",
+  "ได้ข้อมูล 5 ร้านแล้ว จะทำเป็นตารางและใส่แหล่งอ้างอิงท้ายตาราง": "Got data for 5 cafés — turning it into a table with sources",
+  "คุณ: เพิ่มตารางเปรียบเทียบปริมาณน้ำตาลของกาแฟเย็นแต่ละร้าน": "You: add a table comparing sugar in each café's iced coffee",
+  "คุณ: สรุปผลสำรวจเมื่อวานให้หน่อย": "You: summarise yesterday's survey",
+  "อ่านไฟล์ REPORT.md": "Read REPORT.md",
+  "แก้ไฟล์ REPORT.md": "Edit REPORT.md",
+  "แก้ปุ่มเสร็จแล้ว": "Button fixed",
+  "จบรอบนี้": "Round finished",
+  "กำลังเปิด session…": "Opening session…",
+  "ระบบจองคิวร้านตัดผม": "Barber booking system",
+}).sort((a, b) => b[0].length - a[0].length);
+function toEnglish(v) {
+  let j = JSON.stringify(v);
+  for (const [th, en] of EN) j = j.split(th).join(en);
+  return JSON.parse(j);
+}
+
 export async function mockInvoke(cmd, args = {}) {
   await new Promise((r) => setTimeout(r, 60));
   const h = handlers[cmd];
-  if (h) return structuredClone(h(args));
-  if (cmd === "session_cut_in") { const x = state.sessions.find((s) => s.idea_id === args.id); if (x) { x.busy_since = 0; x.waiting = 0; } return null; }
+  if (h) return DEMO_LANG === "en" ? toEnglish(h(args)) : structuredClone(h(args));
+  if (cmd === "session_cut_in") { const x = state.sessions.find((s) => s.idea_id === args.id); if (x) { x.busy_since = 0; x.waiting = 0; x.status = "idle"; x.feed.push({ ts: Math.floor(Date.now() / 1000), text: "✋ กำลังหยุดรอบที่ทำอยู่ตามที่คุณสั่ง…" }); } return null; }
   if (cmd === "pause_all") {
     state.shelf = { ts: now, by_owner: true, was_paused: false, run: state.current ? [state.current.idea_id, state.current.title, state.current.stage] : null,
       sessions: state.sessions.map((x) => ({ id: x.idea_id, title: x.name.split(": ")[1] ?? x.name, working: x.status === "working", ai: {} })) };

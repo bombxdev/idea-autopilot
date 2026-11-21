@@ -208,7 +208,7 @@ pub fn user(v: &Value, lang: &str) -> Option<String> {
     if t.is_empty() || t.starts_with('<') || t.starts_with("[Request interrupted") {
         return None;
     }
-    Some(tr(lang, "you", &whole(t)))
+    Some(tr(lang, "you", &whole(&crate::remote::shown(t))))
 }
 
 /// What the owner actually wrote: Claude Code wraps a long message in <pasted_content>, and a /skill message carries

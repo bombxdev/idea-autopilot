@@ -41,3 +41,35 @@ before any install. Personas must be exported through a "what will be shared" pr
 - "Skill used" is detected from the agent's log and from the agent's own report; some agents print less, so counts can
   be too low, never too high.
 - Success rate shows what happened, it does not prove the skill caused it.
+
+## Proposed 2026-11-21 — built: tools (MCP) in ISSUE-117, team mode (Claude helpers) in ISSUE-118; then tools for Codex/Gemini/OpenCode + helpers from other vendors (ia team-mcp) in ISSUE-119; tools for Mistral Vibe in ISSUE-120
+
+### Tools (MCP) next to skills, not inside them
+A **skill** is a recipe (text the AI reads). An **MCP server** is a program that gives the AI new tools (REA, a browser,
+a database). A skill may *need* one (reverse-engineer-anything needs the REA MCP), but installing the skill does not
+install the tool — and today the bot runs Claude with `--strict-mcp-config`, so **no MCP reaches a bot run at all**.
+- One menu, two tabs: "Skills & tools" → **Skills** | **Tools (MCP)**. No new top-level menu (keeps the sidebar short).
+- A skill can declare `requires: { mcp: [rea] }`; installing it offers to install the tool too, and the card shows
+  "needs tool: REA (installed / not installed)".
+- Tools come from the official MCP Registry (registry.modelcontextprotocol.io, free) + GitHub `topic:mcp-server`,
+  same categories and sorts as the skill shop; install = a pinned command (uvx / npx / a release binary), same
+  "see the command first" rule as the CLI installer.
+- **Token cost**: every MCP adds its tool list to the context of every turn (REA: 200+ tools). So a run gets an MCP
+  only when a skill chosen for that run needs it (`--mcp-config` built per run), never "all enabled tools always".
+- Agents that are not Claude: Codex/Gemini/OpenCode each have their own MCP config file; the app writes the same
+  list into each one's own format, so a tool works whichever AI does the run.
+
+### Many models on one idea (multi-agent)
+Like a team: one lead splits the work, several helpers run at the same time, the lead checks and merges.
+- **Where it pays**: work that splits cleanly — research from several angles, independent modules of a prototype,
+  tests + docs + code in parallel, "best of 3" drafts judged by another model. **Where it does not**: one tightly
+  coupled change (helpers collide on the same files), small tasks (the split costs more than it saves).
+- **Shape**: lead (strong model) writes a plan with independent parts → each part runs in its own worktree/folder
+  with the account/model that is best *and has spare quota* for that kind of part (router stats already exist) →
+  lead merges and verifies. Depth limit 2 (helpers may not spawn helpers), max N parallel (default 3).
+- **Limits to respect**: quota burns N× faster (governor must budget the whole team, and stop all helpers at the
+  ceiling); the owner's work hours stay protected; merge conflicts → the lead resolves or reruns one part; cost of
+  context duplication (each helper re-reads the brief) — keep briefs short; one machine's CPU/RAM (several CLIs at
+  once).
+- **Setting**: per idea "Team mode: off / 2–3 helpers / max", default off; the lead decides whether a stage is worth
+  splitting (a small task stays single).

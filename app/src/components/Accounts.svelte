@@ -96,6 +96,15 @@
   const mins = (s) => (s < 60 ? `${s} วินาที` : `${Math.floor(s / 60)} นาที ${s % 60} วินาที`);
 
   const vendor = $derived(data.vendors.find((v) => v.id === vendorId));
+  // a separate login is needed only when this agent's machine login is already used by another account:
+  // the first account of an agent uses the machine's own login, the next ones get their own folder
+  const machineTaken = $derived((data.accounts ?? []).find((a) => a.kind === vendor?.runner && a.auth !== "key" && !a.isolated));
+  let isoTouched = $state(false);
+  $effect(() => {
+    vendorId;
+    const taken = !!machineTaken;
+    if (!isoTouched) isolated = taken;
+  });
   $effect(() => {
     // keep the sign-in method valid for the chosen provider
     if (vendor && !vendor.auth.includes(authSel)) authSel = vendor.auth[0];
@@ -118,6 +127,7 @@
   async function add() {
     busy = true;
     try {
+      isoTouched = false;
       const id = await api.accountAdd({ vendor: vendorId, id: newId.trim() || null, isolated, auth: authSel, key: authSel === "key" ? keyIn : null, base_url: baseIn.trim() || null, model: vendor?.needs_model ? modelIn.trim() || null : null });
       toast(authSel === "key" ? `เพิ่ม “${id}” แล้ว — ลองกด “ทดสอบ” ว่า key ใช้ได้` : isolated ? `เพิ่ม “${id}” แล้ว — กด “ล็อกอิน” เพื่อเชื่อมบัญชี` : `เพิ่ม “${id}” แล้ว`, "ok");
       newId = "";
@@ -497,7 +507,14 @@
           {/if}
         </div>
       {:else}
-        <label class="small"><input type="checkbox" bind:checked={isolated} /> แยก login (สำหรับบัญชีที่ต่างจากที่ล็อกอินไว้ในเครื่อง)</label>
+        <label class="small"><input type="checkbox" bind:checked={isolated} onchange={() => (isoTouched = true)} /> บัญชีนี้ต่างจากที่ล็อกอินไว้ในเครื่อง (ล็อกอินแยก)</label>
+        <div class="small faint">
+          {#if isolated}
+            ล็อกอินเก็บในโฟลเดอร์ของบัญชีนี้ ไม่ทับล็อกอินหลักของเครื่อง — กด “ล็อกอิน” หลังเพิ่ม{#if machineTaken}{" "}(ล็อกอินของเครื่องใช้กับ “{machineTaken.label || machineTaken.id}” อยู่แล้ว){/if}
+          {:else}
+            ใช้บัญชีเดียวกับที่ล็อกอินไว้ใน {vendor.runner === "codex" ? "Codex" : vendor.runner === "claude" ? "Claude Code" : vendor.runner} ของเครื่องนี้ — ไม่ต้องล็อกอินใหม่
+          {/if}
+        </div>
       {/if}
       {#if !vendor.installed}
         <div class="small faint">ยังไม่ได้ติดตั้งโปรแกรมที่ใช้กับผู้ให้บริการนี้ในเครื่อง — ติดตั้งตามเอกสารของผู้ให้บริการ เช่น <code>{vendor.install}</code> แล้วเปิดโปรแกรมใหม่

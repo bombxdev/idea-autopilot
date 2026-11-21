@@ -482,6 +482,16 @@ pub fn add_directive(c: &Connection, idea_id: i64, text: &str) -> Result<i64> {
     Ok(c.last_insert_rowid())
 }
 
+/// Take back the owner's latest chat request that is not done yet (they edited and sent it again).
+pub fn drop_last_chat_directive(c: &Connection, idea_id: i64) {
+    // the same tag remote::send writes in front of a chat request
+    let tag = format!("(สั่งในแชต) {}", "%");
+    let _ = c.execute(
+        "DELETE FROM directives WHERE id=(SELECT id FROM directives WHERE idea_id=?1 AND text LIKE ?2 AND COALESCE(state,'')='' ORDER BY id DESC LIMIT 1)",
+        params![idea_id, tag],
+    );
+}
+
 /// One instruction of the owner, with where it stands.
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct Request {

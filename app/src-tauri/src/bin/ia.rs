@@ -54,6 +54,10 @@ fn data_dir() -> PathBuf {
 }
 
 fn call(cmd: &str, args: Value) -> Result<Value, String> {
+    call_t(cmd, args, 30)
+}
+
+fn call_t(cmd: &str, args: Value, secs: u64) -> Result<Value, String> {
     let cfg: Value = std::fs::read_to_string(data_dir().join("api.json"))
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
@@ -62,7 +66,7 @@ fn call(cmd: &str, args: Value) -> Result<Value, String> {
     let token = cfg["token"].as_str().unwrap_or("");
     let body = json!({ "cmd": cmd, "args": args }).to_string();
     let mut s = TcpStream::connect(("127.0.0.1", port as u16)).map_err(|_| "Idea Autopilot ไม่ได้เปิดอยู่ (ต่อพอร์ตไม่ได้)")?;
-    s.set_read_timeout(Some(Duration::from_secs(30))).ok();
+    s.set_read_timeout(Some(Duration::from_secs(secs))).ok();
     write!(
         s,
         "POST /cmd HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Token: {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -394,7 +398,73 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
+/// `ia team-mcp --idea N --exclude <account>`: a tiny MCP server (JSON-RPC over stdio) for a team run (team.rs).
+/// The lead gets `list_other_ais` and `ask_other_ai`; the work itself is done by the app (`delegate`), so the
+/// account's key, model choice and limits stay where they belong.
+fn team_mcp(args: &[String]) {
+    use std::io::BufRead;
+    let flag = |n: &str| args.iter().position(|a| a == n).and_then(|i| args.get(i + 1)).cloned().unwrap_or_default();
+    let idea: i64 = flag("--idea").parse().unwrap_or(0);
+    let exclude = flag("--exclude");
+    let tools = json!([
+        { "name": "list_other_ais", "description": "List the other AI accounts (other vendors such as Codex or Gemini, or other Claude accounts) this team may hand a part of the work to.", "inputSchema": { "type": "object", "properties": {} } },
+        { "name": "ask_other_ai", "description": "Hand ONE self-contained part of the work to another AI account and wait for it (minutes). It works only inside `folder` (a sub-folder of the idea folder) and sees nothing but `task`, so write the task completely. Returns its report.",
+          "inputSchema": { "type": "object", "required": ["account", "folder", "task"], "properties": {
+            "account": { "type": "string", "description": "an account id from list_other_ais" },
+            "folder": { "type": "string", "description": "sub-folder of the idea folder for this part, e.g. parts/api" },
+            "task": { "type": "string", "description": "the whole task: goal, files to make, how to check it" } } } }
+    ]);
+    let stdin = std::io::stdin();
+    let mut out = std::io::stdout();
+    for line in stdin.lock().lines() {
+        let Ok(line) = line else { break };
+        let Ok(req) = serde_json::from_str::<Value>(&line) else { continue };
+        let Some(id) = req.get("id").cloned() else { continue }; // a notification: nothing to answer
+        let method = req["method"].as_str().unwrap_or("");
+        let result = match method {
+            "initialize" => Ok(json!({ "protocolVersion": req["params"]["protocolVersion"].as_str().unwrap_or("2025-06-18"), "capabilities": { "tools": {} }, "serverInfo": { "name": "idea-autopilot-team", "version": env!("CARGO_PKG_VERSION") } })),
+            "ping" => Ok(json!({})),
+            "tools/list" => Ok(json!({ "tools": tools })),
+            "tools/call" => {
+                let p = &req["params"]["arguments"];
+                let r = match req["params"]["name"].as_str().unwrap_or("") {
+                    "list_other_ais" => call("team_accounts", json!({ "exclude": exclude })),
+                    "ask_other_ai" => call_t("delegate", json!({ "idea": idea, "account": p["account"], "folder": p["folder"], "task": p["task"] }), 40 * 60),
+                    other => Err(format!("unknown tool {other}")),
+                };
+                Ok(match r {
+                    Ok(v) => json!({ "content": [{ "type": "text", "text": serde_json::to_string_pretty(&v).unwrap_or_default() }] }),
+                    Err(e) => json!({ "content": [{ "type": "text", "text": e }], "isError": true }),
+                })
+            }
+            _ => Err(json!({ "code": -32601, "message": format!("method not found: {method}") })),
+        };
+        let resp = match result {
+            Ok(r) => json!({ "jsonrpc": "2.0", "id": id, "result": r }),
+            Err(e) => json!({ "jsonrpc": "2.0", "id": id, "error": e }),
+        };
+        let _ = writeln!(out, "{resp}");
+        let _ = out.flush();
+    }
+}
+
+#[path = "../speech_engine.rs"]
+mod speech_engine;
+
 fn main() {
+    // the video & sound add-on runs its speech engine here, outside the app (speech_engine.rs)
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("team-mcp") {
+        team_mcp(&args[1..]);
+        return;
+    }
+    if args.first().map(String::as_str) == Some("speech") {
+        if let Err(e) = speech_engine::cli(&args[1..]) {
+            eprintln!("{e}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if let Err(e) = run() {
         eprintln!("ผิดพลาด: {e}");
         std::process::exit(1);

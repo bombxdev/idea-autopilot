@@ -52,6 +52,7 @@ pub const VENDORS: &[Vendor] = &[
     Vendor { id: "deepseek", label: "DeepSeek", runner: "claude", auth: &["key"], key_env: &["ANTHROPIC_AUTH_TOKEN"], base_url: "https://api.deepseek.com/anthropic", models: &["deepseek-chat", "deepseek-reasoner"], note: "ผ่าน Claude Code ด้วย API แบบ Anthropic ของ DeepSeek" },
     Vendor { id: "moonshot", label: "Moonshot — Kimi", runner: "claude", auth: &["key"], key_env: &["ANTHROPIC_AUTH_TOKEN"], base_url: "https://api.moonshot.ai/anthropic", models: &["kimi-k2-turbo-preview", "kimi-k2-0905-preview"], note: "ผ่าน Claude Code ด้วย API แบบ Anthropic ของ Moonshot" },
     Vendor { id: "zhipu", label: "Z.ai — GLM", runner: "claude", auth: &["key"], key_env: &["ANTHROPIC_AUTH_TOKEN"], base_url: "https://api.z.ai/api/anthropic", models: &["glm-4.6", "glm-4.5-air"], note: "ผ่าน Claude Code ด้วย API แบบ Anthropic ของ Z.ai" },
+    Vendor { id: "stepfun", label: "StepFun — Step", runner: "claude", auth: &["key"], key_env: &["ANTHROPIC_AUTH_TOKEN"], base_url: "https://api.stepfun.ai", models: &["step-5-preview", "step-3.7-flash", "step-3.5-flash", "step-3.5-flash-2603"], note: "ผ่าน Claude Code ด้วย API แบบ Anthropic ของ StepFun · key จาก platform.stepfun.ai/interface-key · ถ้าใช้แพ็กเกจ Step Plan ให้เปลี่ยนที่อยู่ API เป็น https://api.stepfun.ai/step_plan" },
     Vendor { id: "openrouter", label: "OpenRouter (หลายร้อยโมเดล)", runner: "opencode", auth: &["key"], key_env: &["OPENROUTER_API_KEY"], base_url: "", models: &[], note: "ผ่าน OpenCode — ชื่อโมเดลรูปแบบ openrouter/<ค่าย>/<โมเดล>" },
     Vendor { id: "xai", label: "xAI — Grok", runner: "opencode", auth: &["key"], key_env: &["XAI_API_KEY"], base_url: "", models: &[], note: "ผ่าน OpenCode — ชื่อโมเดลรูปแบบ xai/<โมเดล>" },
     Vendor { id: "groq", label: "Groq", runner: "opencode", auth: &["key"], key_env: &["GROQ_API_KEY"], base_url: "", models: &[], note: "ผ่าน OpenCode — ชื่อโมเดลรูปแบบ groq/<โมเดล>" },
@@ -89,9 +90,25 @@ pub fn key_env(v: &Vendor, key: &str, base_override: &str) -> Vec<(String, Strin
     let mut out: Vec<(String, String)> = v.key_env.iter().map(|k| ((*k).to_string(), key.to_string())).collect();
     let base = if base_override.trim().is_empty() { v.base_url } else { base_override.trim() };
     if v.runner == "claude" && !base.is_empty() {
-        out.push(("ANTHROPIC_BASE_URL".into(), base.to_string()));
+        out.push(("ANTHROPIC_BASE_URL".into(), anthropic_base(base)));
     }
     out
+}
+
+/// Claude Code adds `/v1/messages` to the address itself, so a full endpoint pasted from a provider's docs
+/// (…/v1/chat/completions, …/v1/messages, …/v1) went to …/chat/completions/v1/messages and every run failed with
+/// "There's an issue with the selected model" (ISSUE-109): cut it back to the base.
+pub fn anthropic_base(url: &str) -> String {
+    let mut b = url.trim().to_string();
+    loop {
+        let t = b.trim_end_matches('/');
+        let low = t.to_ascii_lowercase();
+        let cut = ["/chat/completions", "/completions", "/messages", "/v1"].iter().find(|s| low.ends_with(*s)).map(|s| t.len() - s.len());
+        match cut {
+            Some(n) => b = t[..n].to_string(),
+            None => return t.to_string(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -122,6 +139,14 @@ mod tests {
         assert!(c.contains(&("ANTHROPIC_BASE_URL".into(), "https://example.test/anthropic".into())));
         assert_eq!(key_env(vendor("mistral").unwrap(), "k", ""), vec![("MISTRAL_API_KEY".to_string(), "k".to_string())]);
         assert!(needs_model_name(ds) && !needs_model_name(vendor("anthropic").unwrap()));
+        // StepFun: Claude Code appends /v1/messages to the base; a Step Plan account overrides it
+        let sf = vendor("stepfun").unwrap();
+        assert!(key_env(sf, "k", "").contains(&("ANTHROPIC_BASE_URL".into(), "https://api.stepfun.ai".into())));
+        assert!(key_env(sf, "k", "https://api.stepfun.ai/step_plan").contains(&("ANTHROPIC_BASE_URL".into(), "https://api.stepfun.ai/step_plan".into())));
+        // a full endpoint pasted from the docs is cut back to the base Claude Code expects (ISSUE-109)
+        assert!(key_env(sf, "k", "https://api.stepfun.ai/step_plan/v1/chat/completions").contains(&("ANTHROPIC_BASE_URL".into(), "https://api.stepfun.ai/step_plan".into())));
+        assert_eq!(anthropic_base("https://x.test/anthropic/v1/messages/"), "https://x.test/anthropic");
+        assert_eq!(anthropic_base("https://api.deepseek.com/anthropic"), "https://api.deepseek.com/anthropic");
     }
 }
 

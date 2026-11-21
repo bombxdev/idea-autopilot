@@ -273,7 +273,7 @@ pub fn ideas_summary_for_context(ideas: &[Idea]) -> String {
 // AGENTS.md carries the rules and context for every agent (Codex and OpenCode read it directly,
 // Gemini through GEMINI.md, Claude from workspace/CLAUDE.md), so any of them can work on an idea.
 
-const IDEA_GITIGNORE: &str = "# heavy or rebuildable — keep the idea repo small\nnode_modules/\n.venv/\nvenv/\n__pycache__/\n*.pyc\ntarget/\nbuild/\n.gradle/\n.cache/\nlogs/\n*.apk\n*.aab\n*.exe\n*.onnx\n*.gguf\n*.zip\n# written by the app for each run\nSTATUS.json\nSESSION.md\nSKILLS.md\nskills/\n";
+const IDEA_GITIGNORE: &str = "# heavy or rebuildable — keep the idea repo small\nnode_modules/\n.venv/\nvenv/\n__pycache__/\n*.pyc\ntarget/\nbuild/\n.gradle/\n.cache/\nlogs/\n*.apk\n*.aab\n*.exe\n*.onnx\n*.gguf\n*.zip\n# written by the app for each run\nSTATUS.json\nSESSION.md\nSKILLS.md\nskills/\n# tools given to a Gemini run (may hold keys)\n.gemini/\n";
 const BIG_FILE: u64 = 20 * 1024 * 1024;
 
 fn git(dir: &Path, args: &[&str]) -> std::io::Result<std::process::Output> {
@@ -356,6 +356,12 @@ pub fn ensure_repo(dir: &Path, idea: &Idea, ia: &str) -> Result<()> {
     let gem = dir.join("GEMINI.md");
     if !gem.exists() {
         std::fs::write(&gem, "Read and follow `AGENTS.md` in this folder (rules and context for this idea).\n\n@./AGENTS.md\n")?;
+    }
+    // ideas made before tools reached Gemini runs: keep their .gemini/settings.json (may hold keys) out of git too
+    if let Ok(gi) = std::fs::read_to_string(dir.join(".gitignore")) {
+        if !gi.lines().any(|l| l.trim() == ".gemini/") {
+            let _ = std::fs::write(dir.join(".gitignore"), format!("{}\n# tools given to a Gemini run (may hold keys)\n.gemini/\n", gi.trim_end()));
+        }
     }
     if dir.join(".git").exists() {
         return Ok(());

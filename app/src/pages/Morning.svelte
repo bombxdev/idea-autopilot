@@ -103,7 +103,7 @@
   .wrapx { max-width: 1100px; display: flex; flex-direction: column; gap: 28px; }
   .hero { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; }
   .hero p { margin: 6px 0 0; font-size: 16px; }
-  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(190px, 100%), 1fr)); gap: 12px; }
   .tile { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; display: flex; flex-direction: column; gap: 2px; }
   .lbl { font-size: 13px; color: var(--text-2); }
   .num { font-size: 28px; font-weight: 600; }
@@ -111,7 +111,7 @@
   .amber { color: var(--amber); }
   section { display: flex; flex-direction: column; gap: 12px; }
   section h2 { display: flex; align-items: baseline; gap: 10px; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 14px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(420px, 100%), 1fr)); gap: 14px; }
   .empty { text-align: center; padding: 32px; display: flex; flex-direction: column; gap: 4px; align-items: center; }
   .big { font-size: 34px; }
   .count { background: var(--amber); color: #2a1a00; font-size: 12px; font-weight: 600; border-radius: 999px; padding: 0 8px; align-self: center; }

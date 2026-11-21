@@ -1,6 +1,6 @@
 [package]
 name = "idea-autopilot"
-version = "0.7.1"
+version = "0.8.0"
 description = "Idea Autopilot — let an AI agent of your choice work through your ideas while you are away"
 license = "GPL-3.0-or-later"
 authors = ["bombxdev"]
@@ -34,6 +34,9 @@ parking_lot = "0.12"
 tiny_http = "0.12"
 portable-pty = "0.8"
 uuid = { version = "1", features = ["v4"] }
+libloading = "0.8"
+sha2 = "0.10"
+toml = "0.8"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_System_Power"] }

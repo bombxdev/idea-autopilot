@@ -8,6 +8,8 @@
   import Markdown from "../components/Markdown.svelte";
   import Accounts from "../components/Accounts.svelte";
   import UpdateCard from "../components/UpdateCard.svelte";
+  import VideoAddon from "../components/VideoAddon.svelte";
+  import DocsAddon from "../components/DocsAddon.svelte";
 
   let s = $state({});
   let cal = $state([]);
@@ -322,6 +324,11 @@
       {/if}
     {/if}
   </div>
+  {/if}
+
+  {#if tab === "ai"}
+  <DocsAddon />
+  <VideoAddon />
   {/if}
 
   {#if tab === "ai"}

@@ -50,6 +50,22 @@ pub fn start(app: AppHandle) {
                 let _ = req.as_reader().take(1 << 20).read_to_string(&mut raw);
                 let v: Value = serde_json::from_str(&raw).unwrap_or_default();
                 let cmd = v.get("cmd").and_then(Value::as_str).unwrap_or("");
+                // a part handed to another AI takes minutes: answer it from its own thread, keep serving the rest
+                if cmd == "delegate" {
+                    let app2 = app.clone();
+                    let args = v.get("args").cloned().unwrap_or(Value::Null);
+                    std::thread::spawn(move || {
+                        let (code, body) = match crate::team::delegate(&app2, &args) {
+                            Ok(r) => (200, json!({"ok": r})),
+                            Err(e) => (400, json!({"error": e})),
+                        };
+                        let resp = tiny_http::Response::from_string(body.to_string())
+                            .with_status_code(code)
+                            .with_header("Content-Type: application/json; charset=utf-8".parse::<tiny_http::Header>().unwrap());
+                        let _ = req.respond(resp);
+                    });
+                    continue;
+                }
                 match dispatch(&app, cmd, v.get("args").cloned().unwrap_or(Value::Null)) {
                     Ok(r) => (200, json!({"ok": r})),
                     Err(e) => (400, json!({"error": e})),
@@ -98,6 +114,11 @@ fn uploads(app: &AppHandle, a: &Value) -> Result<Option<Vec<String>>, String> {
 }
 
 pub fn dispatch(app: &AppHandle, cmd: &str, a: Value) -> Result<Value, String> {
+    if cmd == "team_accounts" {
+        let st = app.state::<AppState>();
+        let c = st.db.lock();
+        return Ok(json!(crate::team::other_accounts(&c, a.get("exclude").and_then(Value::as_str).unwrap_or(""))));
+    }
     let st = || app.state::<AppState>();
     let unit = |r: Result<(), String>| r.map(|_| Value::Null);
     match cmd {
@@ -161,7 +182,7 @@ pub fn dispatch(app: &AppHandle, cmd: &str, a: Value) -> Result<Value, String> {
         "handoff" => crate::commands::idea_handoff(app.clone(), st(), id(&a)?, text(&a, "agent").unwrap_or_default(), text(&a, "text").unwrap_or_default(), None, None).map(|m| json!(m)),
         "agents" => Ok(crate::agents::list_json(&st().db.lock())),
         // `ai` (optional): { account, model, effort } chosen for this message, as in the desktop chat
-        "ask" => unit(commands::idea_ask(app.clone(), st(), id(&a)?, text(&a, "text").unwrap_or_default(), uploads(app, &a)?, a.get("ai").and_then(|v| serde_json::from_value(v.clone()).ok()))),
+        "ask" => unit(commands::idea_ask(app.clone(), st(), id(&a)?, text(&a, "text").unwrap_or_default(), uploads(app, &a)?, a.get("ai").and_then(|v| serde_json::from_value(v.clone()).ok()), a.get("replace").and_then(|v| v.as_bool()))),
         "idea_ai" => unit(commands::idea_ai_set(st(), id(&a)?, text(&a, "account"), text(&a, "model"), text(&a, "effort"))),
         "hold" => {
             let on = a.get("on").and_then(Value::as_bool).unwrap_or(true);

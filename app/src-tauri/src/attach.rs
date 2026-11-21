@@ -11,6 +11,12 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const MAX_BYTES: usize = 25 * 1024 * 1024;
+/// Videos and sound are read by the app (video.rs), never sent whole to an AI, so they may be larger.
+pub const MAX_MEDIA_BYTES: usize = 500 * 1024 * 1024;
+
+fn max_for(name: &str) -> usize {
+    if matches!(kind_of(name), "video" | "audio") { MAX_MEDIA_BYTES } else { MAX_BYTES }
+}
 pub const MAX_FILES: usize = 10;
 const MAX_PER_IDEA: usize = 60;
 const STAGE_TTL_SECS: u64 = 24 * 3600;
@@ -109,8 +115,8 @@ pub fn stage_bytes(root: &Path, name: &str, bytes: &[u8]) -> Result<Staged> {
     if bytes.is_empty() {
         bail!("ไฟล์ว่าง");
     }
-    if bytes.len() > MAX_BYTES {
-        bail!("ไฟล์ใหญ่เกิน {} MB", MAX_BYTES / 1024 / 1024);
+    if bytes.len() > max_for(&name) {
+        bail!("ไฟล์ใหญ่เกิน {} MB", max_for(&name) / 1024 / 1024);
     }
     cleanup(root);
     let token = new_token();
@@ -126,10 +132,10 @@ pub fn stage_path(root: &Path, path: &Path) -> Result<Staged> {
     if !meta.is_file() {
         bail!("แนบได้เฉพาะไฟล์ (ไม่ใช่โฟลเดอร์)");
     }
-    if meta.len() as usize > MAX_BYTES {
-        bail!("ไฟล์ใหญ่เกิน {} MB", MAX_BYTES / 1024 / 1024);
-    }
     let name = safe_name(&path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
+    if meta.len() as usize > max_for(&name) {
+        bail!("ไฟล์ใหญ่เกิน {} MB", max_for(&name) / 1024 / 1024);
+    }
     check_name(&name)?;
     cleanup(root);
     let token = new_token();
@@ -246,7 +252,9 @@ fn plain_name(name: &str) -> Result<()> {
 
 pub fn delete(idea_dir: &Path, name: &str) -> Result<()> {
     plain_name(name)?;
-    std::fs::remove_file(idea_dir.join("attachments").join(name)).context("ลบไม่ได้")?;
+    let p = idea_dir.join("attachments").join(name);
+    std::fs::remove_file(&p).context("ลบไม่ได้")?;
+    let _ = std::fs::remove_dir_all(crate::video::digest_dir(&p));
     Ok(())
 }
 
@@ -288,6 +296,7 @@ pub fn write_index(dir: &Path, provider: &str) {
         return;
     }
     let ok = accepts(provider);
+    crate::video::ensure_idea(dir);
     let mut s = String::from(
         "# ไฟล์แนบจากเจ้าของ\n\n\
          ไฟล์อยู่ในโฟลเดอร์ `attachments/` เปิดอ่านด้วยเครื่องมืออ่านไฟล์ของคุณ (รูปภาพและ PDF ให้เปิดดูเนื้อหาจริง ไม่ใช่เดาจากชื่อไฟล์)\n\n\
@@ -298,7 +307,12 @@ pub fn write_index(dir: &Path, provider: &str) {
     s.push_str("## รายการ\n\n");
     for i in &items {
         let when = chrono::DateTime::from_timestamp(i.added, 0).map(|t| t.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M").to_string()).unwrap_or_default();
-        let note = if ok.contains(&i.kind) || i.kind == "text" {
+        let note = if matches!(i.kind, "video" | "audio") {
+            // the app's summary (video.rs) instead of the file: every AI can read it, for few tokens
+            format!(" — **อ่าน `attachments/{}.digest/VIDEO.md` แทนการเปิดไฟล์** (แอปสรุปภาพ ช็อต สี จังหวะ และคำพูดไว้ให้ ประหยัด token มาก ถ้ายังไม่มี รอสักครู่)", i.name)
+        } else if crate::video::root().is_some_and(|r| crate::docs::will_digest(r, &i.name)) {
+            format!(" — **อ่าน `attachments/{}.digest/DOC.md` ก่อน** (แอปแปลงเป็นข้อความให้ ประหยัด token มาก ถ้ายังไม่มีรอสักครู่) เปิดไฟล์จริงเฉพาะเมื่อต้องดูภาพ กราฟ หรือหน้าตาเอกสาร", i.name)
+        } else if ok.contains(&i.kind) || i.kind == "text" {
             String::new()
         } else {
             format!(" — **AI ตัวนี้อาจเปิดตรงๆ ไม่ได้** ({}) ถ้าอ่านไม่ได้ ให้ลองแปลงด้วยเครื่องมือในเครื่อง แล้วบอกใน ISSUES.md", kind_th(i.kind))

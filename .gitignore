@@ -38,3 +38,6 @@ logs/
 
 # internal market/competitor notes: kept local
 docs/market/
+
+# promo video sources and renders: kept local
+video/

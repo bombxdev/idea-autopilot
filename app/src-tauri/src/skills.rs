@@ -1065,18 +1065,57 @@ fn trust_of(owner: &str) -> &'static str {
     }
 }
 
-pub async fn shop_search(query: &str) -> Result<Value, String> {
+/// What a skill collection is for, from its name, description and GitHub topics — plain keyword rules (no AI, no
+/// tokens). The first group with the most hits wins; nothing matched = "other".
+pub const CATEGORIES: &[(&str, &[&str])] = &[
+    ("security", &["security", "pentest", "vuln", "ctf", "malware", "reverse-engineer", "reverse engineer", "forensic", "exploit", "threat"]),
+    ("design", &["design", "ui", "ux", "figma", "css", "tailwind", "frontend", "front-end", "web design", "landing"]),
+    ("docs", &["pdf", "docx", "word", "excel", "xlsx", "pptx", "powerpoint", "office", "document", "writing", "markdown", "slides"]),
+    ("data", &["data", "sql", "chart", "analytics", "visualization", "dataviz", "csv", "spreadsheet", "dashboard"]),
+    ("media", &["video", "audio", "image", "music", "speech", "tts", "voice", "photo", "animation"]),
+    ("research", &["research", "search", "scrape", "crawl", "paper", "academic", "browse", "web-fetch"]),
+    ("test", &["test", "testing", "qa", "playwright", "e2e", "cypress"]),
+    ("devops", &["devops", "deploy", "docker", "kubernetes", "ci/cd", "github-actions", "cloud", "aws", "terraform", "infra"]),
+    ("business", &["marketing", "seo", "sales", "business", "finance", "startup", "product", "growth", "legal"]),
+    ("code", &["code", "coding", "refactor", "git", "review", "debug", "typescript", "python", "rust", "golang", "api", "developer", "programming"]),
+    ("agents", &["agent", "llm", "prompt", "mcp", "rag", "memory", "multi-agent", "orchestration", "workflow", "automation"]),
+];
+
+pub fn category_of(text: &str) -> &'static str {
+    let t = text.to_lowercase();
+    let words: Vec<&str> = t.split(|c: char| !c.is_alphanumeric() && c != '-' && c != '/').filter(|w| !w.is_empty()).collect();
+    let hit = |k: &str| if k.contains(' ') || k.contains('/') { t.contains(k) } else { words.iter().any(|w| *w == k || (k.len() > 4 && w.starts_with(k))) };
+    let mut best = ("other", 0usize);
+    for (id, keys) in CATEGORIES {
+        let n = keys.iter().filter(|k| hit(k)).count();
+        if n > best.1 {
+            best = (id, n);
+        }
+    }
+    best.0
+}
+
+/// popular = most stars · new = made in the last 90 days, best first · trending = stars per day since it was made
+pub async fn shop_search(query: &str, sort: &str) -> Result<Value, String> {
     let q = query.trim();
+    let since = |days: i64| (chrono::Utc::now() - chrono::Duration::days(days)).format("%Y-%m-%d").to_string();
+    let age_filter = match sort {
+        "new" => format!(" created:>{}", since(90)),
+        "trending" => format!(" created:>{}", since(365)),
+        _ => String::new(),
+    };
     let mut hits: BTreeMap<String, Value> = BTreeMap::new();
     // well-known collections are always offered: their skills are found by browsing, whatever the search words
     for (name, desc) in CURATED {
         let owner = name.split('/').next().unwrap_or("");
-        hits.insert(name.to_string(), json!({ "repo": name, "description": desc, "stars": null, "license": null, "trust": trust_of(owner), "listed": "curated" }));
+        if sort == "popular" {
+            hits.insert(name.to_string(), json!({ "repo": name, "description": desc, "stars": null, "license": null, "trust": trust_of(owner), "listed": "curated", "category": category_of(&format!("{name} {desc}")) }));
+        }
     }
     let mut last_err = None;
     for topic in ["agent-skills", "claude-skills"] {
-        let search = if q.is_empty() { format!("topic:{topic}") } else { format!("{q} topic:{topic}") };
-        let url = reqwest::Url::parse_with_params("https://api.github.com/search/repositories", &[("q", search.as_str()), ("sort", "stars"), ("per_page", "12")]).map_err(err)?;
+        let search = if q.is_empty() { format!("topic:{topic}{age_filter}") } else { format!("{q} topic:{topic}{age_filter}") };
+        let url = reqwest::Url::parse_with_params("https://api.github.com/search/repositories", &[("q", search.as_str()), ("sort", "stars"), ("per_page", "30")]).map_err(err)?;
         match gh_get(url.as_str()).await {
             Ok(v) => {
                 for it in v["items"].as_array().cloned().unwrap_or_default() {
@@ -1085,8 +1124,14 @@ pub async fn shop_search(query: &str) -> Result<Value, String> {
                         continue;
                     }
                     let owner = it["owner"]["login"].as_str().unwrap_or("");
+                    let topics: Vec<String> = it["topics"].as_array().map(|a| a.iter().filter_map(|t| t.as_str().map(String::from)).collect()).unwrap_or_default();
+                    let cat = category_of(&format!("{full} {} {}", it["description"].as_str().unwrap_or(""), topics.join(" ")));
+                    let created = it["created_at"].as_str().unwrap_or("").to_string();
+                    let days = chrono::DateTime::parse_from_rfc3339(&created).map(|d| (chrono::Utc::now() - d.with_timezone(&chrono::Utc)).num_days().max(1)).unwrap_or(365);
+                    let per_day = it["stargazers_count"].as_f64().unwrap_or(0.0) / days as f64;
                     hits.entry(full.clone()).or_insert_with(|| {
                         json!({
+                            "category": cat, "created": created, "stars_per_day": (per_day * 10.0).round() / 10.0,
                             "repo": full, "description": it["description"], "stars": it["stargazers_count"],
                             "license": it["license"]["spdx_id"], "pushed": it["pushed_at"], "archived": it["archived"], "fork": it["fork"],
                             "trust": trust_of(owner), "listed": "github-search",
@@ -1098,7 +1143,11 @@ pub async fn shop_search(query: &str) -> Result<Value, String> {
         }
     }
     let mut list: Vec<Value> = hits.into_values().collect();
-    list.sort_by_key(|v| (v["trust"] != "known", std::cmp::Reverse(v["stars"].as_i64().unwrap_or(0))));
+    match sort {
+        "new" => list.sort_by(|a, b| b["created"].as_str().unwrap_or("").cmp(a["created"].as_str().unwrap_or(""))),
+        "trending" => list.sort_by(|a, b| b["stars_per_day"].as_f64().unwrap_or(0.0).partial_cmp(&a["stars_per_day"].as_f64().unwrap_or(0.0)).unwrap_or(std::cmp::Ordering::Equal)),
+        _ => list.sort_by_key(|v| (v["trust"] != "known", std::cmp::Reverse(v["stars"].as_i64().unwrap_or(0)))),
+    }
     if list.is_empty() {
         if let Some(x) = last_err {
             return Err(x);
@@ -1267,8 +1316,8 @@ pub async fn skills_deep_check(app: AppHandle, text: String) -> R<Value> {
 }
 
 #[tauri::command]
-pub async fn skills_shop_search(query: String) -> R<Value> {
-    shop_search(&query).await
+pub async fn skills_shop_search(query: String, sort: Option<String>) -> R<Value> {
+    shop_search(&query, sort.as_deref().unwrap_or("popular")).await
 }
 
 #[tauri::command]
@@ -1294,6 +1343,17 @@ pub async fn skills_shop_install(app: AppHandle, repo: String, commit: String, p
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn categories_from_words() {
+        assert_eq!(category_of("anthropics/skills pdf docx xlsx pptx office documents"), "docs");
+        assert_eq!(category_of("Pentest and CTF helpers for security research"), "security");
+        assert_eq!(category_of("UI/UX design system with Tailwind"), "design");
+        assert_eq!(category_of("playwright e2e testing"), "test");
+        assert_eq!(category_of("a bag of things"), "other");
+        // a word inside another word does not count ("ui" in "build")
+        assert_eq!(category_of("build quickly"), "other");
+    }
 
     fn tmp_db(tag: &str) -> (Connection, PathBuf) {
         let root = std::env::temp_dir().join(format!("ia-skills-{tag}-{}", std::process::id()));
@@ -1516,7 +1576,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn shop_live_browse_fetch_and_scan_a_real_repo() {
-        let found = shop_search("pdf").await.unwrap();
+        let found = shop_search("pdf", "popular").await.unwrap();
         assert!(found["repos"].as_array().unwrap().iter().any(|r| r["repo"] == "anthropics/skills"));
         let b = shop_browse("anthropics/skills").await.unwrap();
         let commit = b["commit"].as_str().unwrap().to_string();

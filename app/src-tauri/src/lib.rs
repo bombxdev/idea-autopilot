@@ -20,6 +20,7 @@ mod db;
 mod governor;
 mod idea_ai;
 mod lang;
+mod langs;
 mod modelname;
 mod economics;
 mod power;
@@ -47,6 +48,12 @@ mod update;
 mod ui_translate;
 mod usage;
 mod workspace;
+mod video;
+mod docs;
+mod mcp;
+mod team;
+#[cfg(test)]
+mod speech_engine;
 
 use parking_lot::Mutex;
 use std::path::PathBuf;
@@ -312,6 +319,7 @@ pub fn run() {
         .setup(|app| {
             let root = root_dir();
             std::fs::create_dir_all(root.join("data"))?;
+            video::set_root(root.clone());
             let conn = db::open(&root.join("data").join("quota.db"))?;
             db::recover_runs(&conn)?;
             // chats left open by a PC switched off while working: offer to carry on (ISSUE-067)
@@ -473,6 +481,7 @@ pub fn run() {
             commands::request_set,
             commands::idea_ask,
             commands::codex_thread,
+            commands::idea_languages,
             commands::idea_handoff,
             commands::list_agents,
             commands::edit_idea,
@@ -524,6 +533,19 @@ pub fn run() {
             commands::accounts_series,
             commands::attach_stage,
             commands::attach_stage_path,
+            commands::video_addon_status,
+            commands::video_addon_install,
+            commands::video_addon_remove,
+            commands::docs_addon_status,
+            commands::docs_addon_set,
+            commands::mcp_list,
+            commands::idea_team_set,
+            commands::mcp_local,
+            commands::mcp_import,
+            commands::mcp_search,
+            commands::mcp_install,
+            commands::mcp_set,
+            commands::mcp_remove,
             commands::attach_unstage,
             commands::attach_info,
             commands::attach_list,

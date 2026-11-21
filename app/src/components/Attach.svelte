@@ -48,10 +48,12 @@
   }
   async function addFiles(files) {
     if (!files.length || !room(files.length)) return;
-    const max = (info?.max_mb ?? 25) * 1048576;
     for (const f of files) {
-      if (f.size > max) {
-        toast(`“${f.name}” ใหญ่เกิน ${info?.max_mb ?? 25} MB`, "err");
+      // video and sound are summarised by the app (never sent whole to the AI), so they may be larger
+      const media = /^(video|audio)\//.test(f.type) || /\.(mp4|mov|webm|mkv|avi|mp3|wav|m4a|ogg|flac|aac)$/i.test(f.name || "");
+      const mb = media ? (info?.max_video_mb ?? 500) : (info?.max_mb ?? 25);
+      if (f.size > mb * 1048576) {
+        toast(`“${f.name}” ใหญ่เกิน ${mb} MB`, "err");
         continue;
       }
       // a pasted screenshot has no real name

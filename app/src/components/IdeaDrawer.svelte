@@ -11,6 +11,7 @@
   import IdeaAi from "./IdeaAi.svelte";
   import Scope from "./Scope.svelte";
   import LiveLog from "./LiveLog.svelte";
+  import Languages from "./Languages.svelte";
   import { lift } from "../lib/lift.js";
   import { wsOpen } from "../lib/workspace.svelte.js";
 
@@ -43,6 +44,17 @@
     try {
       await api.ideaAiSet(id, v.account, v.model, v.effort);
       toast("บันทึกการเลือก AI ของไอเดียนี้แล้ว", "ok", 1800);
+      refresh();
+    } catch (e) {
+      toast(String(e), "err");
+    }
+  }
+  // team mode (team.rs): the lead may run helpers at once — faster on big work that splits, more quota at once
+  const team = $derived(store.state?.idea_ai?.[id]?.team ?? 0);
+  async function saveTeam(n) {
+    try {
+      await api.ideaTeamSet(id, Number(n));
+      toast(Number(n) ? `โหมดทีม: ผู้ช่วยพร้อมกันได้ ${n} ตัว (ใช้กับบัญชี Claude)` : "ปิดโหมดทีม", "ok", 2200);
       refresh();
     } catch (e) {
       toast(String(e), "err");
@@ -204,6 +216,7 @@
       </div>
       {#if idea.summary}<p class="summary">{idea.summary}</p>{/if}
       <div class="row small"><div class="pb grow"><i style="width:{progress(idea)}%"></i></div><b>{progress(idea)}%</b></div>
+      <Languages {id} stamp={idea.updated} />
       {#if fixing(idea)}<div class="small faint">🔧 กำลังแก้ตามที่สั่ง — % นี้นับเฉพาะขั้นที่บอทเดินมาแล้ว งานที่สั่งในแชตดูความคืบหน้าในกล่องแชตด้านล่าง</div>{/if}
       {#if idea.recipe.length}
         <div class="stepper">
@@ -216,6 +229,15 @@
       {/if}
       <div class="row small"><span class="faint">เก็บในชุด</span><Scope value={idea.scope ?? "personal"} onchange={saveScope} /></div>
       <IdeaAi bind:value={aiVal} onchange={saveAi} />
+      <div class="row small teamrow" title="AI หัวหน้าแบ่งงานที่แยกกันได้ให้ผู้ช่วยทำพร้อมกัน (Sonnet งานทั่วไป · Haiku งานง่าย · ตัวตรวจงาน) — เสร็จเร็วขึ้นกับงานใหญ่ แต่ใช้โควต้าเร็วขึ้นตามจำนวนผู้ช่วย งานเล็กหัวหน้าจะทำเอง · ใช้กับบัญชี Claude">
+        <span class="faint"><Icon name="user" /> ทำงานเป็นทีม</span>
+        <select value={String(team)} onchange={(e) => saveTeam(e.currentTarget.value)}>
+          <option value="0">ปิด (AI ตัวเดียว)</option>
+          <option value="2">หัวหน้า + ผู้ช่วย 2</option>
+          <option value="3">หัวหน้า + ผู้ช่วย 3</option>
+          <option value="5">หัวหน้า + ผู้ช่วย 5 (ใช้โควต้าเร็ว)</option>
+        </select>
+      </div>
       <Actions {idea} />
       <!-- the bot's run of this idea, live (the same panel as on the morning page), for every AI -->
       {#if running}<LiveLog />
@@ -366,4 +388,8 @@
   .delbar { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
   .danger-fill { background: var(--red); border-color: var(--red); color: #fff; }
   .danger-fill:disabled { opacity: 0.4; cursor: not-allowed; }
+  @media (max-width: 760px) {
+    .drawer:not(.embedded) { width: 100vw; border-left: none; }
+  }
+  .teamrow { gap: 8px; align-items: center; }
 </style>

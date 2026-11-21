@@ -25,6 +25,9 @@ pub struct Outcome {
     pub error: Option<String>,
 }
 
+/// Set in RunSpec.env to a `--mcp-config` file for this run (mcp.rs); taken out before the agent starts.
+pub const MCP_CONFIG_ENV: &str = "IA_MCP_CONFIG";
+
 pub struct RunSpec<'a> {
     pub cwd: &'a Path,
     pub prompt: String,
@@ -202,8 +205,27 @@ pub async fn run(
     let prompt_file = spec.cwd.join("logs").join("prompt.md");
     let _ = std::fs::create_dir_all(spec.cwd.join("logs"));
     let _ = std::fs::write(&prompt_file, &spec.prompt);
-    let inv = crate::providers::build(&spec.provider, &spec.model, &spec.effort, &spec.tools, &spec.custom_cmd, &prompt_file)
+    let mut inv = crate::providers::build(&spec.provider, &spec.model, &spec.effort, &spec.tools, &spec.custom_cmd, &prompt_file)
         .map_err(anyhow::Error::msg)?;
+    // team mode (team.rs): the helpers file and the Task tool for the lead
+    if let Some((_, p)) = spec.env.iter().find(|(k, _)| k == crate::team::TEAM_ENV) {
+        if spec.provider == "claude" && inv.shell_line.is_none() {
+            crate::team::apply_args(&mut inv.args, p);
+        }
+    }
+    // tools (MCP) for this run, given to each agent in its own way (mcp.rs)
+    let mut extra_env: Vec<(String, String)> = vec![];
+    if let Some((_, p)) = spec.env.iter().find(|(k, _)| k == MCP_CONFIG_ENV) {
+        if inv.shell_line.is_none() {
+            crate::mcp::apply_to_run(&spec.provider, Path::new(p), spec.cwd, &mut inv.args, &mut extra_env, &spec.env);
+        }
+    } else if spec.provider == "gemini" {
+        crate::mcp::clear_gemini(spec.cwd);
+    } else if spec.provider == "mistral" {
+        if let Some((_, home)) = spec.env.iter().find(|(k, _)| k == "VIBE_HOME") {
+            crate::mcp::set_vibe(Path::new(home), None);
+        }
+    }
 
     let mut cmd = if let Some(line) = &inv.shell_line {
         #[cfg(windows)]
@@ -224,7 +246,8 @@ pub async fn run(
         c.args(&inv.args);
         c
     };
-    cmd.envs(spec.env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+    cmd.envs(spec.env.iter().filter(|(k, _)| k != MCP_CONFIG_ENV && k != crate::team::TEAM_ENV).map(|(k, v)| (k.as_str(), v.as_str())));
+    cmd.envs(extra_env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
     cmd.current_dir(spec.cwd)
         .env("IDEA_AUTOPILOT", "1")
         .stdin(Stdio::piped())

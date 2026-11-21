@@ -22,11 +22,14 @@ pub struct IdeaAi {
     /// skills named with /name when the idea was added: always offered to the AI for this idea
     #[serde(default)]
     pub skills: Vec<String>,
+    /// team mode (team.rs): how many helpers the lead may run at once; 0 = off
+    #[serde(default)]
+    pub team: u32,
 }
 
 impl IdeaAi {
     pub fn is_empty(&self) -> bool {
-        self.account.is_empty() && self.model_forced().is_none() && self.effort_forced().is_none() && self.skills.is_empty()
+        self.account.is_empty() && self.model_forced().is_none() && self.effort_forced().is_none() && self.skills.is_empty() && self.team == 0
     }
 
     pub fn model_forced(&self) -> Option<&str> {
@@ -87,16 +90,16 @@ mod tests {
         };
         crate::accounts::save(&c, &[acct("codex01", true), acct("off01", false)]).unwrap();
         // pinned to an account that is switched off: as if not pinned
-        set(&c, 5, &IdeaAi { account: "off01".into(), model: "auto".into(), effort: "auto".into(), skills: vec![] }).unwrap();
+        set(&c, 5, &IdeaAi { account: "off01".into(), model: "auto".into(), effort: "auto".into(), skills: vec![], team: 0 }).unwrap();
         assert!(pinned_account(&c, 5).is_none());
         assert!(get(&c, 3).is_none());
-        set(&c, 3, &IdeaAi { account: "codex01".into(), model: "gpt-6.1-sol".into(), effort: "high".into(), skills: vec![] }).unwrap();
+        set(&c, 3, &IdeaAi { account: "codex01".into(), model: "gpt-6.1-sol".into(), effort: "high".into(), skills: vec![], team: 0 }).unwrap();
         let a = get(&c, 3).unwrap();
         assert_eq!((a.model_forced(), a.effort_forced()), (Some("gpt-6.1-sol"), Some("high")));
         assert_eq!(pinned_account(&c, 3).as_deref(), Some("codex01"));
         assert!(pinned_account(&c, 4).is_none());
         // "auto" everywhere and nothing pinned = no entry at all
-        set(&c, 3, &IdeaAi { account: String::new(), model: "auto".into(), effort: "auto".into(), skills: vec![] }).unwrap();
+        set(&c, 3, &IdeaAi { account: String::new(), model: "auto".into(), effort: "auto".into(), skills: vec![], team: 0 }).unwrap();
         assert!(get(&c, 3).is_none());
     }
 }

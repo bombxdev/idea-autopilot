@@ -1,0 +1,180 @@
+{
+  "version": 1,
+  "about": "Recipes for the add-ons (video.rs, docs.rs). Data, not code: a better tool or model replaces an entry here. A copy at data/tools/recipes.json on the machine wins over this one (same shape).",
+  "ffmpeg": {
+    "label": "ffmpeg 7.1.1 (essentials, gyan.dev)",
+    "license": "GPL-3.0",
+    "home": "https://www.gyan.dev/ffmpeg/builds/",
+    "url": "https://github.com/GyanD/codexffmpeg/releases/download/7.1.1/ffmpeg-7.1.1-essentials_build.zip",
+    "sha256": "04861d3339c5ebe38b56c19a15cf2c0cc97f5de4fa8910e4d47e5e6404e4a2d4",
+    "size_mb": 88,
+    "unpack": true
+  },
+  "engines": [
+    {
+      "id": "transcribe.cpp",
+      "label": "transcribe.cpp 0.4.2",
+      "kind": "transcribe-dll",
+      "license": "MIT",
+      "home": "https://github.com/handy-computer/transcribe.cpp",
+      "url": "https://github.com/handy-computer/transcribe.cpp/releases/download/v0.4.2/transcribe-native-0.4.2-windows-x86_64-cpu-vulkan.tar.gz",
+      "sha256": "6094102cf57b404b050707ceb258b12ce647b92e801b5d46077214e5b030c8aa",
+      "size_mb": 17,
+      "unpack": true
+    }
+  ],
+  "speech_models": [
+    {
+      "id": "openthai2-asr",
+      "label": "OpenThai 2.0 ASR",
+      "engine": "transcribe.cpp",
+      "langs": {
+        "th": 100
+      },
+      "detects_language": false,
+      "license": "OpenMDW-1.1",
+      "home": "https://huggingface.co/iapp/OpenThai2.0-ASR-Streaming",
+      "note": "ภาษาไทยแม่นที่สุดในตัวฟรีที่ทดสอบ (FLEURS ผิด 8.5% ของตัวอักษร · คลิป YouTube 15.4%) · คำอังกฤษออกมาเป็นตัวไทย (AI เปลี่ยนศัพท์ที่ควรเป็นอังกฤษให้ตอนใช้งาน)",
+      "url": "https://huggingface.co/openthaigpt/OpenThai2.0-ASR-Streaming_GGUF/resolve/main/openthai2.0-asr-streaming-Q8_0.gguf",
+      "file": "openthai2.0-asr-streaming-Q8_0.gguf",
+      "sha256": "7a09eb2cf80a056f5dfdbff0f0b61453858707c2e59037e5009907740ab50260",
+      "size_mb": 754
+    },
+    {
+      "id": "whisper-large-v3-turbo",
+      "label": "Whisper large-v3-turbo",
+      "engine": "transcribe.cpp",
+      "langs": {
+        "*": 80,
+        "en": 90,
+        "th": 55
+      },
+      "detects_language": true,
+      "license": "MIT",
+      "home": "https://huggingface.co/openai/whisper-large-v3-turbo",
+      "note": "100 ภาษา รู้เองว่าคลิปเป็นภาษาอะไร · Q5_K_M แม่นเท่าตัวเต็ม (WER 2.03% vs 2.01%) แต่เล็กกว่า",
+      "url": "https://huggingface.co/handy-computer/whisper-large-v3-turbo-gguf/resolve/main/whisper-large-v3-turbo-Q5_K_M.gguf",
+      "file": "whisper-large-v3-turbo-Q5_K_M.gguf",
+      "sha256": "06fc9923c09fb3ae878ea12c34d1be3ed18fad039ab14b4b045c7b6c40af56b2",
+      "size_mb": 620
+    }
+  ],
+  "uv": {
+    "label": "uv 0.12.10 (Astral)",
+    "license": "MIT/Apache-2.0",
+    "home": "https://github.com/astral-sh/uv",
+    "url": "https://github.com/astral-sh/uv/releases/download/0.12.10/uv-x86_64-pc-windows-msvc.zip",
+    "sha256": "f65744f94072152b1f86ba2aace4d01f1124d9a8ecb235805039e3718c36cac2",
+    "size_mb": 17,
+    "unpack": true
+  },
+  "doc_converters": [
+    {
+      "id": "markitdown",
+      "label": "MarkItDown 0.1.9 (Microsoft)",
+      "kind": "uvx",
+      "license": "MIT",
+      "home": "https://github.com/microsoft/markitdown",
+      "note": "PDF, Word, Excel, PowerPoint, Outlook, HTML, EPUB → Markdown · ครั้งแรกดาวน์โหลดส่วนประกอบราว 60 MB ผ่าน uv",
+      "formats": [
+        "pdf",
+        "docx",
+        "pptx",
+        "xlsx",
+        "xls",
+        "msg",
+        "html",
+        "htm",
+        "epub"
+      ],
+      "command": [
+        "{uvx}",
+        "--from",
+        "markitdown[pdf,docx,pptx,xlsx,xls,outlook]==0.1.9",
+        "markitdown",
+        "{file}"
+      ]
+    },
+    {
+      "id": "openthai-ocr-text",
+      "label": "OpenThai 2.1 OCR Text",
+      "kind": "uv-script",
+      "license": "Apache-2.0",
+      "home": "https://huggingface.co/iapp/OpenThai2.1-OCR-Text-20261118",
+      "note": "อ่านตัวหนังสือไทย/อังกฤษจาก PDF ที่เป็นภาพสแกน · 7 MB · CPU ล้วน ~0.4 วิ/หน้า · ถูก 97% บนคำพิพากษา 96% บนราชกิจจาฯ",
+      "formats": [
+        "scan"
+      ],
+      "size_mb": 7,
+      "files": [
+        {
+          "path": "config.json",
+          "url": "https://huggingface.co/iapp/OpenThai2.1-OCR-Text-20261118/resolve/main/config.json",
+          "sha256": "f5a38f5677784b10d4abcc2ad8a8b044826a8211bc51213b38c889ad792b417a"
+        },
+        {
+          "path": "det.onnx",
+          "url": "https://huggingface.co/iapp/OpenThai2.1-OCR-Text-20261118/resolve/main/det.onnx",
+          "sha256": "193bab7a04fca699a6c82e6abb5b81bdb28177f0abd4062552b04908dafb19f8"
+        },
+        {
+          "path": "rec.onnx",
+          "url": "https://huggingface.co/iapp/OpenThai2.1-OCR-Text-20261118/resolve/main/rec.onnx",
+          "sha256": "82ec89533346faadcb30df96703dad2dd7521de65709e60d83fd9745b8968124"
+        },
+        {
+          "path": "rec2.onnx",
+          "url": "https://huggingface.co/iapp/OpenThai2.1-OCR-Text-20261118/resolve/main/rec2.onnx",
+          "sha256": "6ec0f96f5ade665fc7eb33a9800ed055bc220870cbf963cf97c4750e64cd27ce"
+        },
+        {
+          "path": "rec_dict.txt",
+          "url": "https://huggingface.co/iapp/OpenThai2.1-OCR-Text-20261118/resolve/main/rec_dict.txt",
+          "sha256": "259ef2636cec0eeae225ae9fd9a63fa9305285650c22d7ec34fe8a82b24c2f1a"
+        },
+        {
+          "path": "runtime/__init__.py",
+          "url": "https://huggingface.co/iapp/OpenThai2.1-OCR-Text-20261118/resolve/main/runtime/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "runtime/line_engine.py",
+          "url": "https://huggingface.co/iapp/OpenThai2.1-OCR-Text-20261118/resolve/main/runtime/line_engine.py",
+          "sha256": "6bbd83c590e66445a6844f69ed3029be98e3be0fd1fcc01e2147ace28748d54a"
+        },
+        {
+          "path": "runtime/thai_norm.py",
+          "url": "https://huggingface.co/iapp/OpenThai2.1-OCR-Text-20261118/resolve/main/runtime/thai_norm.py",
+          "sha256": "53a03ac139fb0de3e7aec0f5b8ab69b0b519fb5e636f7c1de09cb357b023344a"
+        },
+        {
+          "path": "NOTICE",
+          "url": "https://huggingface.co/iapp/OpenThai2.1-OCR-Text-20261118/resolve/main/NOTICE",
+          "sha256": "4c0e4f27877836de51e29aec3918b6c743c3028cd4163b6661fd540336db32b3"
+        }
+      ],
+      "command": [
+        "{uv}",
+        "run",
+        "--no-project",
+        "--python",
+        "3.12",
+        "--with",
+        "numpy>=2,<3",
+        "--with",
+        "opencv-python-headless>=4.8",
+        "--with",
+        "pyclipper>=1.3",
+        "--with",
+        "onnxruntime>=1.17",
+        "--with",
+        "pypdfium2>=4",
+        "--with",
+        "pillow",
+        "{dir}/ocr_run.py",
+        "{dir}",
+        "{file}"
+      ]
+    }
+  ]
+}
