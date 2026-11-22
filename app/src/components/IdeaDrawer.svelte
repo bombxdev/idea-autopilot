@@ -139,9 +139,28 @@
     if (lim) return `บัญชี ${pinnedAcct} ติดลิมิต — รอถึง ${clock(lim.until)} (${lim.why})`;
     const d = (pinnedAcct && st.accounts?.find((a) => a.id === pinnedAcct)?.decision) || st.decision;
     if (!d) return "";
+    // the idea is tied to one account and that account may not work now, while others may: say so and how to move it
+    if (pinnedAcct && !d.allow && st.decision?.allow)
+      return `ไอเดียนี้ผูกกับบัญชี ${pinnedAcct} ซึ่งตอนนี้บอทใช้ไม่ได้ (${d.reason}) — บัญชีอื่นยังว่าง ถ้าอยากให้ทำต่อเลย เปลี่ยน “AI สำหรับไอเดียนี้” เป็นบัญชีอื่นหรืออัตโนมัติ`;
+    // the bot does one idea at a time: say which one holds it, so a bar that does not move is not read as stuck
+    const cur = st.current;
+    if (d.allow && cur && cur.idea_id !== id) {
+      const left = cur.deadline ? Math.max(1, Math.ceil((cur.deadline - Date.now() / 1000) / 60)) : 0;
+      return left ? `บอทกำลังทำ #${cur.idea_id} อยู่ (ทำได้ทีละไอเดีย) — ไอเดียนี้รอคิว ขั้นนั้นจบภายใน ${left} นาที` : `บอทกำลังทำ #${cur.idea_id} อยู่ (ทำได้ทีละไอเดีย) — ไอเดียนี้รอคิว`;
+    }
     return d.allow ? "บอทจะหยิบงานขั้นถัดไปของไอเดียนี้ตามลำดับคิว" : `บอทรอ: ${d.reason}`;
   });
   const RESULT = { ok: "สำเร็จ", error: "ไม่สำเร็จ", timeout: "หมดเวลา", cancelled: "ถูกยกเลิก", rate_limited: "ติดลิมิต" };
+  // jump the queue: this idea goes next, the running step is not cut off
+  async function nextUp() {
+    try {
+      await api.action(id, "run_now");
+      toast("ไอเดียนี้จะเริ่มต่อจากงานที่รันอยู่", "ok", 4000);
+      refresh();
+    } catch (e) {
+      toast(String(e), "err");
+    }
+  }
   async function resumeBot() {
     if (chat?.status === "working" && !(await ask("AI ในแชตยังทำงานอยู่ — ปิดแชตแล้วให้บอททำขั้นที่เหลือต่อเลยไหม? (บทสนทนายังเก็บไว้ เปิดคุยต่อได้ทีหลัง)", { ok: "ให้บอททำต่อ" }))) return;
     try {
@@ -271,6 +290,7 @@
           {/if}
           {#if waitText}<div><span class="faint">ตอนนี้:</span> {waitText}</div>{/if}
           {#if held && !store.state?.paused}<div><button class="small primary" onclick={resumeBot}><Icon name="play" /> ให้บอททำขั้นที่เหลือต่อตอนนี้</button></div>{/if}
+          {#if !held && !chatHolds && store.state?.current && store.state.current.idea_id !== id && store.state.force !== id && !store.state.paused && idea.status !== "done"}<div><button class="small" onclick={nextUp}><Icon name="play" /> ทำไอเดียนี้ต่อจากงานที่รันอยู่</button></div>{/if}
         </div>
       {/if}
       <AttachList {id} />
@@ -318,7 +338,7 @@
         {/if}
       {:else}
         {@const t = tabs.find((x) => x.key === tab)}
-        {#if t}<Markdown text={t.text} />{:else}
+        {#if t}<Markdown text={t.text} onlink={(h) => api.openReportLink(id, h).catch((e) => toast(String(e), "err"))} />{:else}
           <div class="faint pad">ยังไม่มีเอกสาร — AI จะเขียนรายงานลงที่นี่เมื่อเริ่มทำงาน</div>
         {/if}
       {/if}

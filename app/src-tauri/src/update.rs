@@ -227,7 +227,9 @@ pub async fn apply(app: &AppHandle) -> Result<(), String> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        c.creation_flags(0x0800_0008); // no window, detached from this program
+        // CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP: runs on after this program quits. Not DETACHED_PROCESS:
+        // PowerShell started without a console never ran the script, so the program closed and stayed closed (ISSUE-140)
+        c.creation_flags(0x0800_0200);
     }
     c.spawn().map_err(|e| format!("เริ่มตัวอัปเดตไม่ได้: {e}"))?;
     st.push_log(format!("[update] กำลังอัปเดตเป็น v{} — โปรแกรมจะปิดแล้วเปิดใหม่เอง", r.tag));

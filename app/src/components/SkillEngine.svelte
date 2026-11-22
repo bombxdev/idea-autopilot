@@ -2,8 +2,7 @@
   import Icon from "./Icon.svelte";
   // Status of the SkillSpector tool: installed / version / updates / how many skills it has checked.
   import { onMount } from "svelte";
-  import { listen } from "@tauri-apps/api/event";
-  import { api } from "../lib/api.js";
+  import { api, listen } from "../lib/api.js";
   import { toast } from "../lib/store.svelte.js";
 
   let { onchange = () => {} } = $props();

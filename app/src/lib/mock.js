@@ -41,6 +41,12 @@ for (let n = 0; n < 6; n++) {
   ideas.push({ ...ideas[2], id: 20 + n, slug: `idea-00${20 + n}`, title: `บทสรุปเรื่องที่ ${n + 1}`, summary: "", sort: 20 + n, updated: now - (10 + n) * H });
 }
 
+// the preview shows the version it was built from (package.json), not an old sample number
+const APP_VERSION = typeof __APP_VERSION__ === "string" ? __APP_VERSION__ : "0.0.0";
+const nextVersion = (v) => v.replace(/(\d+)\.(\d+)\.(\d+)/, (_, a, b) => `${a}.${Number(b) + 1}.0`);
+// ?fresh shows the welcome screen until it is finished once in this tab
+const mockOnboarded = () => { try { return sessionStorage.getItem("ia-mock-onboarded") === "1"; } catch { return false; } };
+
 const questions = [
   { id: 1, idea_id: 1, question: "อยากให้เกมเล่นกับเพื่อนแบบไหน?", options: ["ออนไลน์ real-time", "ผลัดกันเล่น (async)", "เล่นคนเดียวกับบอท"], guess: "ผลัดกันเล่น (async)", answer: null, created: now - 900 },
   { id: 2, idea_id: 2, question: "สลิปส่วนใหญ่มาจากไหน?", options: ["LINE", "แคปหน้าจอแอปธนาคาร", "อีเมล"], guess: "แคปหน้าจอแอปธนาคาร", answer: null, created: now - 6 * H },
@@ -156,12 +162,12 @@ const handlers = {
   usage_runs: ({ from, to }) => ({ runs: usageSample.filter((r) => r.started >= from && r.started < to), first: usageSample[0].started }),
   save_export: ({ name }) => `C:/IdeaAutopilot/data/exports/${name}`,
   // open the preview with ?fresh to see the first-run setup screen
-  get_state: () => ({ ...state, onboarded: !/fresh/.test(location.search), account_problems: location.search.includes("connfail") ? [{ id: "claude02", title: "Claude บ้าน", kind: "auth", cause: "การล็อกอินของบัญชีนี้หลุดหรือหมดอายุ", action: "login" }] : [] }),
+  get_state: () => ({ ...state, onboarded: !/fresh/.test(location.search) || mockOnboarded(), account_problems: location.search.includes("connfail") ? [{ id: "claude02", title: "Claude บ้าน", kind: "auth", cause: "การล็อกอินของบัญชีนี้หลุดหรือหมดอายุ", action: "login" }] : [] }),
   // ?noai: nothing installed (first-run setup without an AI, ISSUE-105)
   get_providers: () => /noai/.test(location.search)
     ? { ...state.providers, active: "none", active_label: "ยังไม่มี AI", claude: false, list: state.providers.list.map((p) => ({ ...p, installed: false, active: false })) }
     : state.providers,
-  get_about: () => ({ version: "0.2.0", seen: "0.2.0", changelog: "# ประวัติเวอร์ชัน\n\n## v0.2.0 — 2026-10-30\n\n**ใหม่**\n- ตัวอย่าง\n\n## v0.1.0 — 2026-10-09\n\nรุ่นแรก\n" }),
+  get_about: () => ({ version: APP_VERSION, seen: APP_VERSION, changelog: "# ประวัติเวอร์ชัน\n\n## v0.2.0 — 2026-10-30\n\n**ใหม่**\n- ตัวอย่าง\n\n## v0.1.0 — 2026-10-09\n\nรุ่นแรก\n" }),
   skills_list: () => ({
     max_offered: 8,
     families: { "web-research": ["Web research (thorough)", "Web research (quick)"] },
@@ -255,7 +261,7 @@ const handlers = {
     const n = Math.floor(Date.now() / 1000); const mk = (f, w) => Array.from({ length: 30 }, (_, i) => [n - (30 - i) * 4 * 3600, Math.min(100, f + ((i * 7) % 30)), Math.min(100, w + i)]);
     return { claude01: mk(10, 30), codex01: mk(5, 20), deepseek01: mk(1, 2) };
   },
-  update_status: () => ({ current: "0.3.0", latest: "0.4.0", available: location.search.includes("update"), notes: "- new things", page: "https://example.test", mode: "installer", can_apply: true, no_digest: false, auto: false, checked: Math.floor(Date.now() / 1000), error: "" }),
+  update_status: () => ({ current: APP_VERSION, latest: nextVersion(APP_VERSION), available: location.search.includes("update"), notes: "- new things", page: "https://example.test", mode: "installer", can_apply: true, no_digest: false, auto: false, checked: Math.floor(Date.now() / 1000), error: "" }),
   skills_slash_list: () => [
     { slug: "web-research", name: "Web research", description: "Research the web with sources" },
     { slug: "report-writer", name: "Report writer", description: "Write a short report" },
@@ -393,7 +399,14 @@ function teamsMock(cmd, args) {
   ] };
   if (cmd === "team_save") { const t = { ...args.team, slug: args.team.slug || `team-${demoTeams.length + 1}` }; const i = demoTeams.findIndex((x) => x.slug === t.slug); if (i >= 0) demoTeams[i] = t; else demoTeams.push(t); return teamJson(t); }
   if (cmd === "team_delete") { demoTeams.splice(demoTeams.findIndex((x) => x.slug === args.slug), 1); return null; }
-  if (cmd === "team_preset") { const t = { slug: `${args.key}-2`, name: args.key === "marketing" ? "ทีมการตลาด/คอนเทนต์" : "ทีมค้นคว้า/ตัดสินใจ", emoji: "🔎", description: "", use_for: "", members: [], helpers: 3, lead: "" }; demoTeams.push(t); return teamJson(t); }
+  if (cmd === "team_preset") {
+    // the preset's own name and starter members, like teams.rs (members are added to the role list too)
+    const p = teamsMock("teams_list").presets.find((x) => x.key === args.key) ?? { name: args.key, emoji: "👥", description: "", starter: [] };
+    for (const m of p.starter ?? []) if (!demoRoles.some((r) => r.slug === m.slug)) demoRoles.push({ ...structuredClone(demoRoles[0]), slug: m.slug, name: m.name, emoji: m.emoji, title: m.title });
+    const t = { slug: `${args.key}-${demoTeams.length + 1}`, name: p.name, emoji: p.emoji, description: p.description, use_for: p.use_for ?? "", members: (p.starter ?? []).map((m) => m.slug), helpers: 3, lead: "" };
+    demoTeams.push(t);
+    return teamJson(t);
+  }
   if (cmd === "team_suggest") return /เว็บ|web|แอป|app|dashboard/i.test(args.text) ? "web-app" : null;
   if (cmd === "team_export") { const t = demoTeams.find((x) => x.slug === args.slug); return { text: `---\nname: "${t.name}"\nmembers: ${t.members.join(", ")}\nhelpers: ${t.helpers}\n---\n` + t.members.map((m) => `\n<!-- role: ${m} -->\n` + roleRender(demoRoles.find((r) => r.slug === m), args.withPersona)).join(""), warnings: [], path: args.save ? `C:/IdeaAutopilot/data/exports/${t.slug}.team.md` : null }; }
   if (cmd === "team_check_text") return { team: { name: "ทีมเพื่อน", emoji: "🤝", description: "จากไฟล์", use_for: "", helpers: 2 }, roles: demoRoles.slice(0, 2), verdict: "clean", findings: [], needs_accept: false };
@@ -426,6 +439,11 @@ export async function mockInvoke(cmd, args = {}) {
   const h = handlers[cmd];
   if (h) return DEMO_LANG === "en" ? toEnglish(h(args)) : structuredClone(h(args));
   if (cmd === "session_cut_in") { const x = state.sessions.find((s) => s.idea_id === args.id); if (x) { x.busy_since = 0; x.waiting = 0; x.status = "idle"; x.feed.push({ ts: Math.floor(Date.now() / 1000), text: "✋ กำลังหยุดรอบที่ทำอยู่ตามที่คุณสั่ง…" }); } return null; }
+  if (cmd === "set_full_mode") { state.full_mode = !!args.on; state.decision = { ...state.decision, code: args.on ? "full" : "off", reason: args.on ? "โหมดใช้เต็มที่ — ใช้โควต้าได้จนหมด (ปิดได้ทุกเมื่อ)" : "นอกเวลางาน — บอททำงานได้" }; return null; }
+  if (cmd === "stop_current") { state.current = null; return null; }
+  if (cmd === "set_paused") { state.paused = !!args.paused; if (args.paused) state.current = null; return null; }
+  if (cmd === "answer_question") { const q = questions.find((x) => x.id === args.id); if (q) q.answer = args.answer; return null; }
+  if (cmd === "set_setting" && args.key === "onboarded") { try { sessionStorage.setItem("ia-mock-onboarded", "1"); } catch {} return null; }
   if (cmd === "pause_all") {
     state.shelf = { ts: now, by_owner: true, was_paused: false, run: state.current ? [state.current.idea_id, state.current.title, state.current.stage] : null,
       sessions: state.sessions.map((x) => ({ id: x.idea_id, title: x.name.split(": ")[1] ?? x.name, working: x.status === "working", ai: {} })) };

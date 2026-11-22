@@ -1024,7 +1024,14 @@ pub(crate) async fn gh_get(url: &str) -> Result<Value, String> {
     let resp = http()?.get(url).header("Accept", "application/vnd.github+json").send().await.map_err(|x| format!("ต่อ GitHub ไม่ได้: {x}"))?;
     let s = resp.status();
     if s.as_u16() == 403 || s.as_u16() == 429 {
-        return Err("GitHub จำกัดจำนวนครั้งที่ค้นหาต่อชั่วโมง (ไม่ต้องใส่รหัสอะไร) — รอสักครู่แล้วลองใหม่".into());
+        // a search is limited per minute, other reads per hour: say how long the wait really is
+        let reset = resp.headers().get("x-ratelimit-reset").and_then(|h| h.to_str().ok()).and_then(|x| x.parse::<i64>().ok());
+        let wait = reset.map(|r| r - chrono::Utc::now().timestamp()).filter(|w| *w > 0);
+        return Err(match wait {
+            Some(w) if w < 90 => format!("GitHub ให้ค้นได้ไม่กี่ครั้งต่อนาที (ไม่ต้องใส่รหัสอะไร) — รออีก {w} วินาทีแล้วลองใหม่"),
+            Some(w) => format!("GitHub จำกัดจำนวนครั้งต่อชั่วโมง (ไม่ต้องใส่รหัสอะไร) — รออีกประมาณ {} นาทีแล้วลองใหม่", (w + 59) / 60),
+            None => "GitHub จำกัดจำนวนครั้งที่ค้นหาต่อชั่วโมง (ไม่ต้องใส่รหัสอะไร) — รอสักครู่แล้วลองใหม่".into(),
+        });
     }
     if s.is_redirection() {
         return Err("repo นี้ถูกย้ายหรือเปลี่ยนชื่อ — ใช้ชื่อใหม่".into());
@@ -1107,24 +1114,39 @@ pub fn category_of(text: &str) -> &'static str {
 /// popular = most stars · new = made in the last 90 days, best first · trending = stars per day since it was made
 pub async fn shop_search(query: &str, sort: &str) -> Result<Value, String> {
     let q = query.trim();
+    let key = format!("{}|{sort}", q.to_lowercase());
+    if let Some(v) = search_cache_get(&key) {
+        return Ok(v);
+    }
     let since = |days: i64| (chrono::Utc::now() - chrono::Duration::days(days)).format("%Y-%m-%d").to_string();
     let age_filter = match sort {
         "new" => format!(" created:>{}", since(90)),
         "trending" => format!(" created:>{}", since(365)),
         _ => String::new(),
     };
+    let ql = q.to_lowercase();
     let mut hits: BTreeMap<String, Value> = BTreeMap::new();
-    // well-known collections are always offered: their skills are found by browsing, whatever the search words
+    // well-known collections are offered with no search words, or when the words match them
     for (name, desc) in CURATED {
         let owner = name.split('/').next().unwrap_or("");
-        if sort == "popular" {
+        if sort == "popular" && (ql.is_empty() || format!("{name} {desc}").to_lowercase().contains(&ql)) {
             hits.insert(name.to_string(), json!({ "repo": name, "description": desc, "stars": null, "license": null, "trust": trust_of(owner), "listed": "curated", "category": category_of(&format!("{name} {desc}")) }));
         }
     }
+    // repos tagged as skill collections; with search words, also any repo whose name/description/topics match —
+    // many popular skills (one SKILL.md inside an app's repo) carry neither tag. Browsing a repo shows whether it
+    // really holds SKILL.md files.
+    let mut searches: Vec<(String, &str, u32)> = ["agent-skills", "claude-skills"]
+        .iter()
+        .map(|t| (if q.is_empty() { format!("topic:{t}{age_filter}") } else { format!("{q} topic:{t}{age_filter}") }, "github-search", 30))
+        .collect();
+    if !q.is_empty() {
+        searches.insert(0, (format!("{q} in:name,description,topics{age_filter}"), "keyword", 15));
+    }
     let mut last_err = None;
-    for topic in ["agent-skills", "claude-skills"] {
-        let search = if q.is_empty() { format!("topic:{topic}{age_filter}") } else { format!("{q} topic:{topic}{age_filter}") };
-        let url = reqwest::Url::parse_with_params("https://api.github.com/search/repositories", &[("q", search.as_str()), ("sort", "stars"), ("per_page", "30")]).map_err(err)?;
+    for (search, listed, per_page) in searches {
+        let per = per_page.to_string();
+        let url = reqwest::Url::parse_with_params("https://api.github.com/search/repositories", &[("q", search.as_str()), ("sort", "stars"), ("per_page", per.as_str())]).map_err(err)?;
         match gh_get(url.as_str()).await {
             Ok(v) => {
                 for it in v["items"].as_array().cloned().unwrap_or_default() {
@@ -1143,7 +1165,7 @@ pub async fn shop_search(query: &str, sort: &str) -> Result<Value, String> {
                             "category": cat, "created": created, "stars_per_day": (per_day * 10.0).round() / 10.0,
                             "repo": full, "description": it["description"], "stars": it["stargazers_count"],
                             "license": it["license"]["spdx_id"], "pushed": it["pushed_at"], "archived": it["archived"], "fork": it["fork"],
-                            "trust": trust_of(owner), "listed": "github-search",
+                            "trust": trust_of(owner), "listed": listed,
                         })
                     });
                 }
@@ -1157,12 +1179,51 @@ pub async fn shop_search(query: &str, sort: &str) -> Result<Value, String> {
         "trending" => list.sort_by(|a, b| b["stars_per_day"].as_f64().unwrap_or(0.0).partial_cmp(&a["stars_per_day"].as_f64().unwrap_or(0.0)).unwrap_or(std::cmp::Ordering::Equal)),
         _ => list.sort_by_key(|v| (v["trust"] != "known", std::cmp::Reverse(v["stars"].as_i64().unwrap_or(0)))),
     }
+    // the repo named like the search words comes first, whatever the order (a stable sort keeps the rest's order)
+    if !ql.is_empty() {
+        list.sort_by_key(|v| name_match_rank(v["repo"].as_str().unwrap_or(""), &ql));
+    }
     if list.is_empty() {
         if let Some(x) = last_err {
             return Err(x);
         }
     }
-    Ok(json!({ "repos": list, "note": last_err }))
+    let out = json!({ "repos": list, "note": last_err });
+    if last_err.is_none() {
+        search_cache_put(key, out.clone());
+    }
+    Ok(out)
+}
+
+/// 0 = the repo's name is the search words, 1 = contains them, 2 = otherwise
+fn name_match_rank(full: &str, ql: &str) -> u8 {
+    let name = full.rsplit('/').next().unwrap_or("").to_lowercase();
+    if name == ql {
+        0
+    } else if name.contains(ql) {
+        1
+    } else {
+        2
+    }
+}
+
+/// GitHub lets a machine without a login search only 10 times a minute, and one shop search spends 2–3 of them:
+/// the same search within 10 minutes is answered from memory.
+static SEARCH_CACHE: std::sync::Mutex<Vec<(String, std::time::Instant, Value)>> = std::sync::Mutex::new(Vec::new());
+
+fn search_cache_get(key: &str) -> Option<Value> {
+    let c = SEARCH_CACHE.lock().ok()?;
+    c.iter().find(|(k, t, _)| k == key && t.elapsed().as_secs() < 600).map(|(_, _, v)| v.clone())
+}
+
+fn search_cache_put(key: String, v: Value) {
+    if let Ok(mut c) = SEARCH_CACHE.lock() {
+        c.retain(|(k, t, _)| *k != key && t.elapsed().as_secs() < 600);
+        c.push((key, std::time::Instant::now(), v));
+        if c.len() > 40 {
+            c.remove(0);
+        }
+    }
 }
 
 pub async fn shop_browse(repo: &str) -> Result<Value, String> {
@@ -1352,6 +1413,13 @@ pub async fn skills_shop_install(app: AppHandle, repo: String, commit: String, p
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exact_name_ranks_first() {
+        assert_eq!(name_match_rank("vincentsch/explainroo", "explainroo"), 0);
+        assert_eq!(name_match_rank("jastfan/explainroo-ui", "explainroo"), 1);
+        assert_eq!(name_match_rank("anthropics/skills", "explainroo"), 2);
+    }
 
     #[test]
     fn categories_from_words() {
@@ -1579,6 +1647,15 @@ mod tests {
         std::fs::write(idea.join("skills/mine.txt"), "keep").unwrap();
         materialize(&root, &idea, &[]);
         assert!(idea.join("skills/mine.txt").exists());
+    }
+
+    /// A popular skill without the agent-skills/claude-skills tags is found by name, first in the list.
+    #[tokio::test]
+    #[ignore]
+    async fn shop_live_finds_untagged_skill_by_name() {
+        let found = shop_search("explainroo", "popular").await.unwrap();
+        assert_eq!(found["repos"][0]["repo"], "vincentsch/explainroo", "{found}");
+        assert!(shop_search("explainroo", "popular").await.is_ok()); // second time: from memory
     }
 
     /// Talks to the real GitHub: `cargo test --lib shop_live -- --ignored --nocapture`

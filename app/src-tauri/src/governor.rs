@@ -20,6 +20,9 @@ pub struct Inputs<'a> {
     pub user_active: bool,
     pub paused: bool,
     pub turbo: bool,
+    /// full mode: the owner hands the bot the whole quota until they switch it off — no reserve for work, no daily
+    /// share, no work-hour or 5-hour ceiling of its own; only a real usage limit (limits.rs) stops it
+    pub full: bool,
     pub reserve_per_hour: f64,
     /// weekly % the bot used since the current bot day started (08:00)
     pub bot_used_today: f64,
@@ -43,6 +46,7 @@ pub struct Decision {
     pub five_cap: f64,
     pub sprint: bool,
     pub turbo: bool,
+    pub full: bool,
     pub paused: bool,
     pub hours_to_reset: f64,
     pub next_work_start: Option<i64>,
@@ -57,7 +61,8 @@ pub fn decide(i: &Inputs) -> Decision {
     let mut d = Decision {
         slot: format!("{:?}", slot).to_lowercase(),
         paused: i.paused,
-        turbo: i.turbo,
+        turbo: i.turbo || i.full,
+        full: i.full,
         bot_used_today: i.bot_used_today,
         ..Default::default()
     };
@@ -80,8 +85,9 @@ pub fn decide(i: &Inputs) -> Decision {
     let next_work = i.cal.next_work_start(i.now);
     d.next_work_start = next_work.map(|t| t.timestamp());
 
-    d.reserve = if i.turbo { 0.0 } else { i.cal.work_hours_between(i.now, week_reset) * i.reserve_per_hour };
-    d.bot_budget = 100.0 - s.week_pct - d.reserve - SAFETY_PCT;
+    let turbo = i.turbo || i.full;
+    d.reserve = if turbo { 0.0 } else { i.cal.work_hours_between(i.now, week_reset) * i.reserve_per_hour };
+    d.bot_budget = 100.0 - s.week_pct - d.reserve - if i.full { 0.0 } else { SAFETY_PCT };
     d.sprint = d.hours_to_reset <= 12.0 && slot != Slot::Work;
 
     // spread the budget over the remaining bot days
@@ -120,14 +126,14 @@ pub fn decide(i: &Inputs) -> Decision {
             d.five_cap = d.five_cap.min(60.0);
         }
     }
-    if i.turbo {
-        d.five_cap = 95.0;
+    if turbo {
+        d.five_cap = if i.full { 100.0 } else { 95.0 };
     }
 
     if i.paused {
         return deny(d, "paused", "หยุดชั่วคราว (Pause)");
     }
-    if !i.turbo && slot != Slot::Off && i.user_active {
+    if !turbo && slot != Slot::Off && i.user_active {
         return deny(d, "user_active", "คุณกำลังใช้ Claude ทำงานอยู่ — บอทรอ");
     }
     if s.five_pct >= d.five_cap {
@@ -137,12 +143,14 @@ pub fn decide(i: &Inputs) -> Decision {
     if d.bot_budget <= 0.0 {
         return deny(d, "no_budget", "โควต้าที่เหลือกันไว้ให้งานของคุณทั้งหมดแล้ว");
     }
-    if !i.turbo && !d.sprint && i.bot_used_today >= d.today_allowance {
+    if !turbo && !d.sprint && i.bot_used_today >= d.today_allowance {
         let why = format!("วันนี้บอทใช้ครบโควต้ารายวัน {:.1}% แล้ว", d.today_allowance);
         return deny(d, "daily_cap", &why);
     }
     d.allow = true;
-    d.code = if i.turbo {
+    d.code = if i.full {
+        "full"
+    } else if i.turbo {
         "turbo"
     } else if d.sprint {
         "sprint"
@@ -152,7 +160,9 @@ pub fn decide(i: &Inputs) -> Decision {
         "work"
     }
     .into();
-    d.reason = if i.turbo {
+    d.reason = if i.full {
+        "โหมดใช้เต็มที่ — ใช้โควต้าได้จนหมด (ปิดได้ทุกเมื่อ)".into()
+    } else if i.turbo {
         "Turbo — ใช้เต็มที่ตอนนี้".into()
     } else if d.sprint {
         "ช่วงโค้งสุดท้ายก่อนรีเซ็ต — ใช้ที่เหลือให้หมด".into()
@@ -170,7 +180,8 @@ pub fn should_kill(d: &Decision) -> Option<&'static str> {
     if d.paused {
         return Some("ผู้ใช้กด Pause");
     }
-    if d.five_pct >= 98.0 {
+    // full mode runs until the AI itself reports its limit (then limits.rs holds the account)
+    if d.five_pct >= 98.0 && !d.full {
         return Some("โควต้า 5 ชม. ใกล้หมด");
     }
     if d.slot == "work" && !d.turbo && d.five_pct >= 60.0 {
@@ -225,10 +236,33 @@ mod tests {
             user_active: false,
             paused: false,
             turbo: false,
+            full: false,
             reserve_per_hour: DEFAULT_RESERVE_PER_WORK_HOUR,
             bot_used_today: 0.0,
             cal,
         }
+    }
+
+    #[test]
+    fn full_mode_uses_everything_even_in_work_hours() {
+        let cal = Calendar::new(crate::calendar::Schedule::legacy(), &[]);
+        let now = at(12, 10); // a weekday, 10:00 — work hours
+        let s = snap(now, 97.5, 99.0, None);
+        let mut i = inputs(now, &s, &cal);
+        i.user_active = true;
+        i.bot_used_today = 50.0;
+        assert!(!decide(&i).allow);
+        i.full = true;
+        let d = decide(&i);
+        assert!(d.allow, "{}", d.reason);
+        assert_eq!(d.code, "full");
+        assert_eq!(d.reserve, 0.0);
+        assert!(should_kill(&d).is_none());
+        // only an empty week stops it
+        let s = snap(now, 100.0, 99.0, None);
+        let mut i = inputs(now, &s, &cal);
+        i.full = true;
+        assert!(!decide(&i).allow);
     }
 
     #[test]

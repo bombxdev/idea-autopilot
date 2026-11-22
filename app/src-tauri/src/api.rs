@@ -66,6 +66,21 @@ pub fn start(app: AppHandle) {
                     });
                     continue;
                 }
+                if cmd == "webshot" {
+                    let ws = app.state::<AppState>().ws.clone();
+                    let args = v.get("args").cloned().unwrap_or(Value::Null);
+                    std::thread::spawn(move || {
+                        let (code, body) = match crate::webshot::shot(&ws, &args) {
+                            Ok(r) => (200, json!({"ok": r})),
+                            Err(e) => (400, json!({"error": e})),
+                        };
+                        let resp = tiny_http::Response::from_string(body.to_string())
+                            .with_status_code(code)
+                            .with_header("Content-Type: application/json; charset=utf-8".parse::<tiny_http::Header>().unwrap());
+                        let _ = req.respond(resp);
+                    });
+                    continue;
+                }
                 match dispatch(&app, cmd, v.get("args").cloned().unwrap_or(Value::Null)) {
                     Ok(r) => (200, json!({"ok": r})),
                     Err(e) => (400, json!({"error": e})),
@@ -155,6 +170,7 @@ pub fn dispatch(app: &AppHandle, cmd: &str, a: Value) -> Result<Value, String> {
         "pause_all" => commands::pause_all(app.clone(), st()),
         "resume_all" => commands::resume_all(app.clone(), st()).map(|n| json!(n)),
         "shelf_dismiss" => unit(commands::shelf_dismiss(app.clone(), st())),
+        "full" => unit(commands::set_full_mode(st(), a.get("on").and_then(Value::as_bool).unwrap_or(true))),
         "turbo" => unit(commands::set_turbo(st(), a.get("hours").and_then(Value::as_f64).unwrap_or(2.0))),
         "stop" => unit(commands::stop_current(st())),
         "refresh" => unit(commands::refresh_usage(st())),

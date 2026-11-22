@@ -156,6 +156,26 @@ pub fn output_within(c: &mut std::process::Command, secs: u64) -> std::io::Resul
     Ok(std::process::Output { status, stdout: t1.join().unwrap_or_default(), stderr: t2.join().unwrap_or_default() })
 }
 
+/// Windows: a program the bot starts that crashes (a headless Edge refused by an AI's sandbox, a tool hitting a
+/// breakpoint) must just exit with an error code, not show "Application Error — OK / Cancel" on the owner's screen
+/// and hang there until someone clicks. The error mode is inherited by every process the app starts.
+#[cfg(windows)]
+pub fn quiet_crashes() {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn SetErrorMode(mode: u32) -> u32;
+    }
+    const SEM_FAILCRITICALERRORS: u32 = 0x0001;
+    const SEM_NOGPFAULTERRORBOX: u32 = 0x0002;
+    const SEM_NOOPENFILEERRORBOX: u32 = 0x8000;
+    unsafe {
+        SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
+    }
+}
+
+#[cfg(not(windows))]
+pub fn quiet_crashes() {}
+
 #[cfg(windows)]
 pub fn kill_tree(pid: u32) {
     let mut c = std::process::Command::new("taskkill");
@@ -489,6 +509,32 @@ pub async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A child that hits a breakpoint (like the crashed headless Edge) ends on its own once the error mode is set.
+    /// Shows a crash dialog if the fix does not work, so it only runs by hand: `cargo test --lib crash_child -- --ignored`
+    #[cfg(windows)]
+    #[test]
+    #[ignore]
+    fn crash_child_exits_without_a_dialog() {
+        if std::env::var_os("IA_CRASH_ME").is_some() {
+            unsafe { std::arch::asm!("int3") };
+        }
+        quiet_crashes();
+        let exe = std::env::current_exe().unwrap();
+        let mut child = std::process::Command::new(exe).args(["--ignored", "--exact", "runner::tests::crash_child_exits_without_a_dialog"]).env("IA_CRASH_ME", "1").spawn().unwrap();
+        let t = std::time::Instant::now();
+        loop {
+            if let Some(st) = child.try_wait().unwrap() {
+                assert!(!st.success());
+                break;
+            }
+            if t.elapsed().as_secs() > 20 {
+                let _ = child.kill();
+                panic!("the crashed child waited (a dialog was shown)");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+    }
 
     #[test]
     fn a_command_that_hangs_is_stopped_in_time() {

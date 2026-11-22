@@ -16,6 +16,8 @@
     { icon: "play", label: "ทำต่อจากที่พักไว้", run: () => api.resumeAll() },
     { icon: "bolt", label: "Turbo 2 ชั่วโมง", run: () => api.setTurbo(2) },
     { icon: "bolt", label: "Turbo ทั้งคืน (8 ชม.)", run: () => api.setTurbo(8) },
+    { icon: "bolt", label: "เปิดโหมดใช้เต็มที่ (ค้างไว้จนกว่าจะปิด)", run: () => api.setFullMode(true) },
+    { icon: "bolt", label: "ปิดโหมดใช้เต็มที่", run: () => api.setFullMode(false) },
     { icon: "refresh", label: "อ่านโควต้าใหม่", run: () => api.refreshUsage() },
     { icon: "sun", label: "ไปหน้าเช้านี้", run: () => (store.page = "morning") },
     { icon: "board", label: "ไปบอร์ด", run: () => (store.page = "board") },

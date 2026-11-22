@@ -21,6 +21,8 @@ mod governor;
 mod idea_ai;
 mod lang;
 mod langs;
+mod lifeline;
+mod webshot;
 mod modelname;
 mod economics;
 mod power;
@@ -287,6 +289,15 @@ fn keep_awake_thread(app: AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // the watcher copy (lifeline.rs): waits for the app to end and opens it again if it did not quit properly
+    {
+        let args: Vec<String> = std::env::args().collect();
+        if let Some(i) = args.iter().position(|a| a == "--watchdog") {
+            lifeline::watch(&args[i + 1..]);
+            return;
+        }
+    }
+    runner::quiet_crashes();
     // every AI program the app starts trusts the certificates Windows trusts: on a network that inspects encrypted
     // traffic (many offices) Node-based CLIs otherwise fail with a certificate error. Ignored by versions that do not
     // know it; never overrides the owner's own setting (ISSUE-099).
@@ -324,6 +335,11 @@ pub fn run() {
             std::fs::create_dir_all(root.join("data"))?;
             video::set_root(root.clone());
             let conn = db::open(&root.join("data").join("quota.db"))?;
+            // how the last copy ended (killed or crashed shows in the history), then a watcher for this one (ISSUE-144)
+            if let Some(msg) = lifeline::started(&root) {
+                db::log_event(&conn, "error", None, &msg);
+            }
+            lifeline::spawn_watchdog(&root);
             db::recover_runs(&conn)?;
             // chats left open by a PC switched off while working: offer to carry on (ISSUE-067)
             pausing::on_start(&conn);
@@ -357,6 +373,7 @@ pub fn run() {
             register_toast_identity();
             workspace::set_language(&db::get_setting(&conn, "language").unwrap_or_default());
             providers::set_codex_approval(&db::get_setting(&conn, "codex_approval").unwrap_or_default());
+            webshot::set_mode(&db::get_setting(&conn, "web_check").unwrap_or_default());
             lang::set_ui(&db::get_setting(&conn, "language").unwrap_or_default());
             let ws = workspace::ensure(&root)?;
             let paused = db::get_setting(&conn, "paused").as_deref() == Some("1");
@@ -454,6 +471,7 @@ pub fn run() {
             commands::reorder,
             commands::set_paused,
             commands::set_turbo,
+            commands::set_full_mode,
             commands::stop_current,
             commands::refresh_usage,
             commands::get_reports,
@@ -469,6 +487,7 @@ pub fn run() {
             commands::set_setting,
             commands::library,
             commands::open_folder,
+            commands::open_report_link,
             commands::run_prototype,
             commands::hide_capture,
             commands::export_brain,
@@ -586,6 +605,10 @@ pub fn run() {
         .expect("error while building Idea Autopilot")
         .run(|app, ev| {
             if let tauri::RunEvent::Exit = ev {
+                // a proper quit: the watcher (lifeline.rs) leaves it closed
+                if let Some(st) = app.try_state::<AppState>() {
+                    lifeline::note(&st.root, "exit");
+                }
                 // don't leave remote sessions running without the app that manages them
                 // (still written down as open: the next start offers to carry on with them)
                 pausing::EXITING.store(true, std::sync::atomic::Ordering::Relaxed);

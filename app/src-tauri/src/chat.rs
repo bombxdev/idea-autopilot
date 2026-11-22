@@ -23,7 +23,7 @@ const HELP: &str = "สั่ง Idea Autopilot จาก Telegram
 /go /deeper /alt /stop /now <id> [ข้อความ]
 /say <id> <คำสั่ง>
 /ask <id> <คำสั่ง>  ให้ AI แก้/ทำต่อทันที (session Idea#id)
-/pause  /resume  /turbo [ชม.]
+/pause  /resume  /turbo [ชม.]  /full [off]
 /digest  สรุปล่าสุด
 /log [วัน]  บอททำอะไรไปบ้าง";
 
@@ -300,6 +300,10 @@ fn on_text(app: &AppHandle, text: &str, reply_to: Option<i64>) -> (String, Optio
         "turbo" => {
             let h = a1.and_then(|x| x.parse::<f64>().ok()).unwrap_or(2.0);
             done(dispatch(app, "turbo", json!({ "hours": h })), &format!("Turbo {h} ชม. ✓")).map(|m| (m, None, None))
+        }
+        "full" => {
+            let on = !matches!(a1, Some("off" | "0" | "ปิด"));
+            done(dispatch(app, "full", json!({ "on": on })), if on { "เปิดโหมดใช้เต็มที่ 🔥 — ใช้โควต้าได้จนหมด · ปิดด้วย /full off" } else { "ปิดโหมดใช้เต็มที่ — กลับไปแบ่งโควต้าตามปกติ" }).map(|m| (m, None, None))
         }
         "digest" => dispatch(app, "digest", Value::Null).map(|v| (fmt_digest(&v), None, None)),
         "log" => dispatch(app, "activity", json!({ "days": num.unwrap_or(1) })).map(|v| (fmt_log(&v), None, None)),

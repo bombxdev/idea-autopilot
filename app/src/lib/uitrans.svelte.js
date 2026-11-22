@@ -11,6 +11,7 @@ import source from "./i18n/source.json";
 import en from "./i18n/en.json";
 import { api } from "./api.js";
 import { ui } from "./uilang.svelte.js";
+import { EMOJI } from "./icons.js";
 
 const ATTRS = ["title", "placeholder", "aria-label", "alt"];
 const WEEKDAYS = ["พฤ.", "อา.", "จ.", "อ.", "พ.", "ศ.", "ส."];
@@ -85,8 +86,14 @@ function translate(text) {
     const head = t.slice(0, t.length - k.length);
     if (/[\s)]$/.test(head) || /^[—·(]/.test(k)) return (translate(head) ?? head.trim()) + " " + v;
   }
+  // icon emoji inside a sentence (“กด ▶ ทำต่อ”): the templates keep the words only (extract-i18n.py strips the
+  // icons IconText draws), so a tooltip that still has them is looked up without them
+  const bare = norm(t.replace(ICON_RE, ""));
+  if (bare && bare !== t) return translate(bare);
   return null;
 }
+
+const ICON_RE = new RegExp("(" + Object.keys(EMOJI).sort((a, b) => b.length - a.length).map(esc).join("|") + ")️?", "gu");
 
 /** For code that builds a message by itself (confirm dialogs). */
 export function tr(text) {

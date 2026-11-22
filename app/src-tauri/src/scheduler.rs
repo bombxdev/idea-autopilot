@@ -180,6 +180,7 @@ async fn tick(app: &AppHandle) -> anyhow::Result<()> {
             }
             (rt.snap.clone(), rt.paused, rt.turbo_until > ts, if account_shared { rt.reserve_per_hour } else { 0.0 }, rt.current.is_some(), std::mem::take(&mut rt.snap_pending))
         };
+        let full = full_mode(&st);
         // recalc with NO lock held
         let inp = Inputs {
             now,
@@ -187,6 +188,7 @@ async fn tick(app: &AppHandle) -> anyhow::Result<()> {
             user_active,
             paused,
             turbo,
+            full,
             reserve_per_hour,
             bot_used_today,
             cal: &cal,
@@ -211,7 +213,7 @@ async fn tick(app: &AppHandle) -> anyhow::Result<()> {
         {
             let mut rt = st.rt.lock();
             rt.decision = d.clone();
-            rt.keep_awake = rt.current.is_some() || (d.allow && pending) || rt.turbo_until > ts;
+            rt.keep_awake = rt.current.is_some() || (d.allow && pending) || rt.turbo_until > ts || (full && pending);
         }
         d
     };
@@ -402,6 +404,7 @@ fn select_account(st: &AppState, accts: &[crate::accounts::Account], now: chrono
         let rt = st.rt.lock();
         (rt.paused, rt.turbo_until > now.timestamp(), rt.reserve_per_hour)
     };
+    let full = full_mode(st);
     let mut first_blocked: Option<crate::accounts::Account> = None;
     let mut first_ok: Option<crate::accounts::Account> = None;
     let day_start = cal.bot_day_start(now).timestamp();
@@ -418,6 +421,7 @@ fn select_account(st: &AppState, accts: &[crate::accounts::Account], now: chrono
             user_active: shared && owner_active,
             paused,
             turbo,
+            full,
             reserve_per_hour: if shared { reserve } else { 0.0 },
             bot_used_today,
             cal,
@@ -501,6 +505,11 @@ fn next_pinned_idea(st: &AppState) -> Option<Idea> {
             && !(i.status == "inbox" && now - i.updated < grace)
             && crate::idea_ai::pinned_account(&st.db.lock(), i.id).is_some_and(|a| allowed.contains(&a))
     })
+}
+
+/// Full mode (setting "full_mode" = 1): on until the owner switches it off, kept across restarts.
+pub fn full_mode(st: &AppState) -> bool {
+    db::get_setting(&st.db.lock(), "full_mode").as_deref() == Some("1")
 }
 
 fn next_idea(st: &AppState) -> Option<Idea> {
@@ -1394,6 +1403,7 @@ pub fn state_json(st: &AppState) -> serde_json::Value {
     let onboarded = db::get_setting(&st.db.lock(), "onboarded").as_deref() == Some("1");
     let seen_version = db::get_setting(&st.db.lock(), "seen_version");
     let shelf = crate::pausing::get(&st.db.lock());
+    let full = full_mode(st);
     let (power_mode, power_ideas, agents, idea_ai, usable, limits) = {
         let c = st.db.lock();
         (crate::power::mode(&c), crate::power::ideas(&c), crate::agents::list(&c), crate::idea_ai::all_json(&c), crate::accounts::usable(&c), crate::limits::all_json(&c, db::now()))
@@ -1423,6 +1433,7 @@ pub fn state_json(st: &AppState) -> serde_json::Value {
         // paused before switching the PC off (or left open by a PC that went off): offered to carry on
         "shelf": shelf,
         "turbo_until": rt.turbo_until,
+        "full_mode": full,
         "user_active": rt.user_active,
         "reserve_per_hour": rt.reserve_per_hour,
         "reserve_learned": rt.reserve_learned,

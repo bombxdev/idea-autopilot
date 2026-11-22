@@ -58,6 +58,10 @@ pub fn add_idea(st: State<AppState>, text: String, attachments: Option<Vec<Strin
             }
         }
         let c = st.db.lock();
+        if !cfg.team.is_empty() {
+            let lead = crate::teams::find(&st.root, &cfg.team).map(|t| t.lead);
+            team_lead_fill(&c, lead.as_deref(), &mut cfg);
+        }
         crate::idea_ai::set(&c, id, &cfg)?;
         if let Some(s) = skill {
             db::add_directive(&c, id, &format!("เจ้าของสั่งให้ใช้สกิล “{s}” กับไอเดียนี้ (ดู SKILLS.md และ skills/{s}/SKILL.md) แล้วทำตามขั้นตอนของสกิลนั้นเป็นหลัก")).map_err(e)?;
@@ -229,17 +233,23 @@ pub fn idea_ai_set(st: State<AppState>, id: i64, account: Option<String>, model:
 
 /// The named team that works on one idea (teams.rs); "" = the AI alone. A team with a lead also points the idea at
 /// that AI (when the idea has not been pinned to one).
+/// A team's lead does the idea when no account was chosen (and the lead's account is switched on) — the same
+/// whether the team is picked when the idea is jotted down or later on its page.
+fn team_lead_fill(c: &rusqlite::Connection, lead: Option<&str>, cfg: &mut crate::idea_ai::IdeaAi) {
+    if let Some(lead) = lead.filter(|l| !l.is_empty()) {
+        if cfg.account.is_empty() && crate::accounts::list(c).iter().any(|a| a.id == lead && a.enabled) {
+            cfg.account = lead.to_string();
+        }
+    }
+}
+
 #[tauri::command]
 pub fn idea_team_set(st: State<AppState>, id: i64, team: String) -> R<()> {
     let t = if team.is_empty() { None } else { Some(crate::teams::find(&st.root, &team).ok_or("ไม่พบทีมนี้")?) };
     let c = st.db.lock();
     let mut cfg = crate::idea_ai::get(&c, id).unwrap_or_default();
     cfg.team = t.as_ref().map(|t| t.slug.clone()).unwrap_or_default();
-    if let Some(lead) = t.as_ref().map(|t| t.lead.clone()).filter(|l| !l.is_empty()) {
-        if cfg.account.is_empty() && crate::accounts::list(&c).iter().any(|a| a.id == lead && a.enabled) {
-            cfg.account = lead;
-        }
-    }
+    team_lead_fill(&c, t.as_ref().map(|t| t.lead.as_str()), &mut cfg);
     crate::idea_ai::set(&c, id, &cfg)?;
     drop(c);
     st.wake.notify_one();
@@ -477,6 +487,18 @@ pub fn set_turbo(st: State<AppState>, hours: f64) -> R<()> {
     Ok(())
 }
 
+/// Full mode on/off: the bot may spend the whole quota until it is switched off (governor.rs `full`).
+#[tauri::command]
+pub fn set_full_mode(st: State<AppState>, on: bool) -> R<()> {
+    if let Some(r) = sync::forward(&st, "full", json!({ "on": on })) {
+        return r;
+    }
+    db::set_setting(&st.db.lock(), "full_mode", if on { "1" } else { "0" }).map_err(e)?;
+    st.push_log(if on { "🔥 เปิดโหมดใช้เต็มที่ — บอทใช้โควต้าได้จนหมด จนกว่าจะปิด".to_string() } else { "🔥 ปิดโหมดใช้เต็มที่ — กลับไปแบ่งโควต้าตามปกติ".to_string() });
+    st.wake.notify_one();
+    Ok(())
+}
+
 #[tauri::command]
 pub fn stop_current(st: State<AppState>) -> R<()> {
     if let Some(r) = sync::forward(&st, "stop", Value::Null) {
@@ -587,7 +609,7 @@ const SETTING_KEYS: &[&str] = &[
     "sync_dir", "brain_dir", "brain_personal", "brain_work", "brain_work_keywords", "scope_default", "telegram_token", "telegram_chat", "telegram_questions",
     // which AI works, how its quota is measured, report language, first-run flag
     "provider", "tier_models", "custom_cmd", "meter", "budget_hours_week", "budget_hours_5h", "budget_reset_day",
-    "language", "lang_follow", "quota_view", "auto_update", "session_idle_min", "power_mode", "power_ideas", "extra_models", "ss_auto", "onboarded", "effort_default", "effort_build", "effort_verify", "send_key", "grace_secs", "telegram_progress", "seen_version", "codex_approval",
+    "language", "lang_follow", "quota_view", "auto_update", "session_idle_min", "power_mode", "power_ideas", "extra_models", "ss_auto", "onboarded", "effort_default", "effort_build", "effort_verify", "send_key", "grace_secs", "telegram_progress", "seen_version", "codex_approval", "web_check",
     // the ideas open as windows on the Workspace page (ISSUE-087)
     "workspace_windows",
 ];
@@ -624,6 +646,9 @@ pub fn set_setting(st: State<AppState>, key: String, value: String) -> R<()> {
     }
     if key == "codex_approval" {
         crate::providers::set_codex_approval(&value);
+    }
+    if key == "web_check" {
+        crate::webshot::set_mode(&value);
     }
     if key == "language" {
         workspace::set_language(&value);
@@ -701,6 +726,100 @@ pub fn open_folder(app: AppHandle, st: State<AppState>, id: i64) -> R<()> {
     Ok(())
 }
 
+/// Where a link in an idea's report points: a path relative to the idea folder (`experiment/x.json`), an absolute
+/// one (`/D:/…`, `D:\…`, `file:///D:/…`), or what the webview made of a relative one (`http://tauri.localhost/x`).
+/// Only files inside the workspace count; a link to the idea's folder under an older name (the slug changed) is
+/// followed to the folder it has now. Returns the file and the `#part` to jump to.
+pub(crate) fn resolve_report_link(ws: &std::path::Path, idea_dir: &std::path::Path, href: &str) -> Option<(std::path::PathBuf, String)> {
+    let mut h = href.trim();
+    for p in ["http://tauri.localhost", "https://tauri.localhost", "tauri://localhost"] {
+        if let Some(rest) = h.strip_prefix(p) {
+            h = rest.trim_start_matches('/');
+        }
+    }
+    let (h, frag) = match h.split_once('#') {
+        Some((a, f)) => (a, f.to_string()),
+        None => (h, String::new()),
+    };
+    let h = h.split('?').next().unwrap_or("");
+    let h = pct_decode(h.strip_prefix("file://").unwrap_or(h));
+    if h.trim().is_empty() {
+        return None;
+    }
+    let t = h.trim_start_matches('/');
+    let is_abs = t.len() > 2 && t.as_bytes()[1] == b':' && t.as_bytes()[0].is_ascii_alphabetic();
+    let cand = if is_abs { std::path::PathBuf::from(t) } else if h.starts_with('/') && !cfg!(windows) { std::path::PathBuf::from(&h) } else { idea_dir.join(t) };
+    let base = plain(ws.canonicalize().ok()?);
+    let ok = |p: &std::path::Path| plain(p.canonicalize().ok()?).pipe_inside(&base);
+    if let Some(p) = ok(&cand) {
+        return Some((p, frag));
+    }
+    // .../ideas/idea-0033-old-slug/rest → this idea's folder now, when the number matches
+    let s = cand.to_string_lossy().replace('\\', "/");
+    let me = idea_dir.file_name()?.to_string_lossy().to_string();
+    let num = me.get(..9).filter(|n| n.starts_with("idea-"))?;
+    let at = s.find(&format!("/{num}"))?;
+    let rest = s[at + 1..].split_once('/').map(|x| x.1).unwrap_or("");
+    ok(&idea_dir.join(rest)).map(|p| (p, frag))
+}
+
+trait PipeInside {
+    fn pipe_inside(self, base: &std::path::Path) -> Option<std::path::PathBuf>;
+}
+impl PipeInside for std::path::PathBuf {
+    fn pipe_inside(self, base: &std::path::Path) -> Option<std::path::PathBuf> {
+        self.starts_with(base).then_some(self)
+    }
+}
+
+/// The default web browser (what opens http links), so report files show the way they do from REPORTS.html.
+#[cfg(windows)]
+fn default_browser() -> Option<std::path::PathBuf> {
+    use windows_sys::Win32::UI::Shell::{AssocQueryStringW, ASSOCF_NONE, ASSOCSTR_EXECUTABLE};
+    let assoc: Vec<u16> = "http".encode_utf16().chain([0]).collect();
+    let open: Vec<u16> = "open".encode_utf16().chain([0]).collect();
+    let mut buf = vec![0u16; 1024];
+    let mut n = buf.len() as u32;
+    let hr = unsafe { AssocQueryStringW(ASSOCF_NONE, ASSOCSTR_EXECUTABLE, assoc.as_ptr(), open.as_ptr(), buf.as_mut_ptr(), &mut n) };
+    if hr != 0 {
+        return None;
+    }
+    let p = std::path::PathBuf::from(String::from_utf16_lossy(&buf[..n.saturating_sub(1) as usize]));
+    p.is_file().then_some(p)
+}
+
+/// Files a browser shows itself; anything else (a .patch, .csv, .zip…) goes to its own app.
+fn browser_shows(p: &std::path::Path) -> bool {
+    let ext = p.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+    ["html", "htm", "json", "txt", "log", "md", "svg", "png", "jpg", "jpeg", "gif", "webp", "pdf", "xml", "mp4", "webm", "mp3", "wav"].contains(&ext.as_str())
+}
+
+/// A link clicked in an idea's report (ISSUE-148): open the real file — in the browser when it can show it, keeping
+/// `#part` — or the folder in Explorer.
+#[tauri::command]
+pub fn open_report_link(app: AppHandle, st: State<AppState>, id: i64, href: String) -> R<()> {
+    let idea = db::get_idea(&st.db.lock(), id).map_err(e)?;
+    let dir = workspace::idea_dir(&st.ws, &idea.slug);
+    let (p, frag) = resolve_report_link(&st.ws, &dir, &href).ok_or_else(|| format!("ไม่พบไฟล์ที่ลิงก์ชี้ไป: {href}"))?;
+    if p.is_dir() || !browser_shows(&p) {
+        open_path(&app, &p);
+        return Ok(());
+    }
+    let mut url = format!("file:///{}", p.to_string_lossy().replace('\\', "/").trim_start_matches('/'));
+    url = url.replace(' ', "%20").replace('#', "%23");
+    if !frag.is_empty() {
+        url = format!("{url}#{frag}");
+    }
+    #[cfg(windows)]
+    if let Some(b) = default_browser() {
+        if std::process::Command::new(b).arg(&url).spawn().is_ok() {
+            return Ok(());
+        }
+    }
+    use tauri_plugin_opener::OpenerExt;
+    app.opener().open_url(&url, None::<&str>).or_else(|_| app.opener().open_path(p.to_string_lossy(), None::<&str>)).map_err(e)
+}
+
 /// Drop the `\\?\` prefix canonicalize() adds on Windows — cmd.exe can't use it as a working dir.
 fn plain(p: std::path::PathBuf) -> std::path::PathBuf {
     std::path::PathBuf::from(p.to_string_lossy().trim_start_matches(r"\\?\").to_string())
@@ -709,9 +828,10 @@ fn plain(p: std::path::PathBuf) -> std::path::PathBuf {
 /// Does this look like a runnable command rather than a sentence of instructions?
 fn looks_like_command(s: &str) -> bool {
     let first = s.split_whitespace().next().unwrap_or("").to_lowercase();
+    // file names may be Thai (any letters); control characters (new lines…) never belong in one command
     !s.trim().is_empty()
-        && s.is_ascii()
-        && (["npm", "npx", "pnpm", "yarn", "node", "python", "py", "cargo", "dotnet", "java", "start", "go", "deno", "bun"].contains(&first.as_str())
+        && !s.chars().any(|c| c.is_control())
+        && (["npm", "npx", "pnpm", "yarn", "node", "python", "python3", "py", "uv", "uvx", "cargo", "dotnet", "java", "start", "go", "deno", "bun", "open", "xdg-open"].contains(&first.as_str())
             || first.ends_with(".exe")
             || first.ends_with(".bat")
             || first.ends_with(".cmd")
@@ -1807,6 +1927,60 @@ pub fn accounts_series(st: State<AppState>, days: i64) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn report_links_open_the_real_file() {
+        let ws = std::env::temp_dir().join(format!("ia-links-{}", std::process::id()));
+        let idea = ws.join("ideas").join("idea-0033-qa-testing");
+        std::fs::create_dir_all(idea.join("experiment/ui-repair")).unwrap();
+        std::fs::write(idea.join("experiment/ui-repair/i18n-results.json"), "{}").unwrap();
+        std::fs::write(idea.join("REPORTS.html"), "x").unwrap();
+        std::fs::write(idea.join("ผล ทดสอบ.md"), "x").unwrap();
+        let want = |rel: &str| plain(idea.join(rel).canonicalize().unwrap());
+        let r = |h: &str| resolve_report_link(&ws, &idea, h);
+        assert_eq!(r("experiment/ui-repair/i18n-results.json").unwrap().0, want("experiment/ui-repair/i18n-results.json"));
+        // what the webview turned the relative link into
+        assert_eq!(r("http://tauri.localhost/experiment/ui-repair/i18n-results.json").unwrap().0, want("experiment/ui-repair/i18n-results.json"));
+        assert_eq!(r("REPORTS.html#retest").unwrap(), (want("REPORTS.html"), "retest".to_string()));
+        assert_eq!(r("%E0%B8%9C%E0%B8%A5%20%E0%B8%97%E0%B8%94%E0%B8%AA%E0%B8%AD%E0%B8%9A.md").unwrap().0, want("ผล ทดสอบ.md"));
+        // absolute link to the folder's old name (slug changed) → the folder it has now
+        let old = format!("/{}/ideas/idea-0033-qa/REPORTS.html#retest", ws.to_string_lossy().replace('\\', "/"));
+        assert_eq!(r(&old).unwrap(), (want("REPORTS.html"), "retest".to_string()));
+        // nothing outside the workspace, nothing missing
+        assert!(r("../../../Windows/win.ini").is_none());
+        assert!(r("experiment/nope.json").is_none());
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    #[test]
+    fn team_lead_does_the_idea_unless_an_account_was_chosen() {
+        let p = std::env::temp_dir().join(format!("ia-lead-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&p);
+        let c = db::open(&p).unwrap();
+        let mut a: crate::accounts::Account = serde_json::from_value(json!({ "id": "helper01", "kind": "claude", "label": "", "enabled": true, "home": "", "model": "auto", "effort": "auto", "vendor": "", "auth": "login", "base_url": "" })).unwrap();
+        crate::accounts::save(&c, &[a.clone()]).unwrap();
+        let mut cfg = crate::idea_ai::IdeaAi::default();
+        team_lead_fill(&c, Some("helper01"), &mut cfg);
+        assert_eq!(cfg.account, "helper01");
+        let mut chosen = crate::idea_ai::IdeaAi { account: "other".into(), ..Default::default() };
+        team_lead_fill(&c, Some("helper01"), &mut chosen);
+        assert_eq!(chosen.account, "other");
+        a.enabled = false;
+        crate::accounts::save(&c, &[a]).unwrap();
+        let mut off = crate::idea_ai::IdeaAi::default();
+        team_lead_fill(&c, Some("helper01"), &mut off);
+        assert_eq!(off.account, "");
+    }
+
+    #[test]
+    fn play_accepts_python3_and_thai_file_names() {
+        assert!(looks_like_command("python3 app.py"));
+        assert!(looks_like_command("python เกม.py"));
+        assert!(looks_like_command("npm run dev"));
+        assert!(!looks_like_command("python app.py
+del *"));
+        assert!(!looks_like_command("เปิดไฟล์ index.html"));
+    }
 
     #[test]
     fn deleted_idea_folders_are_cleared_only_when_old() {

@@ -1,6 +1,6 @@
 [package]
 name = "idea-autopilot"
-version = "0.11.0"
+version = "0.12.0"
 description = "Idea Autopilot — let an AI agent of your choice work through your ideas while you are away"
 license = "GPL-3.0-or-later"
 authors = ["bombxdev"]
@@ -39,7 +39,7 @@ sha2 = "0.10"
 toml = "0.8"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_System_Power"] }
+windows-sys = { version = "0.59", features = ["Win32_System_Power", "Win32_Foundation", "Win32_System_Threading", "Win32_System_SystemInformation", "Win32_UI_Shell"] }
 
 [profile.release]
 opt-level = "s"

@@ -24,7 +24,7 @@ Push-Location $root
 $files = git ls-files --cached --others --exclude-standard | Where-Object { $_ -and (Test-Path $_ -PathType Leaf) }
 Pop-Location
 foreach ($f in $files) {
-  if ($f -like "*.apk" -or $f -eq "scripts/privacy-words.txt") { continue }
+  if ($f -like "*.apk" -or $f -eq "scripts/privacy-words.txt" -or $f -eq "scripts/market-metrics.py") { continue }  # market-metrics: private market report tool (docs/market is not public)
   $dest = Join-Path $Target $f
   New-Item -ItemType Directory -Force (Split-Path $dest) | Out-Null
   Copy-Item (Join-Path $root $f) $dest

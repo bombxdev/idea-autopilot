@@ -147,7 +147,7 @@
   {#if catCounts.length > 1}
     <div class="row wrap cats">
       <button class="chip" class:on={!cat} onclick={() => (cat = "")}>ทุกหมวด ({found.length})</button>
-      {#each catCounts as [k, n] (k)}<button class="chip" class:on={cat === k} onclick={() => (cat = cat === k ? "" : k)}>{cats[k] ?? k} ({n})</button>{/each}
+      {#each catCounts as [k, n] (k)}<button class="chip" class:on={cat === k} onclick={() => (cat = cat === k ? "" : k)}><span>{cats[k] ?? k}</span> <span class="faint">({n})</span></button>{/each}
     </div>
   {/if}
   {#each shown as r (r.name)}

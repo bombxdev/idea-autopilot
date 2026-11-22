@@ -306,6 +306,22 @@ fn big_files(dir: &Path, base: &Path, out: &mut Vec<String>) {
     }
 }
 
+/// How a bot looks at a web page it built, by the setting `web_check` (webshot.rs, ISSUE-147).
+pub fn web_rule(ia: &str) -> String {
+    match crate::webshot::mode().as_str() {
+        "off" => "- Do not open a browser to look at web pages (the owner switched it off): check pages by their code, tests and `curl`, and say in REPORT.md that the screen was not looked at.".into(),
+        "self" => "- To look at a web page when no browser tool works (Computer Use / Playwright are often unavailable in a headless run, and asking for approval gets nowhere): Windows has Microsoft Edge. Start your local server, then run `\"C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe\" --headless=new --disable-gpu --noerrdialogs --disable-breakpad --user-data-dir=<new temp folder> --window-size=390,844 --screenshot=<file.png> <url>` (or `--dump-dom <url>` to print the rendered HTML), and stop the server after. Inside a sandboxed run (Codex and others) Edge is usually refused (`Access denied`, no PNG): one failed try is enough — do not loop on it. If you still cannot check the screen, say so plainly once instead of retrying.".into(),
+        _ => format!(
+            "- To look at a web page you built, never start Edge/Chrome yourself (inside an AI sandbox it is refused, crashes and hangs the run). \
+             Ask the app to take the picture: start your local server, then run `\"{ia}\" shot http://localhost:<port>/<page> screenshots/<name>.png --size 390x844` \
+             (a phone; use `--size 1280x800` for a desktop), or `\"{ia}\" shot <file.html> screenshots/<name>.png` for a plain HTML file in this folder. \
+             Open the PNG to look at it; `--wait 5000` gives a slow page more time. For the raw HTML use `curl`. \
+             Only pages on this computer (localhost) or files in the workspace work. Stop the server after. \
+             If `shot` fails twice, say so once in REPORT.md and carry on — do not loop on it."
+        ),
+    }
+}
+
 pub fn agents_md(idea: &Idea, ia: &str) -> String {
     format!(
         "# Idea #{id}: {title}\n\n\
@@ -322,7 +338,8 @@ pub fn agents_md(idea: &Idea, ia: &str) -> String {
          - Never `git push`, publish, deploy, post, send email, sign up for accounts, enter passwords or pay. \
            If an account is truly needed, write it under \"ต้องการจากคุณ\" in REPORT.md and continue with the rest.\n\
          - Do not leave servers running; stop processes you started.\n\
-         - To look at a web page when no browser tool works (Computer Use / Playwright are often unavailable in a headless run, and asking for approval gets nowhere): Windows has Microsoft Edge. Start your local server, then run `\"C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe\" --headless=new --disable-gpu --user-data-dir=<temp folder> --window-size=390,844 --screenshot=<file.png> <url>` (or `--dump-dom <url>` to print the rendered HTML), and stop the server after. If you still cannot check the screen, say so plainly once instead of retrying.\n\
+         - Never drive the real keyboard or mouse (keybd_event, SendInput, mouse_event, SetCursorPos, SendKeys, pyautogui, AutoHotkey…): the owner is often using this PC while you work, and fake key presses switch their input language, type into their windows or move their cursor. Test input logic by calling the handlers directly or in a hidden window; what truly needs real hands goes under \"ต้องการจากคุณ\".\n\
+         {web}\n\
          - Keep the existing behaviour and tests passing unless the owner asked to change them.\n\
          - Every line of `DIRECTIVES.md` is a request of the owner (\"(สั่งในแชต)\" = said in a chat; a question there is just a question). \
            Do what was asked, not an easier substitute (if it cannot be done as asked, say why under \"ต้องการจากคุณ\" and do the rest).\n\
@@ -339,6 +356,7 @@ pub fn agents_md(idea: &Idea, ia: &str) -> String {
          - Report back in 1-3 short lines so the owner sees it in the app and on the phone:\n  `\"{ia}\" note {id} \"<summary>\"`\n",
         id = idea.id,
         title = idea.title,
+        web = web_rule(ia),
         lang_en = { let c = REPORT_LANG.lock().clone(); crate::lang::name(if c.is_empty() { crate::lang::DEFAULT } else { &c }) },
     )
 }

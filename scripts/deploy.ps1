@@ -25,8 +25,25 @@ while ((Get-Process idea-autopilot -ErrorAction SilentlyContinue) -and (Test-Pat
     Start-Sleep 20
 }
 
+# tell the watcher (lifeline.rs) this stop is on purpose, so it does not report it or open the old copy again
+if (Test-Path "$root\data") { Add-Content -Path "$root\data\app-life.log" -Value "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') exit deploy" -Encoding ASCII }
 Get-Process idea-autopilot -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep 2
-Copy-Item "$root\app\src-tauri\target\release\idea-autopilot.exe", "$root\app\src-tauri\target\release\ia.exe" $bin -Force
-if ($Minimized) { Start-Process "$bin\idea-autopilot.exe" -ArgumentList "--minimized" } else { Start-Process "$bin\idea-autopilot.exe" }
-Write-Host "updated and restarted: $bin\idea-autopilot.exe"
+# a file can stay locked a few seconds after the stop (a helper `ia` still closing): retry, and whatever happens
+# start the app again - a failed copy used to end the script with the app closed until morning (ISSUE-144)
+$copied = $false
+try {
+    for ($i = 1; $i -le 15 -and -not $copied; $i++) {
+        try {
+            Get-Process idea-autopilot, ia -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$bin\*" } | Stop-Process -Force
+            Copy-Item "$root\app\src-tauri\target\release\idea-autopilot.exe", "$root\app\src-tauri\target\release\ia.exe" $bin -Force -ErrorAction Stop
+            $copied = $true
+        } catch {
+            Write-Host "copy try $i failed: $($_.Exception.Message)"
+            Start-Sleep 2
+        }
+    }
+} finally {
+    if ($Minimized) { Start-Process "$bin\idea-autopilot.exe" -ArgumentList "--minimized" } else { Start-Process "$bin\idea-autopilot.exe" }
+}
+if ($copied) { Write-Host "updated and restarted: $bin\idea-autopilot.exe" } else { Write-Host "copy FAILED - restarted the previous version: $bin\idea-autopilot.exe"; exit 1 }

@@ -356,7 +356,7 @@
       <div class="card">
         <div class="row wrap"><button class="small" onclick={() => { repo = null; preview = null; }}><Icon name="arrowLeft" /> กลับ</button><b class="grow">{repo.repo}</b>{#if repo.stars != null}<span class="faint small">★ {repo.stars.toLocaleString()}</span>{/if}{#if repo.license}<span class="faint small">{repo.license}</span>{/if}<a class="small" href={repo.url} target="_blank" rel="noreferrer">GitHub</a></div>
         <div class="muted small">{repo.description ?? ""} · {repo.total} role</div>
-        {#if cats.length > 1}<div class="row wrap cats"><button class="chip" class:on={!cat} onclick={() => (cat = "")}>ทุกหมวด</button>{#each cats as [k, n] (k)}<button class="chip" class:on={cat === k} onclick={() => (cat = cat === k ? "" : k)}>{k} ({n})</button>{/each}</div>{/if}
+        {#if cats.length > 1}<div class="row wrap cats"><button class="chip" class:on={!cat} onclick={() => (cat = "")}>ทุกหมวด</button>{#each cats as [k, n] (k)}<button class="chip" class:on={cat === k} onclick={() => (cat = cat === k ? "" : k)}><span>{k}</span> <span class="faint">({n})</span></button>{/each}</div>{/if}
         <input bind:value={filter} placeholder="กรองชื่อ เช่น frontend" />
         <div class="list">
           {#each shownRoles.slice(0, 200) as r (r.path)}

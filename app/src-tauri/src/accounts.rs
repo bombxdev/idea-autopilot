@@ -341,6 +341,7 @@ mod tests {
         assert!(move_in_group(v, "nope", 1).is_err());
     }
 
+    #[test]
     fn save_rejects_duplicates_and_unknown_kinds() {
         let p = std::env::temp_dir().join(format!("ia-acc-{}-{:?}.db", std::process::id(), std::thread::current().id()));
         let _ = std::fs::remove_file(&p);

@@ -511,12 +511,18 @@
       <input type="number" min="0" max="3600" step="10" style="width:90px" value={s.grace_secs ?? 90} onchange={(e) => save("grace_secs", e.target.value)} /></div>
     <div class="row field"><span class="grow">Codex เมื่อต้องการให้คนอนุมัติ (เช่น ควบคุมเบราว์เซอร์) <span class="faint small">— บอทรันเงียบๆ ไม่มีคนกดอนุมัติได้</span></span>
       <select value={s.codex_approval ?? "headless"} onchange={(e) => save("codex_approval", e.target.value)}>
-        <option value="headless">ง่าย: ปิด Computer Use แล้วตรวจหน้าเว็บด้วย Edge แบบ headless (แนะนำ)</option>
+        <option value="headless">ง่าย: ปิด Computer Use แล้วตรวจหน้าเว็บตามวิธีด้านล่าง (แนะนำ)</option>
         <option value="full">เต็มที่: ให้ Codex ควบคุมเบราว์เซอร์จริง · ข้ามการขออนุมัติและปิด sandbox (เสี่ยง)</option>
       </select></div>
     {#if s.codex_approval === "full"}
       <p class="small" style="color:var(--amber)"><Icon name="warning" /> โหมดเต็มที่: Codex ทุกรอบ (ทั้งบอทและแชต) จะรันโดยไม่มี sandbox จึงแก้/ลบไฟล์นอกโฟลเดอร์ไอเดียได้ และต้องเปิดแอป Codex ค้างไว้เพื่อให้ Computer Use ทำงาน — ยังไม่ได้ทดสอบว่าผ่านจริง ใช้เมื่อจำเป็นจริงๆ</p>
     {/if}
+    <div class="row field"><span class="grow">บอทดูหน้าเว็บที่ทำอย่างไร <span class="faint small">— ถ่ายภาพหน้าจอเพื่อตรวจงานของตัวเอง</span></span>
+      <select value={s.web_check ?? "app"} onchange={(e) => save("web_check", e.target.value)}>
+        <option value="app">แอปถ่ายภาพให้ (ia shot) — ไม่ติด sandbox ไม่ค้าง (แนะนำ)</option>
+        <option value="self">บอทเปิด Edge headless เอง (แบบเดิม — มักถูก sandbox ปฏิเสธและค้าง)</option>
+        <option value="off">ไม่ต้องดูหน้าจอ — ตรวจจากโค้ดและเทสต์อย่างเดียว</option>
+      </select></div>
     <div class="row field"><span class="grow">ปุ่มลัดจดไอเดีย</span><b>{s.hotkey ? s.hotkey.toUpperCase() : "ไม่ว่าง (ทุกปุ่มถูกโปรแกรมอื่นใช้อยู่)"}</b></div>
     <div class="row field"><span class="grow">โฟลเดอร์ข้อมูล</span><code class="small">{s.root}</code></div>
     <div class="row field"><span class="grow">โฟลเดอร์รับไอเดียเพิ่ม (คั่นด้วย ;) เช่น โฟลเดอร์ที่ sync กับมือถือ</span>

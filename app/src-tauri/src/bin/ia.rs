@@ -19,6 +19,7 @@ const HELP: &str = r#"ia — สั่ง Idea Autopilot จาก command line
   ia play <id>                  เปิดโปรแกรมที่สร้างเสร็จ
   ia pause | resume | stop      พักบอท / ทำต่อ / หยุดงานที่ทำอยู่
   ia turbo [ชั่วโมง]             ใช้โควต้าเต็มที่ชั่วคราว (0 = ปิด)
+  ia full [on|off]              โหมดใช้เต็มที่: ใช้โควต้าได้จนหมด ค้างไว้จนกว่าจะสั่ง off
   ia digest                     สรุปล่าสุด
   ia day <YYYY-MM-DD> off|work|half|clear [หมายเหตุ]   ตั้งวันหยุด/วันทำงาน
   ia ui [morning|board|quota|library|settings] [id]  เปิดหน้าต่างไปหน้านั้น
@@ -29,6 +30,8 @@ const HELP: &str = r#"ia — สั่ง Idea Autopilot จาก command line
   ia handoff <id> <agent> "ข้อความ"  ส่งงานให้ AI อื่นผ่าน Orca (codex, gemini, …) · ia agents = ดูว่ามีตัวไหนบ้าง
   ia ask <id> "ข้อความ"         สั่ง AI แก้/ทำต่อในไอเดียนั้น (ส่งเข้า session เดิม ถ้าไม่มีจะเปิดให้)
   ia hold <id> [off]            บอกบอทว่ากำลังคุยไอเดียนี้อยู่ (บอทจะเว้นไว้ 3 ชม.) / ปล่อยคืน
+  ia shot <url> [ไฟล์.png] [--size 390x844] [--wait 2000]
+                                ถ่ายภาพหน้าเว็บ (localhost หรือไฟล์ในโฟลเดอร์งาน) — แอปเปิด Edge ให้ ไม่ติด sandbox
   ia note <id> "สรุป"            บันทึกความคืบหน้าลงไอเดีย (แจ้งเจ้าของทาง Telegram/แอป)
   ia question <id> "คำถาม" "ตัวเลือก1|ตัวเลือก2"  ถามเจ้าของ (ขึ้นในแอปและมือถือให้แตะตอบ คำตอบส่งกลับเข้าแชต)
   ia models                     โมเดลที่ระบบเลือกแต่ละขั้น + สถิติที่ใช้ตัดสิน + เวอร์ชันโมเดลล่าสุด
@@ -197,6 +200,51 @@ fn print_questions(qs: &[Value], titles: &Value) {
     }
 }
 
+/// `ia shot <url> [file.png] [--size WxH] [--wait ms]`: a relative file is under the current folder (the
+/// idea folder for a bot); without one the picture goes to `screenshots/shot-<time>.png`.
+fn shot_args(a: &[String]) -> Result<Value, String> {
+    let mut url = None;
+    let mut file = None;
+    let (mut w, mut h, mut wait) = (1280u64, 800u64, 2000u64);
+    let mut i = 0;
+    while i < a.len() {
+        match a[i].as_str() {
+            "--size" => {
+                i += 1;
+                let v = a.get(i).ok_or("--size ต้องตามด้วยขนาด เช่น 390x844")?;
+                let (x, y) = v.split_once(['x', 'X']).ok_or("--size ต้องเป็น กว้างxสูง เช่น 390x844")?;
+                w = x.trim().parse().map_err(|_| "--size ไม่ถูกต้อง")?;
+                h = y.trim().parse().map_err(|_| "--size ไม่ถูกต้อง")?;
+            }
+            "--wait" => {
+                i += 1;
+                wait = a.get(i).and_then(|v| v.parse().ok()).ok_or("--wait ต้องเป็นมิลลิวินาที")?;
+            }
+            x if url.is_none() => url = Some(x.to_string()),
+            x if file.is_none() => file = Some(x.to_string()),
+            x => return Err(format!("ไม่รู้จัก “{x}”")),
+        }
+        i += 1;
+    }
+    let url = url.ok_or("ต้องระบุ url เช่น ia shot http://localhost:5173 screenshots/home.png")?;
+    let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
+    // a file in the current folder becomes file:///<full path>
+    let url = if url.contains("://") {
+        url
+    } else {
+        let p = cwd.join(&url);
+        if !p.is_file() {
+            return Err(format!("ไม่พบไฟล์ {}", p.display()));
+        }
+        format!("file:///{}", p.display().to_string().replace('\\', "/"))
+    };
+    let out = match file {
+        Some(f) => cwd.join(f),
+        None => cwd.join("screenshots").join(format!("shot-{}.png", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0))),
+    };
+    Ok(json!({ "url": url, "out": out.display().to_string(), "width": w, "height": h, "wait_ms": wait }))
+}
+
 fn run() -> Result<(), String> {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let as_json = args.iter().any(|a| a == "--json");
@@ -234,6 +282,7 @@ fn run() -> Result<(), String> {
             None => call("stop", Value::Null)?,
         },
         "turbo" => call("turbo", json!({ "hours": arg(1).and_then(|x| x.parse::<f64>().ok()).unwrap_or(2.0) }))?,
+        "full" => call("full", json!({ "on": !matches!(arg(1).as_deref(), Some("off" | "0" | "ปิด")) }))?,
         "digest" => call("digest", Value::Null)?,
         "day" => {
             let kind = arg(2).ok_or("ต้องระบุ off|work|half|clear")?;
@@ -250,6 +299,7 @@ fn run() -> Result<(), String> {
         "ask" => call("ask", json!({ "id": num(1)?, "text": rest(2).ok_or("ต้องมีข้อความคำสั่ง")? }))?,
         "hold" => call("hold", json!({ "id": num(1)?, "on": arg(2).map(|x| x != "off").unwrap_or(true) }))?,
         "note" => call("note", json!({ "id": num(1)?, "text": rest(2).ok_or("ต้องมีข้อความสรุป")? }))?,
+        "shot" => shot_args(&args[1..]).and_then(|a| call_t("webshot", a, 200))?,
         "reqs" => call("reqs", json!({ "id": num(1)? }))?,
         "question" => call("question", json!({ "id": num(1)?, "text": arg(2).ok_or("ต้องมีคำถาม")?, "options": arg(3).unwrap_or_default() }))?,
         "req" => call("req", json!({ "rid": num(1)?, "state": arg(2).ok_or("ต้องระบุ done หรือ no")?, "note": rest(3).unwrap_or_default() }))?,
@@ -393,6 +443,7 @@ fn run() -> Result<(), String> {
                 println!("#{} {mark}: {}{note}", r["id"], r["text"].as_str().unwrap_or(""));
             }
         }
+        "shot" => println!("ถ่ายแล้ว: {} ({}x{}, {:.1} วินาที)", s(&out["file"]), out["width"], out["height"], out["seconds"].as_f64().unwrap_or(0.0)),
         _ => println!("เรียบร้อย"),
     }
     Ok(())
@@ -415,37 +466,52 @@ fn team_mcp(args: &[String]) {
             "task": { "type": "string", "description": "the whole task: goal, files to make, how to check it" },
             "role": { "type": "string", "description": "optional: the slug of the owner's team role this AI plays (from the team list in your brief)" } } } }
     ]);
-    let stdin = std::io::stdin();
-    let mut out = std::io::stdout();
-    for line in stdin.lock().lines() {
-        let Ok(line) = line else { break };
-        let Ok(req) = serde_json::from_str::<Value>(&line) else { continue };
-        let Some(id) = req.get("id").cloned() else { continue }; // a notification: nothing to answer
-        let method = req["method"].as_str().unwrap_or("");
-        let result = match method {
-            "initialize" => Ok(json!({ "protocolVersion": req["params"]["protocolVersion"].as_str().unwrap_or("2025-06-18"), "capabilities": { "tools": {} }, "serverInfo": { "name": "idea-autopilot-team", "version": env!("CARGO_PKG_VERSION") } })),
-            "ping" => Ok(json!({})),
-            "tools/list" => Ok(json!({ "tools": tools })),
-            "tools/call" => {
-                let p = &req["params"]["arguments"];
-                let r = match req["params"]["name"].as_str().unwrap_or("") {
-                    "list_other_ais" => call("team_accounts", json!({ "exclude": exclude })),
-                    "ask_other_ai" => call_t("delegate", json!({ "idea": idea, "account": p["account"], "folder": p["folder"], "task": p["task"], "role": p["role"] }), 40 * 60),
-                    other => Err(format!("unknown tool {other}")),
-                };
-                Ok(match r {
-                    Ok(v) => json!({ "content": [{ "type": "text", "text": serde_json::to_string_pretty(&v).unwrap_or_default() }] }),
-                    Err(e) => json!({ "content": [{ "type": "text", "text": e }], "isError": true }),
-                })
-            }
-            _ => Err(json!({ "code": -32601, "message": format!("method not found: {method}") })),
-        };
+    // each reply is one whole line: a lock keeps two answers from interleaving
+    let out = std::sync::Arc::new(std::sync::Mutex::new(std::io::stdout()));
+    let reply = |out: &std::sync::Mutex<std::io::Stdout>, id: Value, result: Result<Value, Value>| {
         let resp = match result {
             Ok(r) => json!({ "jsonrpc": "2.0", "id": id, "result": r }),
             Err(e) => json!({ "jsonrpc": "2.0", "id": id, "error": e }),
         };
-        let _ = writeln!(out, "{resp}");
-        let _ = out.flush();
+        if let Ok(mut o) = out.lock() {
+            let _ = writeln!(o, "{resp}");
+            let _ = o.flush();
+        }
+    };
+    let stdin = std::io::stdin();
+    let mut calls = Vec::new();
+    for line in stdin.lock().lines() {
+        let Ok(line) = line else { break };
+        let Ok(req) = serde_json::from_str::<Value>(&line) else { continue };
+        let Some(id) = req.get("id").cloned() else { continue }; // a notification: nothing to answer
+        let method = req["method"].as_str().unwrap_or("").to_string();
+        match method.as_str() {
+            "initialize" => reply(&out, id, Ok(json!({ "protocolVersion": req["params"]["protocolVersion"].as_str().unwrap_or("2025-06-18"), "capabilities": { "tools": {} }, "serverInfo": { "name": "idea-autopilot-team", "version": env!("CARGO_PKG_VERSION") } }))),
+            "ping" => reply(&out, id, Ok(json!({}))),
+            "tools/list" => reply(&out, id, Ok(json!({ "tools": tools }))),
+            // a tool call can take many minutes (a helper doing its part): each runs on its own thread, so the
+            // lead can hand out several parts at once and they work side by side (the app caps how many)
+            "tools/call" => {
+                let (out, exclude) = (out.clone(), exclude.clone());
+                calls.push(std::thread::spawn(move || {
+                    let p = &req["params"]["arguments"];
+                    let r = match req["params"]["name"].as_str().unwrap_or("") {
+                        "list_other_ais" => call("team_accounts", json!({ "exclude": exclude })),
+                        "ask_other_ai" => call_t("delegate", json!({ "idea": idea, "account": p["account"], "folder": p["folder"], "task": p["task"], "role": p["role"] }), 40 * 60),
+                        other => Err(format!("unknown tool {other}")),
+                    };
+                    reply(&out, id, Ok(match r {
+                        Ok(v) => json!({ "content": [{ "type": "text", "text": serde_json::to_string_pretty(&v).unwrap_or_default() }] }),
+                        Err(e) => json!({ "content": [{ "type": "text", "text": e }], "isError": true }),
+                    }));
+                }));
+            }
+            _ => reply(&out, id, Err(json!({ "code": -32601, "message": format!("method not found: {method}") }))),
+        }
+    }
+    // the lead closed its side: still answer the calls already running before leaving
+    for c in calls {
+        let _ = c.join();
     }
 }
 

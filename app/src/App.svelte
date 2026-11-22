@@ -6,7 +6,8 @@
   import { store, start, refresh, toast } from "./lib/store.svelte.js";
   import { api, pct, listen } from "./lib/api.js";
   import { t, isRtl } from "./lib/i18n.js";
-  import { setUiLang } from "./lib/uitrans.svelte.js";
+  import { setUiLang, tr } from "./lib/uitrans.svelte.js";
+  import { ui } from "./lib/uilang.svelte.js";
   import Morning from "./pages/Morning.svelte";
   import Board from "./pages/Board.svelte";
   import Quota from "./pages/Quota.svelte";
@@ -111,8 +112,10 @@
     if (s.role === "follower") return { cls: "idle", head: "เครื่องรอง", detail: "บอทรันที่เครื่องหลัก" };
     if (s.paused) return { cls: "paused", head: "พักบอทอยู่", detail: "คลิกเพื่อให้ทำต่อ" };
     if (s.current) {
-      const step = s.current.stage_total ? ` · ขั้น ${s.current.stage_no}/${s.current.stage_total}` : "";
-      return { cls: "run", power: s.current.power, head: `กำลังทำ #${s.current.idea_id}${step}`, detail: s.current.title };
+      // one whole sentence per case, so the English page translates all of it (not "Working on #1 · ขั้น 2/5")
+      const c = s.current;
+      const head = c.stage_total ? `กำลังทำ #${c.idea_id} · ขั้น ${c.stage_no}/${c.stage_total}` : `กำลังทำ #${c.idea_id}`;
+      return { cls: "run", power: c.power, head, detail: c.title };
     }
     // the governor's reason reads "situation — what the bot does": the situation is the detail line
     const [why, what] = String(d?.reason ?? "").split(" — ");
@@ -122,6 +125,12 @@
 
   // something is running: one press stops it all and remembers it, so the PC can be switched off (ISSUE-067)
   const busyNow = $derived(!!s && s.role !== "follower" && !s.shelf && ((s.sessions ?? []).length > 0 || !!s.current));
+  // full mode is on until switched off: the header always shows it, one press turns it off
+  async function fullOff() {
+    await api.setFullMode(false);
+    toast("ปิดโหมดใช้เต็มที่ — กลับไปแบ่งโควต้าตามปกติ", "ok", 4000);
+    refresh();
+  }
   async function pauseAll() {
     try {
       await api.pauseAll();
@@ -132,7 +141,8 @@
     refresh();
   }
 
-  const statusTip = $derived([botState.head, botState.detail].filter(Boolean).join("\n") + "\n\nคลิกเพื่อ พัก / ทำต่อ");
+  // a tooltip of several lines is not one template: each line is translated on its own
+  const statusTip = $derived((ui.lang, [botState.head, botState.detail].filter(Boolean).map((x) => tr(x)).join("\n") + "\n\n" + tr("คลิกเพื่อ พัก / ทำต่อ")));
 
   async function togglePause() {
     await api.setPaused(!s?.paused);
@@ -202,6 +212,7 @@
         <button class="ghost small shelve" disabled={!busyNow} onclick={pauseAll} title={busyNow ? "หยุดบอทและปิดแชตที่ AI กำลังทำ แล้วจำไว้ — ปิดเครื่องได้ทันที กลับมากด ▶ ทำต่อ แล้ว AI จะทำต่อจากเดิม" : "ตอนนี้ไม่มีงานที่ทำอยู่ — ปิดเครื่องได้เลย"}>
           <Icon name="pause" /> พักทั้งหมด · ปิดเครื่องได้
         </button>
+        {#if s?.full_mode}<button class="ghost small fullon" onclick={fullOff} title="บอทใช้โควต้าได้จนหมด ไม่กันส่วนของงานไว้ — คลิกเพื่อกลับไปแบ่งโควต้าตามปกติ"><Icon name="bolt" /> ใช้เต็มที่อยู่ · กดปิด</button>{/if}
       </div>
     </header>
     {#if store.page !== "settings"}
@@ -318,4 +329,5 @@
   .phone .connbar { padding: 8px 12px; flex-wrap: wrap; }
   .phone .shelve { white-space: normal; }
   .phone .botctl { flex: 1 1 100%; flex-direction: row; padding-top: 0; }
+  .fullon { color: var(--amber, #d9a400); }
 </style>

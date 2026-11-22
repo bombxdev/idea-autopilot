@@ -4,6 +4,7 @@
   import { onMount } from "svelte";
   import { store, refresh, toast, stageLabel } from "../lib/store.svelte.js";
   import { api, pct, clock } from "../lib/api.js";
+  import { ask } from "../lib/dialog.svelte.js";
   import AccountCharts from "../components/AccountCharts.svelte";
   import QuotaPick from "../components/QuotaPick.svelte";
   import PlanCard from "../components/PlanCard.svelte";
@@ -80,6 +81,13 @@
     toast(h ? `Turbo ${h} ชม.` : "ปิด Turbo");
     refresh();
   }
+  // full mode: the whole quota for the bot until switched off (governor.rs `full`)
+  async function fullMode(on) {
+    if (on && !(await ask("เปิดโหมดใช้เต็มที่? บอทจะใช้โควต้าได้จนหมด ไม่กันส่วนของงานคุณไว้ ไม่สนเวลางาน และค้างไว้จนกว่าคุณจะกดปิด (ปิดเครื่อง/รีสตาร์ตก็ยังเปิดอยู่)", { ok: "เปิดเลย" }))) return;
+    await api.setFullMode(on);
+    toast(on ? "เปิดโหมดใช้เต็มที่แล้ว — กดปิดได้ทุกเมื่อ" : "ปิดโหมดใช้เต็มที่ — กลับไปแบ่งโควต้าตามปกติ", "ok", 5000);
+    refresh();
+  }
   function hours(n) {
     return n >= 24 ? `${Math.floor(n / 24)} วัน ${Math.round(n % 24)} ชม.` : `${n.toFixed(1)} ชม.`;
   }
@@ -96,7 +104,9 @@
   <QuotaPick accounts={accts} />
   <div class="row wrap small ctrl">
     <button class:primary={!s?.paused} onclick={async () => { await api.setPaused(!s?.paused); refresh(); }}><Icon name={s?.paused ? "play" : "pause"} /> {s?.paused ? "ให้บอททำต่อ" : "พักบอท"}</button>
-    {#if s?.turbo_until}<button onclick={() => turbo(0)}>ปิด Turbo</button>{:else}
+    {#if s?.full_mode}<button class="primary" onclick={() => fullMode(false)}><Icon name="bolt" /> ปิดโหมดใช้เต็มที่</button>
+    {:else}<button onclick={() => fullMode(true)} title="ใช้โควต้าได้จนหมดจนกว่าจะกดปิด — สำหรับตอนที่คุณสั่งงานผ่านบอทเองเป็นหลัก"><Icon name="bolt" /> ใช้เต็มที่ (ค้างไว้)</button>{/if}
+    {#if s?.full_mode}{:else if s?.turbo_until}<button onclick={() => turbo(0)}>ปิด Turbo</button>{:else}
       <button onclick={() => turbo(2)}><Icon name="bolt" /> Turbo 2 ชม.</button>
       <button onclick={() => turbo(8)}><Icon name="bolt" /> Turbo ทั้งคืน</button>{/if}
     <span class="faint">กันให้งาน/ชม. {(s?.reserve_per_hour ?? 0).toFixed(2)}% {s?.reserve_learned ? "(เรียนรู้จากสถิติ)" : "(ค่าเริ่มต้น)"} · คุณกำลังใช้ Claude: {s?.user_active ? "ใช่" : "ไม่"}</span>

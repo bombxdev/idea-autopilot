@@ -54,7 +54,9 @@ const MAX_DELEGATES: usize = 3;
 /// The folder a helper works in: inside the idea folder, never above it.
 pub fn helper_dir(idea_dir: &Path, folder: &str) -> Result<PathBuf, String> {
     let f = folder.trim().trim_matches(['/', '\\']);
-    if f.is_empty() || f.contains("..") || f.contains(':') || Path::new(f).is_absolute() {
+    // "." or "./." name the lead's own folder: a helper must get a sub-folder of its own
+    let own = Path::new(f).components().any(|c| matches!(c, std::path::Component::Normal(_)));
+    if f.is_empty() || !own || f.contains("..") || f.contains(':') || Path::new(f).is_absolute() {
         return Err("folder ต้องเป็นโฟลเดอร์ย่อยในโฟลเดอร์ไอเดีย เช่น parts/api".into());
     }
     Ok(idea_dir.join(f))
@@ -67,9 +69,19 @@ pub fn delegate(app: &tauri::AppHandle, a: &serde_json::Value) -> Result<serde_j
     let idea_id = a["idea"].as_i64().ok_or("ต้องมี idea")?;
     let account = a["account"].as_str().ok_or("ต้องมี account")?.to_string();
     let task = a["task"].as_str().filter(|t| !t.trim().is_empty()).ok_or("ต้องมี task")?.to_string();
-    if st.rt.lock().paused {
-        return Err("บอทถูกพักอยู่ — ไม่ส่งงานให้ AI อื่น".into());
-    }
+    // the lead's run: when it ends — stopped, paused, the quota governor, a chat taking over, or just done —
+    // its helpers are stopped too, so nothing keeps spending quota on its own
+    let lead_cancel = {
+        let rt = st.rt.lock();
+        if rt.paused {
+            return Err("บอทถูกพักอยู่ — ไม่ส่งงานให้ AI อื่น".into());
+        }
+        // the quota governor's verdict for this account (scheduler.rs), the same one the bot obeys
+        if let Some((false, why)) = rt.acct_allowed.get(&account) {
+            return Err(format!("บัญชี {account} ถูกงดใช้ตอนนี้: {why} — เลือกบัญชีอื่นจาก list_other_ais หรือทำส่วนนี้เอง"));
+        }
+        rt.cancel.clone()
+    };
     let (acct, idea) = {
         let c = st.db.lock();
         let acct = crate::accounts::usable(&c).into_iter().find(|x| x.id == account).ok_or("ไม่พบบัญชีนี้ หรือบัญชีปิดอยู่ (ดู list_other_ais)")?;
@@ -112,6 +124,8 @@ pub fn delegate(app: &tauri::AppHandle, a: &serde_json::Value) -> Result<serde_j
     let _ = std::fs::create_dir_all(idea_dir.join("logs"));
     let env = crate::accounts::env_with_secret(&acct, &st.root);
     let lang = crate::lang::ui();
+    let helper_cancel = std::sync::Arc::new(tokio::sync::Notify::new());
+    let _watch = lead_cancel.map(|lead| watch_lead(app.clone(), lead, helper_cancel.clone()));
     let out = tauri::async_runtime::block_on(crate::runner::run(
         crate::runner::RunSpec {
             cwd: &dir,
@@ -126,7 +140,7 @@ pub fn delegate(app: &tauri::AppHandle, a: &serde_json::Value) -> Result<serde_j
             lang: &lang,
             env,
         },
-        std::sync::Arc::new(tokio::sync::Notify::new()),
+        helper_cancel,
         |_| {},
         |_| {},
     ))
@@ -139,6 +153,38 @@ pub fn delegate(app: &tauri::AppHandle, a: &serde_json::Value) -> Result<serde_j
         "report": if text.trim().is_empty() { "(ไม่ได้เขียน HELPER-REPORT.md — ดูไฟล์ในโฟลเดอร์เอง)".to_string() } else { text.chars().take(6000).collect() },
         "error": out.error,
     }))
+}
+
+/// Stops a helper when the run that asked for it is over: the lead's cancel signal is gone from the runtime
+/// (the run ended) or replaced by another run's. Checked every second; dropping the guard ends the watch.
+pub struct LeadWatch(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl Drop for LeadWatch {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+fn watch_lead(app: tauri::AppHandle, lead: std::sync::Arc<tokio::sync::Notify>, helper: std::sync::Arc<tokio::sync::Notify>) -> LeadWatch {
+    use tauri::Manager;
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let d = done.clone();
+    std::thread::spawn(move || {
+        while !d.load(std::sync::atomic::Ordering::SeqCst) {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            let st = app.state::<crate::state::AppState>();
+            if lead_gone(st.rt.lock().cancel.as_ref(), &lead) {
+                helper.notify_one();
+                return;
+            }
+        }
+    });
+    LeadWatch(done)
+}
+
+/// The lead's run is over when the runtime holds no cancel signal, or another run's.
+pub fn lead_gone(now: Option<&std::sync::Arc<tokio::sync::Notify>>, lead: &std::sync::Arc<tokio::sync::Notify>) -> bool {
+    now.map(|c| !std::sync::Arc::ptr_eq(c, lead)).unwrap_or(true)
 }
 
 /// The `ia team-mcp` server for a team run: lets the lead call other vendors' AIs.
@@ -232,6 +278,25 @@ pub fn apply_args(args: &mut Vec<String>, agents: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn helper_never_gets_the_leads_own_folder() {
+        let root = Path::new("idea");
+        for bad in ["", ".", "./", "./.", ".\\", "../x", "C:/x"] {
+            assert!(helper_dir(root, bad).is_err(), "{bad:?}");
+        }
+        assert_eq!(helper_dir(root, "parts/api").unwrap(), root.join("parts/api"));
+        assert_eq!(helper_dir(root, "./parts").unwrap(), root.join("./parts"));
+    }
+
+    #[test]
+    fn helper_stops_when_the_lead_run_is_over() {
+        let lead = std::sync::Arc::new(tokio::sync::Notify::new());
+        let other = std::sync::Arc::new(tokio::sync::Notify::new());
+        assert!(!lead_gone(Some(&lead), &lead));
+        assert!(lead_gone(None, &lead));
+        assert!(lead_gone(Some(&other), &lead));
+    }
 
     #[test]
     fn helpers_file_is_valid_and_helpers_cannot_hire() {
