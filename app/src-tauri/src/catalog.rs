@@ -48,6 +48,11 @@ pub const VENDORS: &[Vendor] = &[
     Vendor { id: "anthropic", label: "Anthropic — Claude", runner: "claude", auth: &["login", "key"], key_env: &["ANTHROPIC_API_KEY"], base_url: "", models: &["opus", "sonnet", "haiku"], note: "Claude Code: ล็อกอินบัญชี Claude (Pro/Max) หรือใช้ API key" },
     Vendor { id: "openai", label: "OpenAI — Codex (GPT)", runner: "codex", auth: &["login", "key"], key_env: &["OPENAI_API_KEY"], base_url: "", models: &[], note: "Codex CLI: ล็อกอินด้วย ChatGPT หรือใช้ API key — รายชื่อโมเดลอ่านจาก Codex เอง" },
     Vendor { id: "google", label: "Google — Gemini", runner: "gemini", auth: &["login", "key"], key_env: &["GEMINI_API_KEY"], base_url: "", models: &["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"], note: "Gemini CLI: ล็อกอินด้วย Google หรือใช้ API key" },
+    Vendor { id: "antigravity", label: "Google — Antigravity CLI", runner: "antigravity", auth: &["login"], key_env: &[], base_url: "", models: &["gemini-4-hydrogen-high", "gemini-4-hydrogen-medium", "gemini-3.8-flash-medium", "gemini-3.8-flash-low", "claude-sonnet-4-6", "claude-opus-4-6-thinking", "gpt-oss-120b-medium"], note: "Antigravity CLI (agy): ล็อกอินบัญชี Google (ฟรีมีโควต้ารายสัปดาห์) · แอปอ่านโควต้าจริงจาก agy /usage · โมเดล Claude/GPT ใช้โควต้ากลุ่มแยกจาก Gemini · กด “อ่านรายชื่อโมเดลใหม่” เพื่ออ่านจาก agy จริง" },
+    Vendor { id: "qwencloud", label: "QwenCloud — Token Plan (Qwen Code)", runner: "qwen", auth: &["key"], key_env: &["OPENAI_API_KEY"], base_url: "https://token-plan.maas.qwencloudapi.com/compatible-mode/v1", models: &["qwen3.8-max", "qwen3.7-plus", "qwen3.8-flash", "glm-5.3", "deepseek-v4-pro-0813", "deepseek-v4.1-flash"], note: "ผ่าน Qwen Code (qwen) ด้วย key ของ QwenCloud Token Plan (ต่างประเทศ) · ถ้าใช้ QwenCloud แบบจ่ายตามใช้ เปลี่ยนที่อยู่ API เป็น https://maas.qwencloudapi.com/compatible-mode/v1 · ไม่มี Qwen ฟรีแล้ว (Qwen OAuth ฟรีปิดไปเมื่อ เม.ย. 2026)" },
+    Vendor { id: "qwen-coding", label: "Alibaba Model Studio — Coding Plan (Qwen Code)", runner: "qwen", auth: &["key"], key_env: &["OPENAI_API_KEY"], base_url: "https://coding-intl.dashscope.aliyuncs.com/v1", models: &["qwen3.7-plus", "qwen3.6-plus", "qwen3.5-plus", "kimi-k2.5", "glm-5", "MiniMax-M2.5"], note: "ผ่าน Qwen Code ด้วย key ของ Coding Plan (ขึ้นต้น sk-sp-) · ต่างประเทศ coding-intl… / จีนใช้ https://coding.dashscope.aliyuncs.com/v1 · โควต้านับเป็นคำขอ (รอบ 5 ชม./สัปดาห์/เดือน) ดูได้ในหน้า console เท่านั้น" },
+    Vendor { id: "dashscope", label: "Alibaba Model Studio — จ่ายตามใช้ (Qwen Code)", runner: "qwen", auth: &["key"], key_env: &["OPENAI_API_KEY"], base_url: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", models: &["qwen3.7-max", "qwen3.7-plus", "qwen3.6-flash", "qwen3-coder-plus"], note: "ผ่าน Qwen Code ด้วย API key ของ Model Studio (DashScope) ภูมิภาคสิงคโปร์ · จีนใช้ https://dashscope.aliyuncs.com/compatible-mode/v1 · คิดตามโทเคน" },
+    Vendor { id: "qwen", label: "Qwen Code (ตั้งค่าใน Qwen Code เอง)", runner: "qwen", auth: &["login"], key_env: &[], base_url: "", models: &[], note: "ใช้ผู้ให้บริการที่ตั้งไว้ใน Qwen Code เอง (/auth หรือ settings.json) — รายชื่อโมเดลอ่านจาก settings.json ของ Qwen Code · ถ้าล็อกอินแยก ให้เปิด qwen ในหน้าต่างล็อกอินแล้วตั้ง /auth" },
     Vendor { id: "mistral", label: "Mistral — Vibe (Devstral)", runner: "mistral", auth: &["key"], key_env: &["MISTRAL_API_KEY"], base_url: "", models: &["mistral-medium-3.5", "mistral-large-4-0-3", "glm-5-3", "zai-glm-5-3-flash"], note: "Mistral Vibe: ใช้ API key จาก console.mistral.ai · ชื่อโมเดลเป็นชื่อย่อของ Vibe เอง (กด “อ่านรายชื่อโมเดลใหม่” เพื่ออ่านจาก Vibe จริง)" },
     Vendor { id: "deepseek", label: "DeepSeek", runner: "claude", auth: &["key"], key_env: &["ANTHROPIC_AUTH_TOKEN"], base_url: "https://api.deepseek.com/anthropic", models: &["deepseek-chat", "deepseek-reasoner"], note: "ผ่าน Claude Code ด้วย API แบบ Anthropic ของ DeepSeek" },
     Vendor { id: "moonshot", label: "Moonshot — Kimi", runner: "claude", auth: &["key"], key_env: &["ANTHROPIC_AUTH_TOKEN"], base_url: "https://api.moonshot.ai/anthropic", models: &["kimi-k2-turbo-preview", "kimi-k2-0905-preview"], note: "ผ่าน Claude Code ด้วย API แบบ Anthropic ของ Moonshot" },
@@ -74,6 +79,8 @@ pub fn native(runner: &str) -> &'static str {
         "claude" => "anthropic",
         "codex" => "openai",
         "gemini" => "google",
+        "antigravity" => "antigravity",
+        "qwen" => "qwen",
         "mistral" => "mistral",
         _ => "opencode",
     }
@@ -91,6 +98,12 @@ pub fn key_env(v: &Vendor, key: &str, base_override: &str) -> Vec<(String, Strin
     let base = if base_override.trim().is_empty() { v.base_url } else { base_override.trim() };
     if v.runner == "claude" && !base.is_empty() {
         out.push(("ANTHROPIC_BASE_URL".into(), anthropic_base(base)));
+    }
+    // Qwen Code with a key: its OpenAI-compatible mode (runner adds `--auth-type openai`), no settings.json needed
+    if v.runner == "qwen" {
+        if !base.is_empty() {
+            out.push(("OPENAI_BASE_URL".into(), base.trim_end_matches('/').to_string()));
+        }
     }
     out
 }
@@ -138,6 +151,10 @@ mod tests {
         let c = key_env(vendor("custom").unwrap(), "k", "https://example.test/anthropic");
         assert!(c.contains(&("ANTHROPIC_BASE_URL".into(), "https://example.test/anthropic".into())));
         assert_eq!(key_env(vendor("mistral").unwrap(), "k", ""), vec![("MISTRAL_API_KEY".to_string(), "k".to_string())]);
+        // Qwen Code: the key and the vendor's (or the owner's) OpenAI-compatible address
+        let q = key_env(vendor("dashscope").unwrap(), "k", "");
+        assert!(q.contains(&("OPENAI_API_KEY".into(), "k".into())) && q.contains(&("OPENAI_BASE_URL".into(), "https://dashscope-intl.aliyuncs.com/compatible-mode/v1".into())));
+        assert!(key_env(vendor("qwen-coding").unwrap(), "k", "https://coding.dashscope.aliyuncs.com/v1/").contains(&("OPENAI_BASE_URL".into(), "https://coding.dashscope.aliyuncs.com/v1".into())));
         assert!(needs_model_name(ds) && !needs_model_name(vendor("anthropic").unwrap()));
         // StepFun: Claude Code appends /v1/messages to the base; a Step Plan account overrides it
         let sf = vendor("stepfun").unwrap();

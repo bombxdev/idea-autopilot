@@ -324,6 +324,38 @@ fn vibe_sync(a: &Account, root: &Path) -> Result<usize, String> {
 }
 
 /// Ask the account's own agent (blocking, up to ~2 minutes). Err = why nothing could be read.
+#[cfg(test)]
+#[test]
+fn qwen_settings_list_their_models() {
+    let s = r#"{"modelProviders":{"openai":[{"id":"qwen3.8-max","baseUrl":"x"},{"id":"glm-5.3"}]},"model":{"name":"glm-5.3"}}"#;
+    assert_eq!(qwen_models(s), ["glm-5.3", "qwen3.8-max"]);
+    assert!(qwen_models("not json").is_empty());
+}
+
+/// Model ids a Qwen Code settings.json offers: `modelProviders.<type>[].id` and the chosen `model.name`.
+pub fn qwen_models(settings: &str) -> Vec<String> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(settings) else { return Vec::new() };
+    let mut out: Vec<String> = Vec::new();
+    if let Some(m) = v.pointer("/model/name").and_then(|x| x.as_str()) {
+        out.push(m.to_string());
+    }
+    for list in v.get("modelProviders").and_then(|x| x.as_object()).into_iter().flat_map(|o| o.values()) {
+        for m in list.as_array().into_iter().flatten() {
+            if let Some(id) = m.get("id").and_then(|x| x.as_str()) {
+                if !out.iter().any(|o| o == id) {
+                    out.push(id.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// `agy models` lines ("gemini-3.8-flash-low<TAB>Gemini 3.8 Flash (Low)") → the slugs.
+pub fn parse_agy_models(out: &str) -> Vec<String> {
+    out.lines().filter(|l| l.contains('\t')).filter_map(|l| l.split('\t').next()).map(str::trim).filter(|m| !m.is_empty() && !m.contains(' ')).map(String::from).collect()
+}
+
 pub fn fetch(a: &Account, root: &Path) -> Result<Vec<String>, String> {
     let env = crate::accounts::env_with_secret(a, root);
     let scratch = root.join("data").join("provider-test");
@@ -366,6 +398,27 @@ pub fn fetch(a: &Account, root: &Path) -> Result<Vec<String>, String> {
                 return Err(format!("Vibe ไม่บอกรายชื่อโมเดล: {why}"));
             }
             l
+        }
+        // Qwen Code: the models named in the account's settings.json (modelProviders), else the vendor's own list
+        "qwen" => {
+            let home = if a.home.is_empty() { dirs::home_dir().unwrap_or_default().join(".qwen") } else { std::path::PathBuf::from(&a.home) };
+            let l = qwen_models(&std::fs::read_to_string(home.join("settings.json")).unwrap_or_default());
+            if l.is_empty() {
+                crate::catalog::vendor(&a.vendor_id()).map(|v| v.models.iter().map(|m| m.to_string()).collect()).unwrap_or_default()
+            } else {
+                l
+            }
+        }
+        "antigravity" => {
+            // `agy models`: one "slug<TAB>name" per line, for this account's own sign-in
+            let bin = crate::providers::resolve_bin("agy").ok_or("ไม่พบ agy ในเครื่อง")?;
+            let mut c = std::process::Command::new(bin);
+            c.arg("models").current_dir(&scratch).envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+            let out = output(c, 60).ok_or("agy models ไม่ตอบภายใน 1 นาที")?;
+            if out.to_lowercase().contains("sign in") {
+                return Err("บัญชีนี้ยังไม่ได้ล็อกอิน Antigravity".into());
+            }
+            parse_agy_models(&out)
         }
         _ => return Err("AI ตัวนี้ไม่มีรายชื่อโมเดลให้อ่านจากโปรแกรม".into()),
     };

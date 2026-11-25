@@ -423,7 +423,8 @@ pub fn apply_to_run(provider: &str, cfg: &Path, cwd: &Path, args: &mut Vec<Strin
         return;
     }
     match provider {
-        "claude" => args.extend(["--mcp-config".to_string(), cfg.to_string_lossy().into_owned()]),
+        // Qwen Code takes the same {"mcpServers": …} file as Claude
+        "claude" | "qwen" => args.extend(["--mcp-config".to_string(), cfg.to_string_lossy().into_owned()]),
         "codex" => {
             let mut flags = vec![];
             for (id, s) in &servers {
@@ -482,6 +483,18 @@ pub fn apply_to_run(provider: &str, cfg: &Path, cwd: &Path, args: &mut Vec<Strin
             if std::fs::write(&p, serde_json::to_string_pretty(&json!({ "$schema": "https://opencode.ai/config.json", "mcp": m })).unwrap_or_default()).is_ok() {
                 env.push(("OPENCODE_CONFIG".into(), p.to_string_lossy().into_owned()));
             }
+        }
+        // Antigravity: the workspace's .agents/mcp_config.json (remote servers are `serverUrl` there)
+        "antigravity" => {
+            let mut m = Map::new();
+            for (id, s) in &servers {
+                let v = match s["url"].as_str() {
+                    Some(u) => json!({ "serverUrl": u, "headers": s["headers"] }),
+                    None => json!({ "command": s["command"], "args": s["args"], "env": s["env"] }),
+                };
+                m.insert(id.clone(), v);
+            }
+            set_agy(cwd, Some(m));
         }
         // Vibe reads tools only from its config.toml: written into the account's own VIBE_HOME (never the machine's ~/.vibe)
         "mistral" => {
@@ -556,6 +569,23 @@ pub fn set_vibe(home: &Path, servers: Option<&Map<String, Value>>) {
 }
 
 /// A run without tools: drop what an earlier run left in the idea's `.gemini/settings.json` (Gemini would load it).
+/// The tools of an Antigravity run in `<idea>/.agents/mcp_config.json` (None = take the app's out again).
+pub fn set_agy(cwd: &Path, servers: Option<Map<String, Value>>) {
+    let p = cwd.join(".agents").join("mcp_config.json");
+    let mut cur: Value = std::fs::read_to_string(&p).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_else(|| json!({}));
+    match servers {
+        Some(m) => cur["mcpServers"] = Value::Object(m),
+        None => {
+            if cur.as_object_mut().and_then(|o| o.remove("mcpServers")).is_none() {
+                return;
+            }
+        }
+    }
+    if std::fs::create_dir_all(cwd.join(".agents")).is_ok() {
+        let _ = std::fs::write(&p, serde_json::to_string_pretty(&cur).unwrap_or_default());
+    }
+}
+
 pub fn clear_gemini(cwd: &Path) {
     let p = cwd.join(".gemini").join("settings.json");
     let Some(mut v) = std::fs::read_to_string(&p).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()) else { return };

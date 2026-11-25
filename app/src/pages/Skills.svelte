@@ -126,7 +126,9 @@
       preview = { ...(await api.shopPreview(repo.repo, repo.commit, path)), repo: repo.repo, commit: repo.commit, path };
       setTimeout(() => document.querySelector(".pv")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
     } catch (e) {
-      toast(String(e), "err");
+      // a docs page that happens to be called skill.md (ISSUE-149): say so instead of a format error
+      const notSkill = /name และ description|ขึ้นต้นด้วย ---|front-matter/.test(String(e));
+      toast(notSkill ? `${path} ไม่ใช่สกิล — เป็นไฟล์เอกสารทั่วไป (ไม่มี name / description ของสกิล)` : String(e), "err");
     }
     previewing = "";
   }
@@ -142,8 +144,8 @@
   async function install() {
     installing = true;
     try {
-      const r = await api.shopInstall(preview.repo, preview.commit, preview.path, preview.sha256, accept);
-      toast(`ติดตั้ง “${r.name}” แล้ว`, "ok");
+      const r = await api.shopInstall(preview.repo, preview.commit, preview.path, preview.sha256, preview.bundle ?? null, accept);
+      toast(r.files ? `ติดตั้ง “${r.name}” พร้อมไฟล์ประกอบ ${r.files} ไฟล์แล้ว` : `ติดตั้ง “${r.name}” แล้ว`, "ok");
       preview = null;
       await load();
       tab = "mine";
@@ -153,7 +155,9 @@
     installing = false;
   }
   // verdict of the open preview: built-in scan, plus SkillSpector once its result is in
-  const pv = $derived(deep?.verdict ?? preview?.verdict);
+  // the deep check reads SKILL.md only: the supporting files' findings (in preview.verdict) still count
+  const RANK = { clean: 0, warn: 1, danger: 2 };
+  const pv = $derived(deep?.verdict && preview && RANK[deep.verdict] < RANK[preview.verdict] && preview.files?.some((f) => f.verdict !== "clean") ? preview.verdict : (deep?.verdict ?? preview?.verdict));
   const pvWait = $derived(!!preview?.ss_available && !deep);
   const shownSkills = $derived(
     (repo?.skills ?? []).filter((s) => !skillFilter.trim() || (s.name + " " + s.path).toLowerCase().includes(skillFilter.trim().toLowerCase())),
@@ -300,19 +304,27 @@
         {#if repo.archived}<span class="chip amber">เลิกดูแลแล้ว</span>{/if}
         <span class="faint small">commit {repo.commit.slice(0, 7)}</span>
       </div>
+      {#if repo.submodules?.length}
+        <div class="warnbox small">
+          <Icon name="fork" /> repo นี้เก็บบางส่วนไว้ใน repo อื่น (git submodule) — สกิลจริงมักอยู่ในนั้น:
+          {#each repo.submodules as m (m.repo)}
+            <button class="small" onclick={() => browse(m.repo)}><Icon name="arrowRight" /> {m.repo}<span class="faint"> ({m.path})</span></button>
+          {/each}
+        </div>
+      {/if}
       {#if repo.skills.length}
         <input bind:value={skillFilter} placeholder="กรองรายชื่อสกิลใน repo นี้…" />
         <div class="list">
           {#each shownSkills as s (s.path)}
             <button class="card item" class:cur={preview?.path === s.path} disabled={s.too_big} onclick={() => open(s.path)}>
-              <b class="grow">{s.name}</b><span class="faint small">{s.path}</span>
+              <b class="grow">{s.name}</b>{#if s.doubt}<span class="chip amber" title="ชื่อไฟล์เป็นตัวพิมพ์เล็ก (skill.md) มักเป็นเอกสารทั่วไป ไม่ใช่สกิล">อาจไม่ใช่สกิล</span>{/if}<span class="faint small">{s.path}</span>
               {#if s.too_big}<span class="chip red">ใหญ่เกินไป</span>{:else}<span class="faint small">{(s.size / 1024).toFixed(1)} KB</span>{/if}
               {#if previewing === s.path}<span class="small">กำลังโหลด…</span>{/if}
             </button>
           {:else}<div class="faint">ไม่พบ</div>{/each}
         </div>
         {#if repo.truncated}<div class="faint small">repo ใหญ่ แสดงไม่ครบทุกไฟล์</div>{/if}
-      {:else if !preview}<div class="faint">ไม่พบไฟล์ SKILL.md ใน repo นี้</div>{/if}
+      {:else if !preview}<div class="faint">ไม่พบไฟล์ SKILL.md ใน repo นี้{repo.submodules?.length ? " — ลองเปิด repo ด้านบน" : ""}</div>{/if}
     {/if}
 
     {#if preview}
@@ -330,6 +342,14 @@
         {/if}
         {#if preview.ss_available}<SkillCheck text={preview.text} bind:result={deep} />{/if}
         <div class="small faint">{preview.note}</div>
+        {#if preview.files?.length}
+          <details><summary class="small">ไฟล์ประกอบ {preview.files.length} ไฟล์ (จะติดตั้งไปด้วย)</summary>
+            <ul class="files small">
+              {#each preview.files as f (f.path)}<li><code>{f.path}</code> <span class="faint">{(f.size / 1024).toFixed(1)} KB</span>{#if f.verdict !== "clean"} <span class="chip {f.verdict === 'warn' ? 'amber' : 'red'}">{f.verdict === "warn" ? "มีคำเตือน" : "อันตราย"}</span>{/if}</li>{/each}
+            </ul>
+            {#if preview.skipped?.length}<div class="small faint">ไม่ติดตั้ง (ไม่ใช่ข้อความ หรือใหญ่เกิน): {preview.skipped.join(", ")}</div>{/if}
+          </details>
+        {/if}
         <details open><summary class="small">เนื้อหาเต็ม (อ่านให้จบก่อนติดตั้ง)</summary><pre class="txt">{preview.text}</pre></details>
         {#if pv === "warn"}<label class="small"><input type="checkbox" bind:checked={accept} /> ฉันอ่านเนื้อหาและคำเตือนทั้งหมดแล้ว และต้องการติดตั้ง</label>{/if}
         <div class="row">
@@ -365,6 +385,7 @@
 </div>
 
 <style>
+  .files { max-height: 220px; overflow: auto; margin: 6px 0; padding-left: 18px; }
   .wrapx { max-width: 900px; display: flex; flex-direction: column; gap: 12px; }
   .wrapx p { margin: 0; }
   .tabs { gap: 6px; }

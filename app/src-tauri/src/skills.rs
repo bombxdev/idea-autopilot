@@ -5,9 +5,10 @@
 //! so skills that share a `family` are variants of one dish, not duplicates. The bot offers one variant per
 //! family per run, the user can pin a favourite, and the numbers are shown as information — never as a verdict.
 //!
-//! Nothing from the internet is installed unseen: the shop fetches only the text of a `SKILL.md` from GitHub,
-//! pinned to one commit, scans it, shows it in full, and installs only after the user confirms. Dangerous
-//! findings can never be overridden.
+//! Nothing from the internet is installed unseen: the shop fetches the text of a `SKILL.md` from GitHub and the
+//! text files beside it in the skill's folder (references, templates, scripts — ISSUE-150), pinned to one commit,
+//! scans every file, shows them, and installs only after the user confirms. Dangerous findings can never be
+//! overridden. Binary files are never downloaded.
 use crate::skillspector::{self, Report};
 use crate::{db, state::AppState};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -896,6 +897,19 @@ fn marker(slug: &str) -> String {
     format!("<!-- ia-opened:{slug} -->")
 }
 
+fn copy_dir(from: &Path, to: &Path) {
+    let Ok(rd) = std::fs::read_dir(from) else { return };
+    let _ = std::fs::create_dir_all(to);
+    for e in rd.flatten() {
+        let (p, q) = (e.path(), to.join(e.file_name()));
+        if p.is_dir() {
+            copy_dir(&p, &q);
+        } else {
+            let _ = std::fs::copy(&p, &q);
+        }
+    }
+}
+
 /// Put the offered skills into the idea folder (the agent may only work there) and list them in `SKILLS.md`.
 pub fn materialize(root: &Path, idea_dir: &Path, offers: &[Offer]) {
     let target = idea_dir.join("skills");
@@ -919,6 +933,8 @@ pub fn materialize(root: &Path, idea_dir: &Path, offers: &[Offer]) {
     for o in offers {
         let Some(text) = read_text(root, &o.slug) else { continue };
         let d = target.join(&o.slug);
+        // the skill's own folder (references, templates, scripts) comes along, so its relative links work
+        copy_dir(&dir(root).join(&o.slug), &d);
         let _ = std::fs::create_dir_all(&d);
         let _ = std::fs::write(d.join("SKILL.md"), format!("{}\n\n{}\n", text.trim_end(), marker(&o.slug)));
         index.push_str(&format!("- **{}** (`{}`) — {}\n  file: `skills/{}/SKILL.md`", o.name, o.slug, o.description, o.slug));
@@ -1245,16 +1261,54 @@ pub async fn shop_browse(repo: &str) -> Result<Value, String> {
         if it["type"] == "blob" && valid_path(path) {
             let size = it["size"].as_u64().unwrap_or(0);
             let dir_name = path.rsplit_once('/').map(|x| x.0.rsplit('/').next().unwrap_or("").to_string()).unwrap_or_else(|| r.clone());
-            skills.push(json!({ "path": path, "name": dir_name, "size": size, "too_big": size as usize > MAX_BYTES }));
+            skills.push(json!({ "path": path, "name": dir_name, "size": size, "too_big": size as usize > MAX_BYTES, "doubt": !path.ends_with("SKILL.md") }));
         }
     }
+    // a repo may keep its skills in another repo hooked in as a git submodule (shinyobjectz/raea → raea-skills):
+    // the tree shows only a link there, so name those repos for the owner to open (ISSUE-149)
+    let has_sub = tree["tree"].as_array().is_some_and(|t| t.iter().any(|it| it["type"] == "commit"));
+    let submodules = if has_sub {
+        raw_fetch(&o, &r, &sha, ".gitmodules").await.map(|t| github_submodules(&t)).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    // real skills (SKILL.md) before lowercase skill.md files, which are mostly docs pages
+    skills.sort_by_key(|s| s["doubt"].as_bool().unwrap_or(false));
     let total = skills.len();
     skills.truncate(300);
     Ok(json!({
+        "submodules": submodules,
         "repo": format!("{o}/{r}"), "commit": sha, "branch": branch, "description": info["description"], "stars": info["stargazers_count"],
         "license": info["license"]["spdx_id"], "archived": info["archived"], "pushed": info["pushed_at"], "trust": trust_of(&o),
         "url": format!("https://github.com/{o}/{r}"), "skills": skills, "total": total, "truncated": tree["truncated"].as_bool().unwrap_or(false) || total > 300,
     }))
+}
+
+/// The GitHub repos a `.gitmodules` file links in, as {path, repo} — those that look like they hold skills first.
+pub fn github_submodules(text: &str) -> Vec<Value> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut path = String::new();
+    for line in text.lines() {
+        let l = line.trim();
+        if l.starts_with('[') {
+            path.clear();
+        } else if let Some((k, v)) = l.split_once('=') {
+            let (k, v) = (k.trim(), v.trim());
+            if k == "path" {
+                path = v.to_string();
+            } else if k == "url" {
+                let u = v.trim_end_matches('/').trim_end_matches(".git");
+                let rest = u.strip_prefix("https://github.com/").or_else(|| u.strip_prefix("git@github.com:")).or_else(|| u.strip_prefix("http://github.com/"));
+                if let Some((o, r)) = rest.and_then(parse_repo) {
+                    out.push((path.clone(), format!("{o}/{r}")));
+                }
+            }
+        }
+    }
+    let skillish = |(p, r): &(String, String)| p.to_lowercase().contains("skill") || r.to_lowercase().contains("skill");
+    out.sort_by_key(|x| !skillish(x));
+    out.dedup_by(|a, b| a.1 == b.1);
+    out.into_iter().take(20).map(|(p, r)| json!({ "path": p, "repo": r })).collect()
 }
 
 /// Resolve a pasted link to a SKILL.md into (repo, commit, path).
@@ -1283,6 +1337,174 @@ pub struct Fetched {
     pub meta: Meta,
 }
 
+/// A skill folder's other files: at most this many, this much in all (each one <= MAX_BYTES like SKILL.md).
+const MAX_EXTRA_FILES: usize = 200;
+const MAX_EXTRA_TOTAL: usize = 3_000_000;
+
+/// Text files worth bringing along with a skill; anything else (images, archives, binaries) stays on GitHub.
+fn extra_kind_ok(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    let ext = lower.rsplit_once('.').map(|x| x.1).unwrap_or("");
+    const EXT: &[&str] = &[
+        "md", "mdx", "txt", "json", "jsonc", "yaml", "yml", "toml", "csv", "tsv", "xml", "html", "htm", "css", "svg", "js", "mjs", "cjs", "ts", "tsx", "jsx",
+        "py", "sh", "bash", "ps1", "rb", "go", "rs", "sql", "ini", "cfg", "conf", "tmpl", "j2", "liquid", "lua", "r",
+    ];
+    (!ext.is_empty() && EXT.contains(&ext)) || ["license", "notice", "readme", "makefile", "dockerfile"].contains(&lower.as_str())
+}
+
+/// A relative path inside the skill folder that is safe to write as is.
+fn extra_path_ok(rel: &str) -> bool {
+    !rel.is_empty()
+        && rel.len() <= 200
+        && rel.split('/').all(|seg| !seg.is_empty() && !seg.starts_with('.') && seg.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ' ' | '@' | '+')))
+}
+
+/// Which blobs of a repo tree belong to the skill whose SKILL.md is at `skill_path`: the text files under its
+/// folder, except other skills nested inside it. Returns (relative path, size) and what was left out.
+pub fn pick_extras(tree: &[Value], skill_path: &str) -> (Vec<(String, u64)>, Vec<String>) {
+    let Some((dir, _)) = skill_path.rsplit_once('/') else {
+        // a SKILL.md at the repo's root: the whole repo is not one skill's folder
+        return (Vec::new(), Vec::new());
+    };
+    let prefix = format!("{dir}/");
+    let nested: Vec<String> = tree
+        .iter()
+        .filter_map(|it| it["path"].as_str())
+        .filter(|p| p.starts_with(&prefix) && *p != skill_path && (p.ends_with("/SKILL.md") || p.ends_with("/skill.md")))
+        .filter_map(|p| p.rsplit_once('/').map(|x| format!("{}/", x.0)))
+        .collect();
+    let (mut keep, mut skipped) = (Vec::new(), Vec::new());
+    let mut total = 0u64;
+    for it in tree {
+        let Some(p) = it["path"].as_str() else { continue };
+        if it["type"] != "blob" || p == skill_path || !p.starts_with(&prefix) || nested.iter().any(|n| p.starts_with(n.as_str())) {
+            continue;
+        }
+        let rel = &p[prefix.len()..];
+        let size = it["size"].as_u64().unwrap_or(0);
+        let name = rel.rsplit('/').next().unwrap_or(rel);
+        if !extra_path_ok(rel) || !extra_kind_ok(name) || size as usize > MAX_BYTES || keep.len() >= MAX_EXTRA_FILES || (total + size) as usize > MAX_EXTRA_TOTAL {
+            skipped.push(rel.to_string());
+            continue;
+        }
+        total += size;
+        keep.push((rel.to_string(), size));
+    }
+    keep.sort();
+    (keep, skipped)
+}
+
+/// The skill folder's text files at that commit, fetched and scanned.
+#[derive(Default)]
+pub struct Extras {
+    pub files: Vec<(String, String)>,
+    pub skipped: Vec<String>,
+    pub scans: Vec<(String, Scan)>,
+}
+
+async fn fetch_extras(repo: &str, commit: &str, path: &str) -> Result<Extras, String> {
+    let (o, r) = parse_repo(repo).ok_or("ชื่อ repo ไม่ถูกต้อง")?;
+    let Some((dir, _)) = path.rsplit_once('/') else { return Ok(Extras::default()) };
+    let tree = gh_get(&format!("https://api.github.com/repos/{o}/{r}/git/trees/{commit}?recursive=1")).await?;
+    let (want, mut skipped) = pick_extras(tree["tree"].as_array().map(|v| v.as_slice()).unwrap_or(&[]), path);
+    // a few at a time: a big skill (raea: ~100 pages) in seconds rather than a minute
+    let mut files = Vec::new();
+    for chunk in want.chunks(12) {
+        let mut set = tokio::task::JoinSet::new();
+        for (i, (rel, _)) in chunk.iter().enumerate() {
+            let (o, r, c, p) = (o.clone(), r.clone(), commit.to_string(), format!("{dir}/{rel}"));
+            set.spawn(async move { (i, raw_fetch(&o, &r, &c, &p).await) });
+        }
+        let mut got: Vec<(usize, Result<String, String>)> = set.join_all().await;
+        got.sort_by_key(|x| x.0);
+        for (i, t) in got {
+            let rel = chunk[i].0.clone();
+            match t {
+                Ok(t) => files.push((rel, t)),
+                Err(_) => skipped.push(rel),
+            }
+        }
+    }
+    let scans = files.iter().map(|(rel, t)| (rel.clone(), scan_extra(t))).collect();
+    Ok(Extras { files, skipped, scans })
+}
+
+/// A supporting file is scanned like SKILL.md, minus the "long file" note (reference pages are long by nature).
+fn scan_extra(text: &str) -> Scan {
+    let mut sc = scan(text);
+    sc.findings.retain(|f| f.what != "ไฟล์ค่อนข้างใหญ่");
+    sc.verdict = if sc.findings.iter().any(|f| f.level == "danger") {
+        "danger"
+    } else if sc.findings.iter().any(|f| f.level == "warn") {
+        "warn"
+    } else {
+        "clean"
+    };
+    sc
+}
+
+/// One hash over SKILL.md and every file, so the install takes exactly what the preview showed.
+pub fn bundle_sha(text: &str, files: &[(String, String)]) -> String {
+    let mut all = Vec::new();
+    all.extend_from_slice(text.as_bytes());
+    for (rel, t) in files {
+        all.push(0);
+        all.extend_from_slice(rel.as_bytes());
+        all.push(0);
+        all.extend_from_slice(t.as_bytes());
+    }
+    sha256_hex(&all)
+}
+
+/// Write the skill's other files next to its SKILL.md (files of an older version go first).
+pub fn write_extras(root: &Path, slug: &str, files: &[(String, String)]) -> Result<(), String> {
+    if !valid_slug(slug) {
+        return Err("ชื่อสกิลไม่ถูกต้อง".into());
+    }
+    let d = dir(root).join(slug);
+    if let Ok(rd) = std::fs::read_dir(&d) {
+        for e in rd.flatten() {
+            if e.file_name() != "SKILL.md" {
+                let p = e.path();
+                let _ = if p.is_dir() { std::fs::remove_dir_all(&p) } else { std::fs::remove_file(&p) };
+            }
+        }
+    }
+    for (rel, t) in files {
+        if !extra_path_ok(rel) {
+            continue;
+        }
+        let p = d.join(rel);
+        if let Some(parent) = p.parent() {
+            std::fs::create_dir_all(parent).map_err(err)?;
+        }
+        std::fs::write(&p, t).map_err(err)?;
+    }
+    Ok(())
+}
+
+/// Fold the supporting files' findings into the skill's scan, each named by its file.
+fn fold_extras(sc: &mut Scan, ex: &Extras) {
+    for (rel, s) in &ex.scans {
+        for f in &s.findings {
+            if f.level == "info" {
+                continue;
+            }
+            sc.findings.push(Finding { level: f.level, what: format!("{rel}: {}", f.what), why: f.why.clone(), excerpt: f.excerpt.clone() });
+        }
+        for d in &s.domains {
+            if !sc.domains.contains(d) {
+                sc.domains.push(d.clone());
+            }
+        }
+    }
+    if sc.findings.iter().any(|f| f.level == "danger") {
+        sc.verdict = "danger";
+    } else if sc.verdict == "clean" && sc.findings.iter().any(|f| f.level == "warn") {
+        sc.verdict = "warn";
+    }
+}
+
 async fn fetch_skill(repo: &str, commit: &str, path: &str) -> Result<Fetched, String> {
     let (o, r) = parse_repo(repo).ok_or("ชื่อ repo ไม่ถูกต้อง")?;
     let text = raw_get(&o, &r, commit, path).await?;
@@ -1296,7 +1518,10 @@ async fn fetch_skill(repo: &str, commit: &str, path: &str) -> Result<Fetched, St
 pub async fn shop_preview(app: &AppHandle, repo: &str, commit: &str, path: &str) -> Result<Value, String> {
     let f = fetch_skill(repo, commit, path).await?;
     let p = parse(&f.text)?;
-    let sc = scan(&f.text);
+    let mut sc = scan(&f.text);
+    let ex = fetch_extras(repo, commit, path).await.unwrap_or_default();
+    fold_extras(&mut sc, &ex);
+    let files: Vec<Value> = ex.files.iter().zip(&ex.scans).map(|((rel, t), (_, s))| json!({ "path": rel, "size": t.len(), "verdict": s.verdict })).collect();
     let st = app.state::<AppState>();
     let all = rows(&st.db.lock());
     let verdict = sc.verdict;
@@ -1305,21 +1530,54 @@ pub async fn shop_preview(app: &AppHandle, repo: &str, commit: &str, path: &str)
         "verdict": verdict, "findings": sc.findings, "ss_available": skillspector::bin().is_some(), "domains": sc.domains, "license": f.meta.license, "source": f.meta.source, "trust": f.meta.trust,
         "similar": similar_to(&all, &p.name, &p.description, ""),
         "needs_accept": verdict == "warn",
-        "note": "ติดตั้งเฉพาะข้อความของ SKILL.md — สคริปต์หรือไฟล์ประกอบที่สกิลอ้างถึงจะไม่ถูกดาวน์โหลด",
+        "files": files, "skipped": ex.skipped, "bundle": bundle_sha(&f.text, &ex.files),
+        "note": if ex.files.is_empty() && ex.skipped.is_empty() {
+            "สกิลนี้มีแค่ SKILL.md ไฟล์เดียว".to_string()
+        } else if ex.skipped.is_empty() {
+            format!("ติดตั้ง SKILL.md พร้อมไฟล์ประกอบในโฟลเดอร์ของสกิล {} ไฟล์ (สแกนทุกไฟล์แล้ว)", ex.files.len())
+        } else {
+            format!("ติดตั้ง SKILL.md พร้อมไฟล์ประกอบในโฟลเดอร์ของสกิล {} ไฟล์ (สแกนทุกไฟล์แล้ว) — ข้าม {} ไฟล์ที่ไม่ใช่ข้อความหรือใหญ่เกิน", ex.files.len(), ex.skipped.len())
+        },
     }))
 }
 
-pub async fn shop_install(app: &AppHandle, repo: &str, commit: &str, path: &str, sha256: &str, accept: bool) -> Result<Value, String> {
+pub async fn shop_install(app: &AppHandle, repo: &str, commit: &str, path: &str, sha256: &str, bundle: Option<&str>, accept: bool) -> Result<Value, String> {
     let f = fetch_skill(repo, commit, path).await?;
     // exactly what the user reviewed, nothing else
     if sha256_hex(f.text.as_bytes()) != sha256 {
         return Err("ไฟล์ไม่ตรงกับที่คุณเปิดดู — ดูตัวอย่างใหม่อีกครั้ง".into());
     }
+    // the folder's other files only when the preview showed them (and they are still the same)
+    let ex = match bundle {
+        Some(b) => {
+            let ex = fetch_extras(repo, commit, path).await?;
+            if bundle_sha(&f.text, &ex.files) != b {
+                return Err("ไฟล์ประกอบไม่ตรงกับที่คุณเปิดดู — ดูตัวอย่างใหม่อีกครั้ง".into());
+            }
+            ex
+        }
+        None => Extras::default(),
+    };
+    let bad: Vec<String> = ex.scans.iter().filter(|(_, s)| s.verdict == "danger").map(|(rel, _)| rel.clone()).collect();
+    if !bad.is_empty() {
+        return Err(format!("บล็อกการติดตั้ง: ไฟล์ประกอบมีของอันตราย ({})", bad.join(", ")));
+    }
+    if ex.scans.iter().any(|(_, s)| s.verdict == "warn") && !accept {
+        return Err("NEEDS_ACCEPT: ไฟล์ประกอบมีคำเตือน ต้องติ๊กยืนยันว่าอ่านแล้วก่อนติดตั้ง".into());
+    }
     let st = app.state::<AppState>();
     // checked before anything is written, outside the database lock (it takes a few seconds)
     let ss = deep_check(&st.root, &f.text).await?;
-    let r = install_checked(&st.db.lock(), &st.root, &f.text, &f.meta, accept, ss.as_ref())?;
-    st.push_log(format!("[skills] ติดตั้งสกิลจาก {}", f.meta.source));
+    let mut r = install_checked(&st.db.lock(), &st.root, &f.text, &f.meta, accept, ss.as_ref())?;
+    if let Some(slug) = r["slug"].as_str() {
+        write_extras(&st.root, slug, &ex.files)?;
+    }
+    r["files"] = json!(ex.files.len());
+    st.push_log(if ex.files.is_empty() {
+        format!("[skills] ติดตั้งสกิลจาก {}", f.meta.source)
+    } else {
+        format!("[skills] ติดตั้งสกิลจาก {} พร้อมไฟล์ประกอบ {} ไฟล์", f.meta.source, ex.files.len())
+    });
     Ok(r)
 }
 
@@ -1406,13 +1664,76 @@ pub async fn skills_shop_preview(app: AppHandle, repo: String, commit: String, p
 }
 
 #[tauri::command]
-pub async fn skills_shop_install(app: AppHandle, repo: String, commit: String, path: String, sha256: String, accept_warnings: bool) -> R<Value> {
-    shop_install(&app, &repo, &commit, &path, &sha256, accept_warnings).await
+pub async fn skills_shop_install(app: AppHandle, repo: String, commit: String, path: String, sha256: String, bundle: Option<String>, accept_warnings: bool) -> R<Value> {
+    shop_install(&app, &repo, &commit, &path, &sha256, bundle.as_deref(), accept_warnings).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_skill_brings_its_folder_but_not_other_skills_or_binaries() {
+        let b = |p: &str, size: u64| json!({ "path": p, "type": "blob", "size": size });
+        let tree = vec![
+            b("skills/raea/SKILL.md", 9000),
+            b("skills/raea/3d.md", 4000),
+            b("skills/raea/3d/animation.md", 3000),
+            b("skills/raea/logo.png", 3000),
+            b("skills/raea/huge.md", 900_000),
+            b("skills/raea/.hidden/x.md", 10),
+            b("skills/raea/sub/SKILL.md", 100),
+            b("skills/raea/sub/ref.md", 100),
+            b("skills/other/SKILL.md", 100),
+            b("README.md", 100),
+            json!({ "path": "skills/raea/3d", "type": "tree" }),
+        ];
+        let (keep, skipped) = pick_extras(&tree, "skills/raea/SKILL.md");
+        let names: Vec<&str> = keep.iter().map(|x| x.0.as_str()).collect();
+        assert_eq!(names, ["3d.md", "3d/animation.md"]);
+        assert!(skipped.contains(&"logo.png".to_string()) && skipped.contains(&"huge.md".to_string()));
+        // a SKILL.md at the root of a repo does not take the repo with it
+        assert!(pick_extras(&tree, "SKILL.md").0.is_empty());
+        assert!(!extra_path_ok("../x.md") && !extra_path_ok("a/../x.md") && extra_path_ok("3d/animation.md"));
+        // the bundle hash changes when any file does
+        let f1 = vec![("a.md".to_string(), "x".to_string())];
+        let f2 = vec![("a.md".to_string(), "y".to_string())];
+        assert_ne!(bundle_sha("s", &f1), bundle_sha("s", &f2));
+        // written next to SKILL.md, older files replaced, and copied into the idea with it
+        let root = std::env::temp_dir().join(format!("ia-extras-{}", std::process::id()));
+        let d = dir(&root).join("raea");
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("SKILL.md"), "---\nname: raea\ndescription: d\n---\nbody\n").unwrap();
+        std::fs::write(d.join("old.md"), "old").unwrap();
+        write_extras(&root, "raea", &[("3d/animation.md".into(), "anim".into())]).unwrap();
+        assert!(!d.join("old.md").exists());
+        assert_eq!(std::fs::read_to_string(d.join("3d/animation.md")).unwrap(), "anim");
+        let idea = root.join("idea");
+        let offer = Offer { slug: "raea".into(), name: "raea".into(), description: "d".into(), family: String::new(), note: String::new() };
+        materialize(&root, &idea, &[offer]);
+        assert_eq!(std::fs::read_to_string(idea.join("skills/raea/3d/animation.md")).unwrap(), "anim");
+        assert!(std::fs::read_to_string(idea.join("skills/raea/SKILL.md")).unwrap().contains("ia-opened:raea"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn submodules_point_at_the_skill_repo() {
+        let t = "[submodule \"tools/rask\"]
+	path = tools/rask
+	url = https://github.com/shinyobjectz/rask.git
+[submodule \"skills\"]
+	path = skills
+	url = https://github.com/shinyobjectz/raea-skills.git
+[submodule \"x\"]
+	path = x
+	url = https://gitlab.com/a/b.git
+";
+        let v = github_submodules(t);
+        assert_eq!(v.len(), 2);
+        assert_eq!(v[0]["repo"], "shinyobjectz/raea-skills");
+        assert_eq!(v[0]["path"], "skills");
+        assert_eq!(v[1]["repo"], "shinyobjectz/rask");
+    }
 
     #[test]
     fn exact_name_ranks_first() {
@@ -1656,6 +1977,20 @@ mod tests {
         let found = shop_search("explainroo", "popular").await.unwrap();
         assert_eq!(found["repos"][0]["repo"], "vincentsch/explainroo", "{found}");
         assert!(shop_search("explainroo", "popular").await.is_ok()); // second time: from memory
+    }
+
+    /// raea's skill lives in a submodule repo and keeps its references next to SKILL.md (ISSUE-149/150).
+    #[tokio::test]
+    #[ignore]
+    async fn shop_live_raea_brings_its_folder() {
+        let b = shop_browse("shinyobjectz/raea").await.unwrap();
+        assert!(b["submodules"].as_array().unwrap().iter().any(|m| m["repo"] == "shinyobjectz/raea-skills"), "{b}");
+        let s = shop_browse("shinyobjectz/raea-skills").await.unwrap();
+        let commit = s["commit"].as_str().unwrap().to_string();
+        let ex = fetch_extras("shinyobjectz/raea-skills", &commit, "skills/raea/SKILL.md").await.unwrap();
+        let bad: Vec<_> = ex.scans.iter().filter(|(_, s)| s.verdict != "clean").map(|(r, s)| format!("{r}={} {:?}", s.verdict, s.findings.iter().map(|f| &f.what).collect::<Vec<_>>())).collect();
+        println!("files {} skipped {:?}\n{}", ex.files.len(), ex.skipped, bad.join("\n"));
+        assert!(ex.files.iter().any(|(r, _)| r == "3d.md"), "{:?}", ex.files.iter().map(|x| &x.0).collect::<Vec<_>>());
     }
 
     /// Talks to the real GitHub: `cargo test --lib shop_live -- --ignored --nocapture`

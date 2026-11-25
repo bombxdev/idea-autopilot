@@ -57,6 +57,22 @@ pub const DEFS: &[Def] = &[
         hint: "ไม่มีตัวอ่านโควต้า → ใช้งบชั่วโมงที่ตั้งไว้",
     },
     Def {
+        id: "antigravity",
+        label: "Antigravity CLI (Google)",
+        bin: "agy",
+        tiers: ["", "", ""],
+        effort: true,
+        hint: "ตัวใหม่แทน Gemini CLI · อ่านโควต้าจริงได้ (agy /usage) · มีโมเดล Gemini, Claude และ GPT-OSS ให้เลือก",
+    },
+    Def {
+        id: "qwen",
+        label: "Qwen Code (Alibaba)",
+        bin: "qwen",
+        tiers: ["", "", ""],
+        effort: false,
+        hint: "ใช้ key ของ QwenCloud / Model Studio (หรือที่ตั้งไว้ใน Qwen Code เอง) · เห็นความคืบหน้าละเอียด · ไม่มีตัวอ่านโควต้า → ใช้งบชั่วโมงที่ตั้งไว้",
+    },
+    Def {
         id: "mistral",
         label: "Mistral Vibe",
         bin: "vibe",
@@ -135,6 +151,10 @@ fn resolve_known_dirs(bin: &str) -> Option<PathBuf> {
     ];
     if let Some(roaming) = dirs::data_dir() {
         dirs_to_try.push(roaming.join("npm"));
+    }
+    // Antigravity's installer: %LOCALAPPDATA%\agy\bin (added to PATH, but this app may have started before that)
+    if let Some(local) = dirs::data_local_dir() {
+        dirs_to_try.push(local.join("agy").join("bin"));
     }
     for d in &dirs_to_try {
         if let Some(p) = file(d) {
@@ -384,6 +404,27 @@ pub fn build(provider: &str, model: &str, effort: &str, tools: &str, custom: &st
             }
             Ok(Invocation { program: bin("gemini")?, args, shell_line: None, stdin_prompt: true, claude_stream: false })
         }
+        "qwen" => {
+            // one-shot positional prompt, Claude-style stream-json events (runner reads them like Claude's), every tool
+            // approved (the same freedom Claude Code gets with bypassPermissions); the task is in logs/prompt.md
+            let mut args: Vec<String> = vec![s(READ_FILE_MSG), s("--output-format"), s("stream-json"), s("--yolo")];
+            if !model.is_empty() {
+                args.extend([s("-m"), s(model)]);
+            }
+            Ok(Invocation { program: bin("qwen")?, args, shell_line: None, stdin_prompt: false, claude_stream: true })
+        }
+        "antigravity" => {
+            // print mode with stream-json events (agy.rs); permissions skipped like Claude's bypassPermissions — the
+            // idea folder and AGENTS.md rules bound it the same way; the prompt is read from logs/prompt.md
+            let mut args: Vec<String> = vec![s("-p"), s(READ_FILE_MSG), s("--output-format"), s("stream-json"), s("--dangerously-skip-permissions"), s("--disable-slash-commands")];
+            if !model.is_empty() {
+                args.extend([s("--model"), s(model)]);
+            }
+            if let Some(e) = effort_for("antigravity", model, effort).filter(|e| crate::accounts::EFFORTS.contains(&e.as_str())) {
+                args.extend([s("--effort"), e]);
+            }
+            Ok(Invocation { program: bin("antigravity")?, args, shell_line: None, stdin_prompt: false, claude_stream: false })
+        }
         "opencode" => {
             let mut args: Vec<String> = vec![s("run")];
             // OpenCode 2.x: without this the background service answers with its own login, not this account's key
@@ -419,7 +460,7 @@ pub fn build(provider: &str, model: &str, effort: &str, tools: &str, custom: &st
                 .replace("{stdin}", "");
             Ok(Invocation { program: PathBuf::new(), args: vec![], shell_line: Some(line), stdin_prompt: tpl.contains("{stdin}"), claude_stream: false })
         }
-        "none" => Err("ยังไม่มี AI ในเครื่อง — ติดตั้ง Claude Code, Codex, Gemini CLI หรือ OpenCode อย่างใดอย่างหนึ่ง หรือใส่คำสั่งของคุณเองในหน้าตั้งค่า".into()),
+        "none" => Err("ยังไม่มี AI ในเครื่อง — ติดตั้ง Claude Code, Codex, Antigravity CLI, Gemini CLI หรือ OpenCode อย่างใดอย่างหนึ่ง หรือใส่คำสั่งของคุณเองในหน้าตั้งค่า".into()),
         other => Err(format!("ไม่รู้จัก AI: {other}")),
     }
 }

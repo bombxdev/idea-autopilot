@@ -7,6 +7,75 @@
 
 ---
 
+## ISSUE-152 · 2026-11-25 · เพิ่มแล้ว — บัญชี Qwen (ผ่าน Qwen Code CLI)
+
+**ที่มา:** เจ้าของอยากให้บอทใช้ Qwen ได้ด้วย ในเครื่องมี Qwen Code 0.26.6 (`qwen`, npm `@qwen-code/qwen-code`, Apache-2.0) ตั้ง QwenCloud Token Plan ไว้แล้ว
+
+**ข้อเท็จจริงที่ใช้ (ทดสอบกับ qwen ในเครื่อง + เอกสาร qwenlm.github.io/qwen-code-docs):**
+- **Qwen ฟรีไม่มีแล้ว:** Qwen OAuth ฟรีปิดเมื่อ 2026-04-15 (เหลือแบบต้องมีแพ็กเกจ Qwen Plus/Pro และตั้งด้วย env ไม่ได้ → ไม่เหมาะกับบอท) ทางที่ใช้กับบอทได้คือ API key ของ QwenCloud / Alibaba Model Studio
+- รันไม่โต้ตอบ: `qwen "<prompt>" -o stream-json --yolo [-m model]` → event **แบบเดียวกับ Claude Code** (system/init, assistant, result — error อยู่ใน `error.message`)
+- แยกบัญชี: `QWEN_HOME` = โฟลเดอร์ config/ล็อกอินของบัญชี (ทดสอบแล้ว)
+- ใช้ key โดยไม่ต้องมี settings.json: `OPENAI_API_KEY` + `OPENAI_BASE_URL` + แฟล็ก `--auth-type openai` (ทดสอบด้วย key ปลอม → ถึงเซิร์ฟเวอร์ Alibaba ได้ 401 ตามคาด; `QWEN_DEFAULT_AUTH_TYPE` อย่างเดียวไม่พอ)
+
+**ที่เพิ่ม:**
+- ชนิดบัญชี `qwen` (KINDS, providers DEF bin `qwen`, env `QWEN_HOME`) · รันแบบ stream ของ Claude (`claude_stream`) จึงเห็นความคืบหน้าละเอียดและนับ token ได้ · runner อ่าน `error.message` เมื่อ result ว่าง
+- ผู้ให้บริการ (runner qwen):
+  - **QwenCloud — Token Plan** `https://token-plan.maas.qwencloudapi.com/compatible-mode/v1` (qwen3.8-max, qwen3.7-plus, qwen3.8-flash, glm-5.3, deepseek-v4…)
+  - **Model Studio — Coding Plan** `https://coding-intl.dashscope.aliyuncs.com/v1` (key `sk-sp-`; qwen3.7-plus, qwen3.6-plus, kimi-k2.5, glm-5, MiniMax-M2.5) · ลิมิตเป็นรอบ 5 ชม./สัปดาห์/เดือนนับคำขอ (ดูได้แค่ console)
+  - **Model Studio — จ่ายตามใช้** `https://dashscope-intl.aliyuncs.com/compatible-mode/v1`
+  - **Qwen Code (ตั้งค่าใน Qwen Code เอง)** — ใช้ /auth หรือ settings.json ของ Qwen Code; รายชื่อโมเดลอ่านจาก `modelProviders` ใน settings.json
+  - ที่อยู่ API แก้ได้ต่อบัญชี (จีน / แบบจ่ายตามใช้ของ QwenCloud ใส่ไว้ในหมายเหตุ)
+- เครื่องมือ (MCP): `--mcp-config` ไฟล์เดียวกับ Claude → Qwen เป็นหัวหน้าทีมได้ · ส่งงานออกไปเทอร์มินัล `qwen -i "…"` · ปุ่มติดตั้ง `npm install -g @qwen-code/qwen-code`
+- เทสต์: env ของบัญชี, `key_env` ของ vendor Qwen, `qwen_settings_list_their_models`
+
+**ข้อจำกัด:** ไม่มีตัวอ่านโควต้าของ Alibaba (ใช้เพดานชั่วโมงของแอป) · ยังไม่มีแชตในแอปสำหรับ Qwen · config Qwen Code ปัจจุบันในเครื่อง (Token Plan) ตอบ `403 Access to model denied` ทุกโมเดลที่ลอง — key/แพ็กเกจอาจหมดอายุ ต้องเช็กในหน้า QwenCloud
+## ISSUE-151 · 2026-11-25 · เพิ่มแล้ว — บัญชี Antigravity CLI (`agy`) ของ Google
+
+**ที่มา:** Google เลิก Gemini CLI สำหรับบัญชีส่วนตัว (มิ.ย. 2026) แทนด้วย Antigravity CLI (`agy`, โปรแกรม Go ปิดซอร์ส ติดตั้งที่ `%LOCALAPPDATA%\agy\bin`) เจ้าของอยากให้บอทใช้บัญชีนี้ได้
+
+**ตรวจกับ agy 1.4.7 ในเครื่องจริง:**
+- รันไม่โต้ตอบ: `agy -p … --output-format stream-json` → event `init` / `step_update` (text_delta, tool, ERROR) / `result` (status, response, usage)
+- โควต้าจริง: `agy -p /usage --output-format json` ตอบทันทีไม่ใช้โมเดล — กลุ่ม Gemini กับ Claude/GPT แยกกัน มี `remaining_fraction` + `reset_time` (ฟรี = รายสัปดาห์)
+- รายชื่อโมเดล: `agy models` (slug<TAB>ชื่อ)
+- แยกบัญชี: agy ไม่มีตัวแปรชี้โฟลเดอร์ config (`ANTIGRAVITY_*_DIR` ไม่มีผล) และเก็บ token ใน Windows Credential Manager ที่ใช้ร่วมทั้งเครื่อง — ต้องใช้ `USERPROFILE`/`HOME` ของบัญชีเอง + `AGY_CLI_FORCE_FILE_TOKEN_STORAGE=1` จึงจะถามล็อกอินแยก (ทดสอบแล้ว)
+
+**ที่เพิ่ม:**
+- ชนิดบัญชี `antigravity` (accounts KINDS, providers DEF bin `agy`, หา `%LOCALAPPDATA%\agy\bin` แม้ PATH ของแอปยังไม่อัปเดต) · vendor "Google — Antigravity CLI" (ล็อกอิน Google) · ข้อมูลลิมิต (รายสัปดาห์ + 5 ชม. ในแพ็กเกจจ่ายเงิน)
+- รัน: `agy -p "<อ่าน logs/prompt.md>" --output-format stream-json --dangerously-skip-permissions --disable-slash-commands [--model] [--effort]` · `agy.rs` แปลง event เป็นบรรทัดภาษาคน (💬 คำตอบ, 🔧 เครื่องมือ, ⚠️ error), เก็บ token / conversation id / สถานะจาก `result`
+- โควต้าจริงต่อบัญชี (`agy.rs::fetch_quota`) เลือกกลุ่มตามโมเดลของบัญชี (claude*/gpt* = กลุ่ม Claude/GPT) — ใช้กับ governor เหมือน Claude/Codex
+- รายชื่อโมเดลจาก `agy models` ของบัญชีนั้น · ปุ่มติดตั้ง (`irm https://antigravity.google/cli/install.ps1 | iex` / `curl … install.sh | bash`)
+- เครื่องมือ (MCP) ของรอบ: เขียน `<ไอเดีย>/.agents/mcp_config.json` (`serverUrl` สำหรับ remote) และเอาออกเมื่อรอบไม่มี → Antigravity เป็นหัวหน้าทีมได้ · ส่งงานให้ AI ภายนอก: `agy -i "…"` ในเทอร์มินัล
+- เทสต์ `a_run_reads_as_lines_and_a_result`, `quota_follows_the_models_group`, env ของบัญชีแยก, ทดสอบจริง `agy::live` (โควต้าสัปดาห์ 3.1%, โมเดล 10 ตัว)
+
+**ข้อจำกัด:**
+- บัญชีที่ล็อกอินแยก: agy และเครื่องมือที่มันเรียกจะเห็นโฟลเดอร์บัญชีเป็น home (เช่น ไม่เห็น `~/.gitconfig` ของเครื่อง) — บัญชีที่ใช้ล็อกอินปกติของเครื่องไม่กระทบ
+- ยังไม่มีแชตในแอปแบบ Gemini/OpenCode (ส่งงานออกไปเปิดในเทอร์มินัลแทน) · ยังไม่ได้ลองรันงานจริงของบอทด้วย agy ผ่านแอป
+## ISSUE-150 · 2026-11-22 · เพิ่มแล้ว — ร้านสกิลติดตั้งไฟล์ประกอบทั้งโฟลเดอร์ของสกิล (ไม่ใช่แค่ SKILL.md)
+
+**ก่อนหน้า:** ร้านดึงมาแค่ข้อความ SKILL.md — สกิลใหญ่อย่าง raea ที่แบ่งคู่มือเป็นไฟล์ย่อย (`3d.md`, `motion/*.md`, `reference/*.md` ~100 ไฟล์) จะได้แค่หน้าแรก ลิงก์ในสกิลไปไฟล์ย่อยเปิดไม่ได้
+
+**ตอนนี้:**
+- ดูตัวอย่างสกิล: อ่าน tree ของ repo ที่ commit เดียวกัน เอาไฟล์ข้อความในโฟลเดอร์ของสกิล (md/txt/json/yaml/สคริปต์ ฯลฯ) ไม่เอาไบนารี/รูป, ไฟล์/โฟลเดอร์ที่ขึ้นต้นด้วยจุด, และสกิลอื่นที่ซ้อนอยู่ข้างใน · จำกัด 200 ไฟล์ / ไฟล์ละ 60 KB / รวม 3 MB · ดึงทีละ 12 ไฟล์พร้อมกัน (raea 103 ไฟล์ ≈ 9 วินาที)
+- **สแกนทุกไฟล์** ด้วยตัวสแกนเดียวกับ SKILL.md (ยกเว้นคำเตือน "ไฟล์ยาว") — ผลรวมเข้าในคำเตือนของสกิลโดยมีชื่อไฟล์นำหน้า; ไฟล์อันตรายบล็อกการติดตั้ง, คำเตือนต้องติ๊กยืนยัน (ผลตรวจลึก SkillSpector ที่อ่านแค่ SKILL.md ไม่ลบคำเตือนของไฟล์ประกอบ)
+- หน้าตัวอย่างแสดงรายการ "ไฟล์ประกอบ N ไฟล์ (จะติดตั้งไปด้วย)" พร้อมป้ายเตือนรายไฟล์ และรายการที่ข้าม
+- ติดตั้ง: hash รวม (`bundle`) ของ SKILL.md + ทุกไฟล์ต้องตรงกับที่ดูตัวอย่าง ไม่งั้นไม่ติดตั้ง; ไฟล์เขียนข้าง SKILL.md (ไฟล์ของเวอร์ชันเก่าลบก่อน)
+- ตอนเสนอสกิลให้ไอเดีย (`materialize`) คัดลอกทั้งโฟลเดอร์ไปที่ `skills/<slug>/` ของไอเดีย ลิงก์ relative ในสกิลจึงใช้ได้
+- เทสต์ `a_skill_brings_its_folder_but_not_other_skills_or_binaries` + ทดสอบกับ GitHub จริง `shop_live_raea_brings_its_folder` (raea-skills: 103 ไฟล์, 4 คำเตือน ไม่มีอันตราย)
+- สกิลที่ติดตั้งไว้ก่อนหน้านี้ยังมีแค่ SKILL.md — ติดตั้งซ้ำจากร้านเพื่อให้ได้ไฟล์ประกอบ
+## ISSUE-149 · 2026-11-22 · แก้แล้ว — ร้านสกิล: ค้น raea เจอแต่กดแล้วขึ้น "สกิลต้องมีทั้ง name และ description"
+
+**อาการ:** เปิด repo `shinyobjectz/raea` ในช็อปสกิลเห็นแค่ "cli" (`docs/manual/reference/cli/skill.md`) กดแล้วแดงว่า "สกิลต้องมีทั้ง name และ description"
+
+**สาเหตุ:**
+- สกิลจริงของ raea อยู่ใน repo อื่น `shinyobjectz/raea-skills` ที่ผูกเข้ามาเป็น git submodule (โฟลเดอร์ `skills/`) — tree ของ GitHub เห็นแค่ลิงก์ ไม่เห็นไฟล์ข้างใน
+- ไฟล์ `skill.md` ตัวเล็กที่เจอเป็นหน้าเอกสาร ไม่ใช่สกิล แต่แอปนับรวม (เทียบชื่อแบบไม่สนตัวพิมพ์)
+
+**แก้:**
+- `shop_browse` อ่าน `.gitmodules` เมื่อ repo มี submodule แล้วส่งรายชื่อ repo GitHub ที่ผูกไว้ (`submodules`, repo ที่ชื่อมี skill ขึ้นก่อน) — หน้าช็อปแสดงแถบ "repo นี้เก็บบางส่วนไว้ใน repo อื่น…" พร้อมปุ่มเปิด repo นั้น (raea → raea-skills → `skills/raea/SKILL.md`)
+- ไฟล์ `skill.md` ตัวเล็กติดป้าย "อาจไม่ใช่สกิล" และเรียงไว้ท้าย SKILL.md จริง
+- กดไฟล์ที่ไม่ใช่สกิล ขึ้นข้อความว่า "… ไม่ใช่สกิล — เป็นไฟล์เอกสารทั่วไป" แทนข้อความรูปแบบผิด
+- เทสต์ `submodules_point_at_the_skill_repo`
+- หมายเหตุ: ร้านยังติดตั้งเฉพาะข้อความ SKILL.md (ไฟล์ประกอบในโฟลเดอร์สกิลไม่ถูกดึง) และ skill raea ต้องมีโปรแกรม `raea` ในเครื่องจึงจะเรนเดอร์ได้
 ## ISSUE-148 · 2026-11-22 · แก้แล้ว — ลิงก์ไฟล์ในรายงานไอเดียไปที่ http://tauri.localhost/… แทนไฟล์จริง
 
 **อาการ:** ใน #33 กดลิงก์ผลทดสอบใน md (เช่น `experiment/ui-repair/i18n-results.json`) แล้วไปที่ `http://tauri.localhost/experiment/...` เปิดไม่ได้ บางลิงก์เป็น path เต็มไปยังชื่อโฟลเดอร์เก่า (`idea-0033-idea-autopilot-qa` → ตอนนี้ `…-qa-testing`)

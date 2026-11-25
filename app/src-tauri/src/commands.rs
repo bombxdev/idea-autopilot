@@ -1375,6 +1375,8 @@ fn install_hint(kind: &str) -> &'static str {
         "gemini" => "npm install -g @google/gemini-cli",
         "opencode" => "npm install -g opencode-ai",
         "mistral" => "uv tool install mistral-vibe",
+        "qwen" => "npm install -g @qwen-code/qwen-code",
+        "antigravity" => if cfg!(windows) { "irm https://antigravity.google/cli/install.ps1 | iex" } else { "curl -fsSL https://antigravity.google/cli/install.sh | bash" },
         _ => "",
     }
 }
@@ -1602,7 +1604,7 @@ pub async fn account_models(app: AppHandle, id: String) -> R<Value> {
                 models.push(json!({ "id": m.slug, "label": m.slug, "efforts": efforts }));
             }
         }
-        k if k == "opencode" || k == "mistral" || crate::omniroute::is(&a) => {
+        k if k == "opencode" || k == "mistral" || k == "antigravity" || k == "qwen" || crate::omniroute::is(&a) => {
             // the account's own agent with its own key (acct_models.rs says why the plain call is not enough)
             let (a2, root) = (a.clone(), st.root.clone());
             let got = tauri::async_runtime::spawn_blocking(move || crate::acct_models::fetch(&a2, &root)).await.map_err(e)?;
@@ -1653,7 +1655,7 @@ pub async fn account_models(app: AppHandle, id: String) -> R<Value> {
     }
     // what really ran on this account before is usable on it — unless the agent itself just gave its full list (a name
     // recorded before, e.g. a Mistral API name Vibe never used, would only mislead)
-    let listed_by_agent = source == "account" && (a.kind == "mistral" || a.kind == "opencode" || crate::omniroute::is(&a));
+    let listed_by_agent = source == "account" && (a.kind == "mistral" || a.kind == "opencode" || a.kind == "antigravity" || crate::omniroute::is(&a));
     let claude = anthropic_models(&a);
     for m in seen.into_iter().filter(|_| !listed_by_agent) {
         // Claude: a run recorded as "claude-opus-5-5[1m]" or "claude-opus-5-5-20260101" is a model already listed, and

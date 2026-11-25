@@ -320,6 +320,8 @@ fn account_real(a: &crate::accounts::Account) -> bool {
         "claude" => claude_login_dir(a).join(".credentials.json").is_file() && !budget_forced(),
         // Codex writes its real limits into its session logs (usage.rs); until it has run once there is nothing to read
         "codex" => usage::codex_snapshot(&usage::codex_home(&a.home), db::now()).is_some(),
+        // agy reports its plan quota itself (agy.rs)
+        "antigravity" => crate::providers::installed("antigravity"),
         _ => false,
     }
 }
@@ -344,6 +346,8 @@ async fn refresh_account(st: &AppState, a: &crate::accounts::Account, now: chron
     }
     let (snap, note) = if real && a.kind == "codex" {
         (usage::codex_snapshot(&usage::codex_home(&a.home), ts), None)
+    } else if real && a.kind == "antigravity" {
+        crate::agy::fetch_quota(&crate::accounts::env_for(a), &a.model).await
     } else if real {
         usage::fetch_in(&claude_login_dir(a)).await
     } else {

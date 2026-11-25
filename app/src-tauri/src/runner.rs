@@ -238,6 +238,10 @@ pub async fn run(
     let _ = std::fs::write(&prompt_file, &spec.prompt);
     let mut inv = crate::providers::build(&spec.provider, &spec.model, &spec.effort, &spec.tools, &spec.custom_cmd, &prompt_file)
         .map_err(anyhow::Error::msg)?;
+    // Qwen Code with an account key (catalog::key_env): pick its OpenAI-compatible mode, or it asks for /auth first
+    if spec.provider == "qwen" && inv.shell_line.is_none() && spec.env.iter().any(|(k, _)| k == "OPENAI_API_KEY") {
+        inv.args.extend(["--auth-type".to_string(), "openai".to_string()]);
+    }
     // team mode (team.rs): the helpers file and the Task tool for the lead
     if let Some((_, p)) = spec.env.iter().find(|(k, _)| k == crate::team::TEAM_ENV) {
         if spec.provider == "claude" && inv.shell_line.is_none() {
@@ -252,6 +256,8 @@ pub async fn run(
         }
     } else if spec.provider == "gemini" {
         crate::mcp::clear_gemini(spec.cwd);
+    } else if spec.provider == "antigravity" {
+        crate::mcp::set_agy(spec.cwd, None);
     } else if spec.provider == "mistral" {
         if let Some((_, home)) = spec.env.iter().find(|(k, _)| k == "VIBE_HOME") {
             crate::mcp::set_vibe(Path::new(home), None);
@@ -305,6 +311,9 @@ pub async fn run(
     let mut result_text = String::new();
     let stream = inv.claude_stream;
     let codex_json = spec.provider == "codex";
+    // Antigravity's stream-json (agy.rs): plain-language lines, tokens and the final status
+    let agy_json = spec.provider == "antigravity" && inv.shell_line.is_none();
+    let mut agy = crate::agy::Reader::default();
     // other agents narrate progress on stderr (Codex) or stdout (Gemini, OpenCode): show both
     let tail = Arc::new(parking_lot::Mutex::new(String::new()));
     let (etx, mut erx) = tokio::sync::mpsc::unbounded_channel::<String>();
@@ -387,6 +396,20 @@ pub async fn run(
                             }
                             continue;
                         }
+                        if agy_json {
+                            match agy.feed(&l) {
+                                Some(t) => {
+                                    if t.starts_with("⚠️") {
+                                        let mut g = tail.lock();
+                                        g.push_str(&t);
+                                        g.push('\n');
+                                    }
+                                    on_line(t);
+                                }
+                                None => feed(&l, &tail),
+                            }
+                            continue;
+                        }
                         if !stream {
                             feed(&l, &tail);
                             continue;
@@ -410,6 +433,10 @@ pub async fn run(
                                 out.session_id = v.get("session_id").and_then(Value::as_str).map(String::from);
                                 let is_err = v.get("is_error").and_then(Value::as_bool).unwrap_or(false);
                                 result_text = v.get("result").and_then(Value::as_str).unwrap_or("").to_string();
+                                // Qwen Code (same events as Claude) puts a failure in error.message instead of result
+                                if result_text.is_empty() {
+                                    result_text = v.pointer("/error/message").and_then(Value::as_str).unwrap_or("").to_string();
+                                }
                                 out.status = if is_err { "error".into() } else { "ok".into() };
                             }
                         }
@@ -478,7 +505,19 @@ pub async fn run(
         feed(&l, &tail);
     }
     let tail_text = tail.lock().clone();
-    if !stream && ended_by.is_none() {
+    if agy_json && ended_by.is_none() {
+        out.session_id = agy.conversation.clone();
+        if let Some((status, resp, i, o, c, turns)) = agy.result.clone() {
+            out.input_tokens = i;
+            out.output_tokens = o;
+            out.cache_read = c;
+            out.num_turns = turns;
+            result_text = resp;
+            out.status = if status == "SUCCESS" { "ok".into() } else { "error".into() };
+            out.model_id = agy.model.clone().or_else(|| Some(if spec.model.is_empty() { "antigravity-default".into() } else { spec.model.clone() }));
+        }
+    }
+    if !stream && ended_by.is_none() && !(agy_json && agy.result.is_some()) {
         out.status = if code == Some(0) { "ok".into() } else { "error".into() };
         out.model_id = Some(if spec.model.is_empty() { format!("{}-default", spec.provider) } else { spec.model.clone() });
         if out.status == "ok" {

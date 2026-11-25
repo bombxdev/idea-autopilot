@@ -4,7 +4,8 @@
 //! - An account with an empty `home` uses the AI's normal login on this machine. One with a `home` keeps
 //!   its login in its own folder (`<app data>/accounts/<id>`), pointed to through the environment variable
 //!   each CLI documents for that (Claude `CLAUDE_CONFIG_DIR`, Codex `CODEX_HOME`, Gemini `GEMINI_CLI_HOME`,
-//!   Mistral Vibe `VIBE_HOME`, OpenCode `XDG_*`). That is how two accounts of one AI stay apart.
+//!   Mistral Vibe `VIBE_HOME`, Qwen Code `QWEN_HOME`, OpenCode `XDG_*`, Antigravity its own home folder + file token storage — agy.rs).
+//!   That is how two accounts of one AI stay apart.
 //! - The bot works with the first account (in the order listed) that is switched on, installed and
 //!   allowed by its own quota; when that one reaches its limit the next one takes over.
 //! - A dedicated bot account (its own `home`) does not share its quota with the owner's own use, so the
@@ -17,7 +18,7 @@ use std::path::{Path, PathBuf};
 
 use crate::db;
 
-pub const KINDS: [&str; 5] = ["claude", "codex", "gemini", "opencode", "mistral"];
+pub const KINDS: [&str; 7] = ["claude", "codex", "gemini", "antigravity", "qwen", "opencode", "mistral"];
 /// "max" is Claude Code's top level (ISSUE-097); other agents only offer what their model lists say
 pub const EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 
@@ -170,6 +171,10 @@ pub fn env_for(a: &Account) -> Vec<(String, String)> {
         "codex" => vec![("CODEX_HOME".into(), h.clone())],
         "gemini" => vec![("GEMINI_CLI_HOME".into(), h.clone())],
         "mistral" => vec![("VIBE_HOME".into(), h.clone())],
+        "qwen" => vec![("QWEN_HOME".into(), h.clone())],
+        // agy has no config-dir variable: its ~/.gemini follows the home folder, and its sign-in (normally the OS
+        // keyring, one per Windows user) becomes a file there (agy.rs)
+        "antigravity" => vec![("USERPROFILE".into(), h.clone()), ("HOME".into(), h.clone()), ("AGY_CLI_FORCE_FILE_TOKEN_STORAGE".into(), "1".into())],
         "opencode" => vec![("XDG_DATA_HOME".into(), join("data")), ("XDG_CONFIG_HOME".into(), join("config"))],
         _ => vec![],
     }
@@ -317,6 +322,9 @@ mod tests {
         assert_eq!(env_for(&acc("a", "mistral", "D:/h"))[0].0, "VIBE_HOME");
         assert_eq!(env_for(&acc("a", "gemini", "D:/h"))[0].0, "GEMINI_CLI_HOME");
         assert_eq!(env_for(&acc("a", "opencode", "D:/h")).len(), 2);
+        assert_eq!(env_for(&acc("a", "qwen", "D:/h"))[0].0, "QWEN_HOME");
+        let ag = env_for(&acc("a", "antigravity", "D:/h"));
+        assert!(ag.contains(&("USERPROFILE".into(), "D:/h".into())) && ag.iter().any(|(k, _)| k == "AGY_CLI_FORCE_FILE_TOKEN_STORAGE"));
     }
 
     #[test]

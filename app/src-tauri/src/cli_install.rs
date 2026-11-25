@@ -29,6 +29,12 @@ pub fn plan(kind: &str) -> Option<(&'static str, Vec<&'static str>)> {
         "gemini" => ("npm", vec!["install", "-g", "@google/gemini-cli"]),
         "opencode" => ("npm", vec!["install", "-g", "opencode-ai"]),
         "mistral" => ("uv", vec!["tool", "install", "mistral-vibe"]),
+        "qwen" => ("npm", vec!["install", "-g", "@qwen-code/qwen-code"]),
+        // Google's own installer (no npm package): https://antigravity.google/docs/getting-started
+        #[cfg(windows)]
+        "antigravity" => ("powershell", vec!["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm https://antigravity.google/cli/install.ps1 | iex"]),
+        #[cfg(not(windows))]
+        "antigravity" => ("bash", vec!["-c", "curl -fsSL https://antigravity.google/cli/install.sh | bash"]),
         _ => return None,
     })
 }
@@ -115,7 +121,9 @@ fn run(app: &AppHandle, kind: &str, registry: &str) {
     };
     let Some((tool, base)) = plan(kind) else { return finish("error", "ไม่รู้จักโปรแกรมนี้") };
     let Some(path) = crate::providers::resolve_bin(tool) else {
-        let how = if tool == "npm" { "ต้องมี Node.js (npm) ก่อน: winget install OpenJS.NodeJS.LTS แล้วเปิดโปรแกรมนี้ใหม่" } else { "ต้องมี uv ก่อน: winget install --id astral-sh.uv แล้วเปิดโปรแกรมนี้ใหม่" };
+        let how = if tool != "npm" && tool != "uv" {
+            "หาโปรแกรมสำหรับติดตั้งไม่พบ"
+        } else if tool == "npm" { "ต้องมี Node.js (npm) ก่อน: winget install OpenJS.NodeJS.LTS แล้วเปิดโปรแกรมนี้ใหม่" } else { "ต้องมี uv ก่อน: winget install --id astral-sh.uv แล้วเปิดโปรแกรมนี้ใหม่" };
         return finish("error", how);
     };
     let args: Vec<String> = base.iter().map(|s| s.to_string()).collect();

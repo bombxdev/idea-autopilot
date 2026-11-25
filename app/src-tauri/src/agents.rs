@@ -26,6 +26,8 @@ const KNOWN: &[(&str, &str, &str)] = &[
     ("claude", "Claude", "หลัก · เห็นความคืบหน้าในแอป · ใช้โควต้า Claude"),
     ("codex", "Codex (OpenAI)", "งานโค้ด/ขัดเกลาหน้าตา · ใช้โควต้า OpenAI"),
     ("gemini", "Gemini (Google)", "อ่านเอกสารยาว/ค้นคว้า · ใช้โควต้า Google"),
+    ("antigravity", "Antigravity (Google)", "ตัวใหม่แทน Gemini CLI · Gemini/Claude/GPT-OSS · ใช้โควต้า Google"),
+    ("qwen", "Qwen Code", "โมเดล Qwen (และ GLM/DeepSeek ในแพ็กเกจ QwenCloud) · ใช้โควต้า Alibaba"),
     ("mistral", "Mistral Vibe", "โมเดลของ Mistral (Devstral) · ใช้โควต้า Mistral"),
     ("opencode", "OpenCode", "เลือกโมเดลได้หลายค่าย"),
 ];
@@ -163,6 +165,8 @@ fn terminal_handoff(app: &AppHandle, id: i64, info: &AgentInfo, dir: &std::path:
     let msg = "Read HANDOFF.md in this folder and do what it says.";
     let launch = match info.id.as_str() {
         "gemini" => format!("gemini -i \"{msg}\""),
+        "antigravity" => format!("agy -i \"{msg}\""),
+        "qwen" => format!("qwen -i \"{msg}\""),
         "opencode" => format!("opencode --prompt \"{msg}\""),
         "mistral" => format!("vibe \"{msg}\""),
         other => format!("{other} \"{msg}\""),

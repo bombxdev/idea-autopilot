@@ -148,7 +148,7 @@ export const api = {
   shopBrowse: (repo) => invoke("skills_shop_browse", { repo }),
   shopResolve: (url) => invoke("skills_shop_resolve", { url }),
   shopPreview: (repo, commit, path) => invoke("skills_shop_preview", { repo, commit, path }),
-  shopInstall: (repo, commit, path, sha256, acceptWarnings) => invoke("skills_shop_install", { repo, commit, path, sha256, acceptWarnings }),
+  shopInstall: (repo, commit, path, sha256, bundle, acceptWarnings) => invoke("skills_shop_install", { repo, commit, path, sha256, bundle, acceptWarnings }),
 };
 
 export { listen };

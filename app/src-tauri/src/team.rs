@@ -213,7 +213,7 @@ pub fn agents_file(root: &Path, roles: &[crate::roles::Role]) -> Option<PathBuf>
 
 /// Can this run use a team? Claude on Anthropic, a stage with real work, and the owner turned it on.
 /// AIs that can lead a team: they take tools (MCP), so they can hand parts out with `ask_other_ai` (mcp.rs).
-const LEADS: [&str; 5] = ["claude", "codex", "gemini", "opencode", "mistral"];
+const LEADS: [&str; 7] = ["claude", "codex", "gemini", "antigravity", "qwen", "opencode", "mistral"];
 
 /// Whether a team can work on this run, and why not when it cannot (shown in the log — never silent).
 pub fn applies(provider: &str, stage: &str, ia_ready: bool) -> Result<(), &'static str> {
@@ -310,7 +310,7 @@ mod tests {
 
     #[test]
     fn any_ai_that_takes_tools_can_lead() {
-        for lead in ["claude", "codex", "gemini", "opencode", "mistral"] {
+        for lead in ["claude", "codex", "gemini", "antigravity", "qwen", "opencode", "mistral"] {
             assert!(applies(lead, "build", true).is_ok(), "{lead}");
         }
         assert!(applies("custom", "build", true).is_err()); // "my own command": no tools, so it works alone — and says so
