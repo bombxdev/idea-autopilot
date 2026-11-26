@@ -30,7 +30,72 @@ const LOCAL_SETTINGS: &[&str] = &["autostart", "hotkey", "sync_dir", "brain_dir"
 fn is_local_setting(key: &str) -> bool {
     LOCAL_SETTINGS.contains(&key) || key.starts_with("remote_sid_") || key.contains("token") || (key.starts_with("telegram_") && key != "telegram_questions")
 }
-const SKIP_DIRS: &[&str] = &["node_modules", "target", ".venv", "venv", "__pycache__", ".git", ".next", ".cache"];
+/// folders never copied to the sync repo: installs, builds, caches, run logs and generated media (ISSUE-153)
+const SKIP_DIRS: &[&str] = &[
+    "node_modules", "target", "target-dist", "venv", "env", "__pycache__", "site-packages", "dist", "build", "out", "output", "outputs",
+    "cache", "caches", "cargo-home", "npm-cache", "tmp", "temp", "logs", "models", "checkpoints", "edge-profile",
+];
+/// text a person reads or a second computer needs to carry on (reports, notes, code, data, configs)
+const MIRROR_TEXT: &[&str] = &[
+    "md", "txt", "json", "csv", "tsv", "html", "htm", "css", "js", "mjs", "cjs", "ts", "tsx", "jsx", "svelte", "vue", "py", "rs", "go",
+    "java", "kt", "swift", "c", "h", "cpp", "hpp", "cs", "rb", "php", "lua", "dart", "sql", "sh", "ps1", "bat", "cmd", "toml", "yaml",
+    "yml", "ini", "cfg", "xml", "svg", "gradle", "properties", "gitignore", "lock",
+];
+const MIRROR_IMAGE: &[&str] = &["png", "jpg", "jpeg", "gif", "webp"];
+const MIRROR_TEXT_MAX: u64 = 2 * 1024 * 1024;
+const MIRROR_IMAGE_MAX: u64 = 512 * 1024;
+
+/// A folder the mirror leaves out: the list above, any virtualenv-like name, and hidden folders (.git, .venv, .claude…).
+fn mirror_skips_dir(name: &str) -> bool {
+    let l = name.to_ascii_lowercase();
+    name.starts_with('.') || SKIP_DIRS.iter().any(|d| d.eq_ignore_ascii_case(name)) || l.contains("venv")
+}
+
+/// A file the mirror copies: text/code up to 2 MB and small pictures — before this every file under 50 MB went,
+/// 21 GB piled up and `git add` never finished within its time limit (ISSUE-153).
+fn mirror_keeps(name: &str, len: u64) -> bool {
+    if is_device_name(name) {
+        return false;
+    }
+    let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
+    if MIRROR_TEXT.contains(&ext.as_str()) || matches!(name, "Dockerfile" | "Makefile" | "LICENSE") {
+        return len <= MIRROR_TEXT_MAX;
+    }
+    MIRROR_IMAGE.contains(&ext.as_str()) && len <= MIRROR_IMAGE_MAX
+}
+
+/// Remove from an old mirror everything the rules above no longer copy. Returns the number of files removed.
+pub fn prune_mirror(dst: &Path) -> usize {
+    let mut n = 0;
+    let Ok(entries) = std::fs::read_dir(dst) else { return 0 };
+    for e in entries.flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        let path = e.path();
+        let Ok(meta) = std::fs::symlink_metadata(&path) else { continue };
+        if meta.is_dir() {
+            if mirror_skips_dir(&name) {
+                if let Ok(c) = count_files(&path) {
+                    n += c;
+                }
+                let _ = std::fs::remove_dir_all(&path);
+            } else {
+                n += prune_mirror(&path);
+                let _ = std::fs::remove_dir(&path); // only when it became empty
+            }
+        } else if !mirror_keeps(&name, meta.len()) && std::fs::remove_file(&path).is_ok() {
+            n += 1;
+        }
+    }
+    n
+}
+
+fn count_files(d: &Path) -> std::io::Result<usize> {
+    let mut n = 0;
+    for e in std::fs::read_dir(d)?.flatten() {
+        n += if e.file_type().map(|t| t.is_dir()).unwrap_or(false) { count_files(&e.path()).unwrap_or(0) } else { 1 };
+    }
+    Ok(n)
+}
 const PUBLISH_EVERY: i64 = 10 * 60;
 const HEARTBEAT_EVERY: i64 = 2 * 60;
 pub const STALE_LEADER: i64 = 30 * 60;
@@ -272,19 +337,20 @@ pub fn mirror(src: &Path, dst: &Path) -> Result<usize> {
         let (sp, dp) = (e.path(), dst.join(&name));
         let Ok(meta) = e.metadata() else { continue };
         if meta.is_dir() {
-            if SKIP_DIRS.contains(&name.as_str()) {
+            if mirror_skips_dir(&name) {
                 continue;
             }
             n += mirror(&sp, &dp)?;
         } else {
-            // a file named like a Windows device ("nul" from an AI's `2>nul` in bash) cannot be copied (ISSUE-079)
-            if is_device_name(&name) {
+            // a file named like a Windows device ("nul" from an AI's `2>nul` in bash) cannot be copied (ISSUE-079);
+            // only text, code and small pictures travel (ISSUE-153)
+            if !mirror_keeps(&name, meta.len()) {
                 continue;
             }
             let same = std::fs::metadata(&dp)
                 .map(|d| d.len() == meta.len() && d.modified().ok() >= meta.modified().ok())
                 .unwrap_or(false);
-            if !same && meta.len() < 50 * 1024 * 1024 {
+            if !same {
                 std::fs::create_dir_all(dst)?;
                 // one bad file must not stop the whole sync (the phone then sees nothing new at all)
                 if std::fs::copy(&sp, &dp).is_ok() {
@@ -323,7 +389,23 @@ pub fn git_run(dir: Option<&Path>, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).into())
 }
 
+/// A git that was stopped part-way (the 2-minute limit above, the app closing, a shutdown) leaves `.git/index.lock`
+/// behind, and every later git command then fails with "index.lock: File exists" — sync to the phone silently stopped
+/// for 5 days (ISSUE-153). Git here never runs longer than 2 minutes, so a lock older than 10 minutes is left over.
+/// Returns true when one was removed.
+pub fn clear_stale_lock(dir: &Path) -> bool {
+    let lock = dir.join(".git").join("index.lock");
+    let old = std::fs::metadata(&lock)
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.elapsed().ok())
+        .map(|d| d.as_secs() > 600)
+        .unwrap_or(false);
+    old && std::fs::remove_file(&lock).is_ok()
+}
+
 pub fn git_pull(dir: &Path) -> Result<()> {
+    clear_stale_lock(dir);
     // a brand-new empty remote has nothing to pull yet
     if git(dir, &["rev-parse", "--abbrev-ref", "@{u}"]).is_err() {
         return Ok(());
@@ -337,6 +419,7 @@ fn git_push(dir: &Path) -> Result<()> {
 
 /// Commit everything that changed and push it (nothing to commit = nothing to do).
 pub fn git_commit_push(dir: &Path, message: &str) -> Result<()> {
+    clear_stale_lock(dir);
     git(dir, &["add", "-A"])?;
     if git(dir, &["status", "--porcelain"])?.trim().is_empty() {
         return Ok(());
@@ -371,6 +454,9 @@ pub fn tick(app: &AppHandle) -> Result<()> {
     let live_session = !st.rt.lock().sessions.is_empty();
     // (a phone command waits for this pull: with a chat open, every 20 s — ISSUE-064)
     if git_mode && now - last_pull >= if live_session { 20 } else { 2 * 60 } {
+        if clear_stale_lock(&dir) {
+            st.push_log("[sync] ลบไฟล์ล็อกของ git ที่ค้างจากครั้งก่อน (.git/index.lock) — ส่งข้อมูลให้มือถือได้ต่อแล้ว".into());
+        }
         if let Err(e) = git_pull(&dir) {
             st.push_log(format!("[sync] {e:#}"));
         }
@@ -411,6 +497,14 @@ pub fn tick(app: &AppHandle) -> Result<()> {
         }
         let dirty = std::mem::take(&mut st.rt.lock().sync_dirty);
         if dirty || now - last_pub >= PUBLISH_EVERY {
+            let marker = if git_mode { dir.join(".git").join("ia-mirror-v2") } else { dir.join(".ia-mirror-v2") };
+            if !marker.exists() {
+                let gone = prune_mirror(&dir.join("workspace"));
+                let _ = std::fs::write(&marker, "text, code and small pictures only (ISSUE-153)\n");
+                if gone > 0 {
+                    st.push_log(format!("[sync] ล้างไฟล์ใหญ่ออกจากโฟลเดอร์ sync {gone} ไฟล์ (venv, cache, วิดีโอ, log ฯลฯ — ของจริงในเครื่องยังอยู่ครบ) ต่อไปส่งเฉพาะรายงาน โค้ด และรูปเล็ก"));
+                }
+            }
             publish_state(&st.db.lock(), &dir)?;
             mirror(&st.ws.join("ideas"), &dir.join("workspace").join("ideas"))?;
             mirror(&st.ws.join("knowledge"), &dir.join("workspace").join("knowledge"))?;
@@ -526,6 +620,57 @@ mod tests {
     fn device_named_files_are_skipped_not_fatal() {
         assert!(is_device_name("nul") && is_device_name("NUL.txt") && is_device_name("com1") && is_device_name("lpt9.log"));
         assert!(!is_device_name("null.md") && !is_device_name("console.js") && !is_device_name("com10") && !is_device_name("auxiliary"));
+    }
+
+    #[test]
+    fn the_mirror_carries_reports_and_code_not_installs_or_media() {
+        assert!(mirror_keeps("REPORT.md", 30_000));
+        assert!(mirror_keeps("main.rs", 10_000));
+        assert!(mirror_keeps("screen.png", 200_000));
+        assert!(!mirror_keeps("screen.png", 2_000_000));
+        assert!(!mirror_keeps("promo.mp4", 1_000));
+        assert!(!mirror_keeps("model.bin", 1_000));
+        assert!(!mirror_keeps("torch_cpu.dll", 1_000));
+        assert!(!mirror_keeps("huge.json", 5 * 1024 * 1024));
+        assert!(!mirror_keeps("nul", 0));
+        for d in [".venv", "venv", "my-venv", "node_modules", "logs", ".claude", "cargo-home"] {
+            assert!(mirror_skips_dir(d), "{d}");
+        }
+        for d in ["prototype", "experiment", "src", "screenshots", "skills", "scripts", "lib"] {
+            assert!(!mirror_skips_dir(d), "{d}");
+        }
+        // an old mirror loses what no longer travels and keeps the rest
+        let d = std::env::temp_dir().join(format!("ia-prune-{}", std::process::id()));
+        let idea = d.join("ideas").join("idea-0001");
+        std::fs::create_dir_all(idea.join(".venv").join("Lib")).unwrap();
+        std::fs::create_dir_all(idea.join("output")).unwrap();
+        std::fs::write(idea.join("REPORT.md"), "# r").unwrap();
+        std::fs::write(idea.join("clip.mp4"), "x").unwrap();
+        std::fs::write(idea.join(".venv").join("Lib").join("a.py"), "x").unwrap();
+        std::fs::write(idea.join("output").join("b.txt"), "x").unwrap();
+        assert_eq!(prune_mirror(&d), 3);
+        assert!(idea.join("REPORT.md").exists() && !idea.join("clip.mp4").exists() && !idea.join(".venv").exists() && !idea.join("output").exists());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_left_over_git_lock_is_removed_but_a_fresh_one_is_kept() {
+        let d = std::env::temp_dir().join(format!("ia-synclock-{}", std::process::id()));
+        std::fs::create_dir_all(d.join(".git")).unwrap();
+        let lock = d.join(".git").join("index.lock");
+        // a git running right now: keep its lock
+        std::fs::write(&lock, "").unwrap();
+        assert!(!clear_stale_lock(&d));
+        assert!(lock.exists());
+        // left over from an hour ago: remove
+        let f = std::fs::File::options().write(true).open(&lock).unwrap();
+        f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600)).unwrap();
+        drop(f);
+        assert!(clear_stale_lock(&d));
+        assert!(!lock.exists());
+        // nothing to do
+        assert!(!clear_stale_lock(&d));
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
