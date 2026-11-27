@@ -41,6 +41,9 @@ pub struct Server {
     pub category: String,
     pub registry_name: String,
     pub version: String,
+    /// how and when to use it, in a line or two (ISSUE-171): from the registry's description, editable by the owner —
+    /// written into the idea's TOOLS.md, so a tool whose own description is thin still gets used at the right time
+    pub howto: String,
 }
 
 fn dir(root: &Path) -> PathBuf {
@@ -368,6 +371,7 @@ pub fn set(root: &Path, id: &str, field: &str, value: &str) -> Result<()> {
     match field {
         "enabled" => s.enabled = on,
         "always" => s.always = on,
+        "howto" => s.howto = value.chars().take(600).collect(),
         // comma-separated skill slugs
         "skills" => s.skills = value.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect(),
         _ => bail!("ไม่รู้จักฟิลด์นี้"),
@@ -381,19 +385,56 @@ pub fn remove(root: &Path, id: &str) -> Result<()> {
     save(root, &v)
 }
 
-/// The tools one run gets: enabled ones that a skill offered to the run needs (or marked "always").
+/// The tools one run gets from its offered skills alone (tests; runs use `for_idea`, which adds the picked tools).
+#[cfg(test)]
 pub fn for_run(root: &Path, offered: &[String]) -> Vec<Server> {
-    list(root).into_iter().filter(|s| s.enabled && (s.always || s.skills.iter().any(|k| offered.contains(k)))).collect()
+    for_idea(root, &[], offered)
 }
 
-/// Write the run's `--mcp-config` file; None when the run needs no tool.
+#[cfg(test)]
 pub fn run_config(root: &Path, offered: &[String], key: &str, extra: &[(String, Value)]) -> Option<PathBuf> {
-    let servers = for_run(root, offered);
+    config_for(root, &for_run(root, offered), key, extra)
+}
+
+// ---------- tools picked for an idea (ISSUE-171) ----------
+// Before this a tool reached a bot run only through a skill that needs it (or "always"), and chats got none at all:
+// an installed tool was mostly never seen by any AI. Now the owner picks tools with "/" like skills; a picked tool
+// stays with the idea and goes to its bot runs and to every chat AI, with TOOLS.md saying how to use each.
+
+fn idea_key(id: i64) -> String {
+    format!("idea_tools_{id}")
+}
+
+/// The tools picked for this idea (ids).
+pub fn idea_tools(c: &rusqlite::Connection, id: i64) -> Vec<String> {
+    crate::db::get_setting(c, &idea_key(id)).map(|v| v.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect()).unwrap_or_default()
+}
+
+pub fn add_idea_tools(c: &rusqlite::Connection, id: i64, ids: &[String]) {
+    let mut cur = idea_tools(c, id);
+    for x in ids {
+        if !cur.contains(x) {
+            cur.push(x.clone());
+        }
+    }
+    let _ = crate::db::set_setting(c, &idea_key(id), &cur.join(","));
+}
+
+/// What one run or chat of an idea gets: enabled tools that are "always", needed by an offered skill, or picked.
+pub fn for_idea(root: &Path, picked: &[String], offered: &[String]) -> Vec<Server> {
+    list(root)
+        .into_iter()
+        .filter(|s| s.enabled && (s.always || s.skills.iter().any(|k| offered.contains(k)) || picked.contains(&s.id)))
+        .collect()
+}
+
+/// Write the `--mcp-config` file for these tools (+ extra entries); None when there is nothing to give.
+pub fn config_for(root: &Path, servers: &[Server], key: &str, extra: &[(String, Value)]) -> Option<PathBuf> {
     if servers.is_empty() && extra.is_empty() {
         return None;
     }
     let mut m = Map::new();
-    for s in &servers {
+    for s in servers {
         m.insert(s.id.clone(), claude_entry(s));
     }
     for (k, v) in extra {
@@ -403,6 +444,56 @@ pub fn run_config(root: &Path, offered: &[String], key: &str, extra: &[(String, 
     std::fs::create_dir_all(dir(root)).ok()?;
     std::fs::write(&p, serde_json::to_string_pretty(&json!({ "mcpServers": m })).ok()?).ok()?;
     Some(p)
+}
+
+/// TOOLS.md in the idea folder: which tools this AI has and when to use each (removed when there are none).
+pub fn write_tools_md(idea_dir: &Path, servers: &[Server]) {
+    let p = idea_dir.join("TOOLS.md");
+    if servers.is_empty() {
+        let _ = std::fs::remove_file(p);
+        return;
+    }
+    let mut s = String::from(
+        "# Tools (MCP) you have in this run\n\nThe app gave you these MCP servers; their tools show up in your tool list under the server name. \
+         Use one when the task fits what it is for — prefer it over writing your own script for the same job.\n\n",
+    );
+    for t in servers {
+        let how = if t.howto.trim().is_empty() { t.description.trim() } else { t.howto.trim() };
+        s.push_str(&format!("## {} (`{}`)\n{}\n\n", if t.label.is_empty() { &t.id } else { &t.label }, t.id, if how.is_empty() { "(no description)" } else { how }));
+    }
+    let _ = std::fs::write(p, s);
+}
+
+/// "/tool-<id>" in a message: the tools it names and the message without those names.
+pub fn tool_tokens(root: &Path, text: &str) -> (Vec<Server>, String) {
+    let all = list(root);
+    let mut found: Vec<Server> = vec![];
+    let mut rest = text.to_string();
+    for (s, e, name) in crate::skills::slash_tokens(text).into_iter().rev() {
+        let Some(id) = name.strip_prefix("tool-") else { continue };
+        let Some(t) = all.iter().find(|t| t.id.to_lowercase() == id && t.enabled) else { continue };
+        rest.replace_range(s..e, "");
+        if !found.iter().any(|f| f.id == t.id) {
+            found.insert(0, t.clone());
+        }
+    }
+    let rest = rest.lines().map(|l| l.split(' ').filter(|w| !w.is_empty()).collect::<Vec<_>>().join(" ")).collect::<Vec<_>>().join("\n");
+    (found, rest.trim().to_string())
+}
+
+/// The line that asks the AI to use the picked tools.
+pub fn tool_request(tools: &[Server]) -> String {
+    let names = tools.iter().map(|t| format!("\"{}\" (MCP server `{}`)", if t.label.is_empty() { &t.id } else { &t.label }, t.id)).collect::<Vec<_>>().join(", ");
+    format!("Use the tool {names} for this request — see TOOLS.md for what it is for. If it is not in your tool list (a chat opened before it was picked), say so: the owner reopens the chat to load it.")
+}
+
+/// Tools for the "/" menu, next to the skills.
+pub fn slash_items(root: &Path) -> Vec<Value> {
+    list(root)
+        .into_iter()
+        .filter(|s| s.enabled)
+        .map(|s| json!({ "slug": format!("tool-{}", s.id.to_lowercase()), "name": if s.label.is_empty() { s.id.clone() } else { s.label.clone() }, "description": if s.howto.is_empty() { s.description.clone() } else { s.howto.clone() }, "kind": "tool" }))
+        .collect()
 }
 
 fn toml_str(s: &str) -> String {
@@ -603,7 +694,7 @@ pub fn list_json(root: &Path) -> Value {
             json!({
                 "id": s.id, "label": s.label, "description": s.description, "source": s.source, "transport": s.transport, "command": shown,
                 "env_names": s.env.keys().chain(s.headers.keys()).cloned().collect::<Vec<_>>(), "enabled": s.enabled, "always": s.always,
-                "skills": s.skills, "category": s.category, "version": s.version, "registry_name": s.registry_name,
+                "skills": s.skills, "category": s.category, "version": s.version, "registry_name": s.registry_name, "howto": s.howto,
             })
         })
         .collect();
@@ -637,6 +728,17 @@ mod tests {
         set(&root, "web", "always", "0").unwrap();
         assert!(run_config(&root, &[], "t2", &[]).is_none());
         assert!(run_config(&root, &[], "t3", &[("team".into(), json!({ "command": "ia" }))]).is_some());
+        // a tool picked for an idea goes to it without any skill, and "/tool-<id>" names it in a message (ISSUE-171)
+        assert_eq!(ids(for_idea(&root, &["rea".into()], &[])), vec!["rea"]);
+        let (found, rest) = tool_tokens(&root, "/tool-rea แกะไฟล์นี้หน่อย");
+        assert_eq!(ids(found), vec!["rea"]);
+        assert_eq!(rest, "แกะไฟล์นี้หน่อย");
+        let d = root.join("idea");
+        std::fs::create_dir_all(&d).unwrap();
+        write_tools_md(&d, &for_idea(&root, &["rea".into()], &[]));
+        assert!(std::fs::read_to_string(d.join("TOOLS.md")).unwrap().contains("`rea`"));
+        write_tools_md(&d, &[]);
+        assert!(!d.join("TOOLS.md").exists());
         let _ = std::fs::remove_dir_all(&root);
     }
 

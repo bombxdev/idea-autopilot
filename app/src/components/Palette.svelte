@@ -35,6 +35,8 @@
     const t = q.trim().toLowerCase();
     const ideas = store.ideas
       .filter((i) => i.status !== "deleted" && (!t || t.replace("#", "") === String(i.id) || (i.title + " " + i.summary).toLowerCase().includes(t)))
+      // the idea typed by number first, then the most recently changed (ISSUE-167)
+      .sort((a, b) => (t.replace("#", "") === String(b.id)) - (t.replace("#", "") === String(a.id)) || (b.updated ?? 0) - (a.updated ?? 0))
       .slice(0, 8)
       .map((i) => ({ label: `#${i.id} · ${i.title}`, sub: i.summary, run: () => (store.openIdea = i.id) }));
     const cmds = commands.filter((c) => !t || c.label.toLowerCase().includes(t));

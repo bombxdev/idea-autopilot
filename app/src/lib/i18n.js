@@ -54,6 +54,7 @@ const D = {
   min: ["{n} นาที", "{n} min", "{n} 分钟", "{n} 分", "{n}분", "{n} phút", "{n} mnt", "{n} min", "{n} min", "{n} Min.", "{n} min", "{n} мин", "{n} د", "{n} मि", "{n} min", "{n} dk"],
   hrmin: ["{h} ชม. {m} นาที", "{h} h {m} min", "{h} 小时 {m} 分钟", "{h} 時間 {m} 分", "{h}시간 {m}분", "{h} giờ {m} phút", "{h} jam {m} mnt", "{h} h {m} min", "{h} h {m} min", "{h} Std. {m} Min.", "{h} h {m} min", "{h} ч {m} мин", "{h} س {m} د", "{h} घं {m} मि", "{h} h {m} min", "{h} sa {m} dk"],
   // navigation
+  nav_dashboard: ["Dashboard", "Dashboard", "仪表板", "ダッシュボード", "대시보드", "Bảng điều khiển", "Dasbor", "Panel", "Tableau de bord", "Dashboard", "Painel", "Панель", "لوحة المتابعة", "डैशबोर्ड", "Dashboard", "Pano"],
   nav_morning: ["เช้านี้", "This morning", "今晨", "今朝", "오늘 아침", "Sáng nay", "Pagi ini", "Esta mañana", "Ce matin", "Heute früh", "Esta manhã", "Утро", "هذا الصباح", "आज सुबह", "Stamattina", "Bu sabah"],
   nav_board: ["บอร์ด", "Board", "看板", "ボード", "보드", "Bảng", "Papan", "Tablero", "Tableau", "Board", "Quadro", "Доска", "اللوحة", "बोर्ड", "Bacheca", "Pano"],
   nav_workspace: ["พื้นที่ทำงาน", "Workspace", "工作区", "ワークスペース", "워크스페이스", "Không gian làm việc", "Ruang kerja", "Espacio de trabajo", "Espace de travail", "Arbeitsbereich", "Área de trabalho", "Рабочая область", "مساحة العمل", "कार्यक्षेत्र", "Area di lavoro", "Çalışma alanı"],
@@ -61,7 +62,7 @@ const D = {
   nav_quota: ["โควต้าและการใช้", "Quota & usage", "额度与用量", "クォータと使用量", "할당량 및 사용량", "Hạn mức & sử dụng", "Kuota & pemakaian", "Cuota y uso", "Quota et usage", "Kontingent & Nutzung", "Cota e uso", "Квота и расход", "الحصة والاستخدام", "कोटा और उपयोग", "Quota e utilizzo", "Kota ve kullanım"],
   nav_library: ["คลังความรู้", "Library", "知识库", "ライブラリ", "라이브러리", "Thư viện", "Pustaka", "Biblioteca", "Bibliothèque", "Bibliothek", "Biblioteca", "Библиотека", "المكتبة", "लाइब्रेरी", "Libreria", "Kütüphane"],
   nav_roles: ["ทีม AI", "AI team", "AI 团队", "AIチーム", "AI 팀", "Nhóm AI", "Tim AI", "Equipo IA", "Équipe IA", "KI-Team", "Equipe de IA", "Команда ИИ", "فريق الذكاء الاصطناعي", "AI टीम", "Team IA", "Yapay zekâ ekibi"],
-  nav_skills: ["สกิล", "Skills", "技能", "スキル", "스킬", "Kỹ năng", "Skill", "Habilidades", "Compétences", "Skills", "Habilidades", "Навыки", "المهارات", "स्किल्स", "Competenze", "Beceriler"],
+  nav_skills: ["สกิลและเครื่องมือ", "Skills & tools", "技能与工具", "スキルとツール", "스킬과 도구", "Kỹ năng & công cụ", "Skill & alat", "Habilidades y herramientas", "Compétences & outils", "Skills & Tools", "Habilidades e ferramentas", "Навыки и инструменты", "المهارات والأدوات", "स्किल्स और टूल्स", "Competenze e strumenti", "Beceriler ve araçlar"],
   nav_activity: ["บันทึก", "Activity", "记录", "履歴", "기록", "Nhật ký", "Aktivitas", "Actividad", "Activité", "Aktivität", "Atividade", "Журнал", "النشاط", "गतिविधि", "Attività", "Etkinlik"],
   nav_sessions: ["เซสชัน", "Sessions", "会话", "セッション", "세션", "Phiên", "Sesi", "Sesiones", "Sessions", "Sitzungen", "Sessões", "Сессии", "الجلسات", "सत्र", "Sessioni", "Oturumlar"],
   nav_settings: ["ตั้งค่า", "Settings", "设置", "設定", "설정", "Cài đặt", "Pengaturan", "Ajustes", "Réglages", "Einstellungen", "Configurações", "Настройки", "الإعدادات", "सेटिंग्स", "Impostazioni", "Ayarlar"],

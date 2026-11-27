@@ -17,6 +17,8 @@
   import { lift } from "../lib/lift.js";
   import { wsOpen } from "../lib/workspace.svelte.js";
   import { ask } from "../lib/dialog.svelte.js";
+  import Rounds from "./Rounds.svelte";
+  import { needsReview, markReviewed } from "../lib/review.svelte.js";
 
   // embedded: a window on the Workspace page (ISSUE-087) instead of the side drawer — full size, two columns when
   // wide, with minimize and "take off the Workspace" in place of close
@@ -27,6 +29,7 @@
     store.openIdea = null;
   }
   let data = $state(null);
+  let rounds = $state([]); // chat rounds: prompt + whole answer (ISSUE-159)
   let tab = $state("report");
   // the documents panel (report, how to use, plan…) folds down so the overview and chat get the height; remembered
   // on this machine, and a click on a tab opens it again (ISSUE-089)
@@ -38,14 +41,14 @@
   let editing = $state(false);
   let draft = $state("");
   // the AI chosen for this idea (account, model, effort); saved as soon as it is changed
-  let aiVal = $state({ account: "", model: "", effort: "" });
+  let aiVal = $state({ account: "", model: "", effort: "", backups: [] });
   $effect(() => {
     const v = store.state?.idea_ai?.[id];
-    aiVal = { account: v?.account ?? "", model: v?.model ?? "", effort: v?.effort ?? "" };
+    aiVal = { account: v?.account ?? "", model: v?.model ?? "", effort: v?.effort ?? "", backups: v?.backups ?? [] };
   });
   async function saveAi(v) {
     try {
-      await api.ideaAiSet(id, v.account, v.model, v.effort);
+      await api.ideaAiSet(id, v.account, v.model, v.effort, v.backups ?? []);
       toast("บันทึกการเลือก AI ของไอเดียนี้แล้ว", "ok", 1800);
       refresh();
     } catch (e) {
@@ -91,6 +94,7 @@
   async function load() {
     try {
       data = await api.idea(id);
+      rounds = await api.ideaRounds(id).catch(() => []);
     } catch (e) {
       toast(String(e), "err");
     }
@@ -102,10 +106,16 @@
   });
 
   const idea = $derived(data?.idea);
+  // opening a finished idea is looking at it: it leaves "รอคุณ" by itself (no “ตรวจแล้ว” button, ISSUE-177)
+  $effect(() => {
+    const i = store.ideas.find((x) => x.id === id);
+    if (i && needsReview(i)) markReviewed(i);
+  });
   const f = $derived(data?.files ?? {});
   const tabs = $derived(
     [
       { key: "report", label: "รายงาน", text: f.report },
+      { key: "rounds", icon: "chat", label: `รอบคุย (${rounds.length})`, text: rounds.length ? " " : "" },
       { key: "knowledge", label: "ความรู้", text: f.knowledge },
       { key: "run", label: "วิธีใช้", text: f.how_to_run },
       { key: "plan", label: "แผน", text: f.plan },
@@ -244,11 +254,14 @@
         {/if}
       </div>
       {#if editing}
-        <textarea class="edit" rows="5" bind:value={draft} onkeydown={(e) => e.key === "Escape" && (editing = false)}></textarea>
-        <div class="row small">
-          <button class="primary" onclick={saveEdit} disabled={!draft.trim()}>บันทึกข้อความใหม่</button>
-          <button onclick={() => (editing = false)}>ยกเลิก</button>
-          <span class="faint">ขึ้นต้น ! = ด่วน · ? = ขอแค่ research · ถ้า AI ยังไม่เริ่มลงลึก จะเริ่มตีความใหม่และตั้งชื่อโฟลเดอร์ใหม่ตามข้อความนี้</span>
+        <div class="editbox">
+          <div class="small faint">แก้ข้อความไอเดียที่จดไว้ตอนแรก (สิ่งที่อยากได้) — ไม่ใช่การสั่งงาน AI · จะสั่งให้แก้งาน ใช้กล่องแชตด้านล่าง</div>
+          <textarea class="edit" rows="6" bind:value={draft} onkeydown={(e) => e.key === "Escape" && (editing = false)}></textarea>
+          <div class="row small">
+            <button class="primary" onclick={saveEdit} disabled={!draft.trim()}>บันทึกข้อความใหม่</button>
+            <button onclick={() => (editing = false)}>ยกเลิก</button>
+          </div>
+          <div class="small faint">ขึ้นต้น ! = ด่วน · ? = ขอแค่ research · ถ้า AI ยังไม่เริ่มลงลึก จะตีความใหม่และตั้งชื่อโฟลเดอร์ใหม่ตามข้อความนี้</div>
         </div>
       {:else}
         <h1>{idea.title}</h1>
@@ -271,9 +284,11 @@
         </div>
       {/if}
       <div class="row small"><span class="faint">เก็บในชุด</span><Scope value={idea.scope ?? "personal"} onchange={saveScope} /></div>
-      <IdeaAi bind:value={aiVal} onchange={saveAi} />
-      <div class="row small teamrow" title="ให้ทีมแบ่งงานที่แยกกันได้ทำพร้อมกัน — เสร็จเร็วขึ้นกับงานใหญ่ แต่ใช้โควต้าเร็วขึ้น งานเล็กหัวหน้าทำเอง · หัวหน้าเป็น AI ตัวไหนก็ได้ที่รับเครื่องมือ (MCP)">
-        <TeamPick value={team} text={idea.title + " " + (idea.body ?? "")} onchange={saveTeam} />
+      <div class="airow">
+        <IdeaAi bind:value={aiVal} onchange={saveAi} />
+        <span class="small teamrow" title="ให้ทีมแบ่งงานที่แยกกันได้ทำพร้อมกัน — เสร็จเร็วขึ้นกับงานใหญ่ แต่ใช้โควต้าเร็วขึ้น งานเล็กหัวหน้าทำเอง · หัวหน้าเป็น AI ตัวไหนก็ได้ที่รับเครื่องมือ (MCP)">
+          <TeamPick value={team} text={idea.title + " " + (idea.body ?? "")} onchange={saveTeam} />
+        </span>
       </div>
       {#if team}<TeamCard {id} {team} />{/if}
       <Actions {idea} />
@@ -310,7 +325,9 @@
     </div>
 
     <div class="body">
-      {#if tab === "history"}
+      {#if tab === "rounds"}
+        <Rounds {id} {rounds} />
+      {:else if tab === "history"}
         <h3>รอบการทำงาน</h3>
         <table class="runs">
           <thead><tr><th>เวลา</th><th>ขั้น</th><th>โมเดล</th><th>ผล</th><th>tokens</th><th>%สัปดาห์</th></tr></thead>
@@ -365,7 +382,12 @@
 
 <style>
   .on-power { border-color: var(--amber); color: var(--amber); }
-  .edit { width: 100%; box-sizing: border-box; font: inherit; line-height: 1.5; padding: 8px 10px; border-radius: 8px; }
+  /* the top part is a height-limited column: its children must not shrink, or the edit box was squeezed to a sliver
+     with its text cut in half (ISSUE-166) */
+  .top > * { flex-shrink: 0; }
+  .editbox { display: flex; flex-direction: column; gap: 8px; }
+  .edit { width: 100%; box-sizing: border-box; font: inherit; line-height: 1.5; padding: 8px 10px; border-radius: 8px; min-height: 8em; resize: vertical; }
+  .airow { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 20px; }
   .scrim { position: fixed; inset: 0; background: rgba(0, 0, 0, .35); z-index: 20; animation: rise .15s; }
   .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(860px, 92vw); background: var(--bg); border-left: 1px solid var(--line); z-index: 21; display: flex; flex-direction: column; animation: slide .2s ease-out; }
   @keyframes slide { from { transform: translateX(30px); opacity: 0 } to { transform: none; opacity: 1 } }

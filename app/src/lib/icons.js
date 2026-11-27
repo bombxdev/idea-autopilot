@@ -104,7 +104,66 @@ export const ICONS = {
   flask: P("M7.8 2.6h4.4M8.4 2.6v5L3.9 15.4A1.4 1.4 0 0 0 5.1 17.4h9.8a1.4 1.4 0 0 0 1.2-2L11.6 7.6v-5M5.8 12.6h8.4"),
   cart: P("M2.4 3.4h2.1l2 9.6h8.9l1.6-7H5.2") + C(8, 16, 1.2) + C(14.4, 16, 1.2),
   layers: P("M10 3L2.6 7 10 11l7.4-4zM2.6 10.4L10 14.4l7.4-4M2.6 13.8L10 17.8l7.4-4"),
+  dashboard: `<rect x="2.8" y="2.8" width="6.4" height="8" rx="1.6"/><rect x="10.8" y="2.8" width="6.4" height="4.6" rx="1.6"/><rect x="10.8" y="9" width="6.4" height="8.2" rx="1.6"/><rect x="2.8" y="12.6" width="6.4" height="4.6" rx="1.6"/>`,
+  // ---- roles of AI team members (ISSUE-168) ----
+  code: P("M7 6l-4 4 4 4M13 6l4 4-4 4M11.2 4.4L8.8 15.6"),
+  layout: `<rect x="2.8" y="3.6" width="14.4" height="12.8" rx="2"/>` + P("M2.8 7.4h14.4M8 7.4v9"),
+  server: `<rect x="3.2" y="3.2" width="13.6" height="5.6" rx="1.6"/><rect x="3.2" y="11.2" width="13.6" height="5.6" rx="1.6"/>` + DOT(6.4, 6) + DOT(6.4, 14),
+  database: `<ellipse cx="10" cy="4.8" rx="6" ry="2.2"/>` + P("M4 4.8v10.4c0 1.2 2.7 2.2 6 2.2s6-1 6-2.2V4.8M4 10c0 1.2 2.7 2.2 6 2.2s6-1 6-2.2"),
+  bug: `<rect x="6" y="6.4" width="8" height="10" rx="4"/>` + P("M10 9.6v6.6M7.4 4.2l1.4 2.2M12.6 4.2l-1.4 2.2M3 9.4h3M14 9.4h3M3.4 14.6L6 13.6M16.6 14.6L14 13.6"),
+  review: C(8.6, 8.6, 5.4) + P("M12.6 12.6l4.6 4.6M6.4 8.8l1.6 1.6 3-3.2"),
+  palette: P("M10 2.8a7.2 7.2 0 1 0 0 14.4c1.1 0 1.6-.8 1.3-1.7-.4-1.1.3-2.1 1.5-2.1h1.6a2.8 2.8 0 0 0 2.8-2.8c0-4.3-3.2-7.8-7.2-7.8z") + DOT(6.4, 9.4) + DOT(8.8, 6.2) + DOT(12.6, 6.6),
+  pen: P("M12.8 3.4l3.8 3.8-9 9H3.8v-3.8zM11 5.2l3.8 3.8"),
+  cloud: P("M5.6 15.6a3.6 3.6 0 0 1-.4-7.2 5 5 0 0 1 9.6-.8 3.4 3.4 0 0 1 .4 8z"),
+  terminal2: `<rect x="2.6" y="3.6" width="14.8" height="12.8" rx="2"/>` + P("M5.6 8l2.6 2.2-2.6 2.2M10 12.6h4"),
+  megaphone: P("M3 8.2v3.6h2.6L12.4 15.6V4.4L5.6 8.2zM5.6 11.8l1 4.2h2.2l-.8-3.4M15 7.6a3.2 3.2 0 0 1 0 4.8"),
+  headset: P("M3.6 12.4V10a6.4 6.4 0 0 1 12.8 0v2.4") + `<rect x="2.8" y="11.2" width="3.2" height="4.8" rx="1.2"/><rect x="14" y="11.2" width="3.2" height="4.8" rx="1.2"/>` + P("M16 16v.4a2 2 0 0 1-2 2h-2.6"),
+  phone: `<rect x="5.6" y="2.4" width="8.8" height="15.2" rx="2"/>` + P("M9 15h2"),
+  scale: P("M10 3v14M6.4 17h7.2M4 6h12M4 6l-2 5.2a2.2 2.2 0 0 0 4 0zM16 6l-2 5.2a2.2 2.2 0 0 0 4 0z"),
+  users: C(7.4, 6.8, 2.8) + P("M2.4 16.4c.6-2.9 2.6-4.6 5-4.6s4.4 1.7 5 4.6") + P("M12.6 4.4a2.8 2.8 0 0 1 0 5.2M14.4 11.9c1.6.5 2.8 2 3.2 4.5"),
+  rocketup: P("M10 2.6c2.8 1.6 4.2 4.4 4.2 7.6l-2 3.4H7.8l-2-3.4c0-3.2 1.4-6 4.2-7.6zM7.8 13.6L6 17l2.6-1.2M12.2 13.6L14 17l-2.6-1.2") + C(10, 8.4, 1.4),
+  target: C(10, 10, 7.2) + C(10, 10, 4.2) + DOT(10, 10),
+  lightbulb2: P("M7.4 14.2h5.2M8 17h4M10 2.8a5 5 0 0 0-3 9c.6.5 1 1.2 1 2V14h4v-.2c0-.8.4-1.5 1-2a5 5 0 0 0-3-9z"),
+  translate: P("M2.8 4.6h7.4M6.5 3v1.6M8.8 4.6c-.6 3.2-2.6 5.8-5.4 7.2M4.8 7.4c1 1.8 2.6 3.2 4.6 4M10.4 17l3.2-7.6 3.2 7.6M11.4 14.6h4.4"),
+  lock2: `<rect x="4" y="8.8" width="12" height="8.4" rx="1.8"/>` + P("M6.8 8.8V6.2a3.2 3.2 0 0 1 6.4 0v2.6M10 12.2v1.8"),
+  gitbranch: C(5.6, 4.6, 1.8) + C(5.6, 15.4, 1.8) + C(14.4, 6.6, 1.8) + P("M5.6 6.4v7.2M14.4 8.4c0 3.6-5 2.6-8.4 5.4"),
+  brain: P("M8.6 3.4a2.6 2.6 0 0 0-2.6 2.2 2.6 2.6 0 0 0-1.8 4 2.6 2.6 0 0 0 1.2 4.4 2.6 2.6 0 0 0 3.2 2.6V3.4zM11.4 3.4a2.6 2.6 0 0 1 2.6 2.2 2.6 2.6 0 0 1 1.8 4 2.6 2.6 0 0 1-1.2 4.4 2.6 2.6 0 0 1-3.2 2.6V3.4z"),
+  camera: P("M3 6.8h3l1.4-2.2h5.2L14 6.8h3v9.4H3z") + C(10, 11.2, 2.8),
 };
+
+/** icons offered for a team or a role (ISSUE-168): [name, what it suits] */
+export const ROLE_ICONS = [
+  ["code", "นักพัฒนา / โค้ด"], ["layout", "Front-end / หน้าจอ"], ["server", "Back-end / เซิร์ฟเวอร์"], ["database", "ข้อมูล / ฐานข้อมูล"],
+  ["phone", "แอปมือถือ"], ["cloud", "DevOps / คลาวด์"], ["terminal2", "สคริปต์ / ระบบ"], ["gitbranch", "Git / release"],
+  ["bug", "ไล่แก้บั๊ก"], ["review", "ตรวจโค้ด / รีวิว"], ["flask", "ทดสอบ / QA"], ["shield", "ความปลอดภัย"], ["lock2", "สิทธิ์ / ความเป็นส่วนตัว"],
+  ["palette", "ดีไซน์ / UX-UI"], ["pen", "เขียน / คอนเทนต์"], ["camera", "ภาพ / วิดีโอ"], ["film", "ตัดต่อวิดีโอ"], ["music", "เสียง / เพลง"],
+  ["compass", "วางแผนผลิตภัณฑ์"], ["target", "เป้าหมาย / กลยุทธ์"], ["clipboard", "จัดการโปรเจกต์"], ["chart", "วิเคราะห์ / รายงาน"],
+  ["megaphone", "การตลาด"], ["coin", "การเงิน / ราคา"], ["cart", "ขาย / ร้านค้า"], ["headset", "ซัพพอร์ต / ลูกค้า"],
+  ["book", "ค้นคว้า / ความรู้"], ["translate", "แปลภาษา"], ["scale", "กฎหมาย / สัญญา"], ["brain", "AI / ML"], ["bot", "ผู้ช่วย AI"],
+  ["lightbulb2", "ไอเดีย / ครีเอทีฟ"], ["rocketup", "เปิดตัว / growth"], ["users", "ทีม"], ["user", "คนทั่วไป"],
+];
+
+/** a role's old emoji -> the icon that means the same (older roles keep working, drawn in the app's style) */
+export const ROLE_EMOJI = {
+  "🧑‍💻": "code", "👨‍💻": "code", "👩‍💻": "code", "💻": "code", "🖥": "layout", "🗄": "server", "🗃": "database", "💾": "database",
+  "🐛": "bug", "🪲": "bug", "🔍": "review", "🔎": "review", "🧪": "flask", "🛡": "shield", "🔒": "lock2", "🎨": "palette", "✍": "pen",
+  "📝": "pen", "📷": "camera", "🎬": "film", "🎵": "music", "🧭": "compass", "🎯": "target", "📋": "clipboard", "📊": "chart", "📈": "chart",
+  "📣": "megaphone", "📢": "megaphone", "💰": "coin", "🛒": "cart", "🎧": "headset", "📚": "book", "🌐": "globe", "🌍": "globe", "⚖": "scale",
+  "🧠": "brain", "🤖": "bot", "💡": "lightbulb2", "🚀": "rocketup", "👥": "users", "📱": "phone", "☁": "cloud", "⚙": "gear", "🛠": "toolbox",
+};
+
+/** the icon to draw for a team/role: "i:name" picked in the app, an old emoji mapped, else guessed from its words */
+export function roleIcon(emoji, words = "") {
+  const e = (emoji || "").replace(/️/g, "");
+  if (e.startsWith("i:") && ICONS[e.slice(2)]) return e.slice(2);
+  if (ROLE_EMOJI[e]) return ROLE_EMOJI[e];
+  const w = words.toLowerCase();
+  const guess = [["front", "layout"], ["back", "server"], ["data", "database"], ["bug", "bug"], ["debug", "bug"], ["review", "review"], ["test", "flask"], ["qa", "flask"],
+    ["secur", "shield"], ["design", "palette"], ["ux", "palette"], ["writ", "pen"], ["content", "pen"], ["product", "compass"], ["plan", "compass"], ["market", "megaphone"],
+    ["devops", "cloud"], ["mobile", "phone"], ["support", "headset"], ["research", "book"], ["legal", "scale"], ["financ", "coin"], ["video", "film"], ["ai", "brain"],
+    ["dev", "code"], ["engineer", "code"], ["web", "globe"]];
+  return guess.find(([k]) => w.includes(k))?.[1] ?? "user";
+}
 
 /** emoji (written without the U+FE0F variation selector) -> icon name */
 export const EMOJI = {

@@ -191,6 +191,7 @@ pub fn ask(app: &AppHandle, id: i64, text: &str, ai: &ChatAi) -> Result<(), Stri
                 started: db::now(),
                 sid: "codex".into(),
                 ai: crate::remote::ai_label(&st.db.lock(), &ai.account, "Codex", "codex", None, &ai.model),
+                agent: "codex".into(),
                 ..Default::default()
             },
         );
@@ -232,6 +233,10 @@ fn worker(app: &AppHandle, id: i64) {
         let Some((text, ai)) = next else { break };
         if let Err(e) = turn(app, id, &text, &ai) {
             feed(app, id, format!("⚠️ {e}"), Some("idle"));
+            // at the account's limit: the same message carries on with a backup account (ISSUE-176)
+            if e.starts_with("บัญชีนี้ชนลิมิต") && crate::remote::retry_on_backup(app, id, &text, &ai) {
+                return;
+            }
         }
     }
     feed(app, id, String::new(), Some("idle"));
@@ -283,6 +288,10 @@ fn turn(app: &AppHandle, id: i64, text: &str, ai: &ChatAi) -> Result<(), String>
     let thread = saved_thread(app, id, &account_id);
     let effort = crate::providers::effort_for("codex", &want.model, &want.effort).filter(|_| !want.effort.is_empty());
     let bin = crate::providers::resolve_bin("codex").ok_or("ไม่พบ Codex ในเครื่องนี้")?;
+    // tools (MCP): "always" ones and those picked for this idea with "/", described in TOOLS.md (ISSUE-171)
+    let tools = crate::mcp::for_idea(&st.root, &crate::mcp::idea_tools(&st.db.lock(), id), &[]);
+    crate::mcp::write_tools_md(&dir, &tools);
+    let mcp_cfg = crate::mcp::config_for(&st.root, &tools, &format!("chat{id}"), &[]);
 
     // the first message carries the session brief; later ones are just the message (the thread remembers)
     let fresh_prompt = format!(
@@ -292,7 +301,13 @@ fn turn(app: &AppHandle, id: i64, text: &str, ai: &ChatAi) -> Result<(), String>
     let run = |mode: Mode| -> Result<(), Failure> {
         let prompt = if mode == Mode::New { fresh_prompt.as_str() } else { text };
         let mut cmd = Command::new(&bin);
-        cmd.args(turn_args(mode, &want.model, effort.as_deref())).current_dir(&dir).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        let mut args = turn_args(mode, &want.model, effort.as_deref());
+        let mut tool_env: Vec<(String, String)> = vec![];
+        if let Some(p) = &mcp_cfg {
+            crate::mcp::apply_to_run("codex", p, &dir, &mut args, &mut tool_env, &[]);
+        }
+        cmd.envs(tool_env);
+        cmd.args(args).current_dir(&dir).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
         if let Some(a) = &account {
             for (k, v) in crate::accounts::env_with_secret(a, &st.root) {
                 cmd.env(k, v);

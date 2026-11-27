@@ -479,18 +479,24 @@ fn next_power_idea(st: &AppState) -> Option<Idea> {
 /// Switch to another account when the one an idea is pinned to cannot work now (out of quota, at its limit, cannot
 /// connect)? Setting `account_switch`: "auto" (default) or "wait" (keep waiting for that account) (ISSUE-102).
 fn auto_switch(st: &AppState) -> bool {
-    db::get_setting(&st.db.lock(), "account_switch").as_deref() != Some("wait")
+    crate::fallback::mode(&st.db.lock()) != "wait"
 }
 
-/// The account an idea is pinned to, while that is the account to use. With automatic switching, a pinned account
-/// the bot may not use right now is passed over and the account the bot is using does the step (ISSUE-102).
+/// The account that works on an idea pinned to one: the pinned account while it may work, else its backups in order
+/// (the idea's own, then the ones for every idea — ISSUE-176). When none may work: "auto" lets the account the bot is
+/// using do the step (None), "list" and "wait" wait for the pinned account (ISSUE-102).
 fn pinned_now(st: &AppState, idea_id: i64) -> Option<String> {
     let p = crate::idea_ai::pinned_account(&st.db.lock(), idea_id)?;
-    if !auto_switch(st) {
+    let mode = crate::fallback::mode(&st.db.lock());
+    if mode == "wait" {
         return Some(p);
     }
-    let ok = st.rt.lock().acct_allowed.get(&p).map(|x| x.0).unwrap_or(true);
-    ok.then_some(p)
+    let chain = crate::fallback::chain(&st.db.lock(), idea_id, &p);
+    let allowed = |a: &String| st.rt.lock().acct_allowed.get(a).map(|x| x.0).unwrap_or(true);
+    if let Some(a) = chain.iter().find(|a| allowed(a)) {
+        return Some(a.clone());
+    }
+    if mode == "auto" { None } else { Some(p) }
 }
 
 /// A waiting idea that the owner pinned to an account, when that account may work right now (its own quota decides).
@@ -507,7 +513,7 @@ fn next_pinned_idea(st: &AppState) -> Option<Idea> {
             && i.current_stage().is_some()
             && !crate::remote::held(st, i.id)
             && !(i.status == "inbox" && now - i.updated < grace)
-            && crate::idea_ai::pinned_account(&st.db.lock(), i.id).is_some_and(|a| allowed.contains(&a))
+            && pinned_now(st, i.id).is_some_and(|a| allowed.contains(&a))
     })
 }
 
@@ -893,8 +899,12 @@ fn launch(app: AppHandle, idea: Idea, stage: String, forced: bool, power: bool) 
                     }
                     // tools (MCP) that a skill offered to this run needs (mcp.rs) — only those, they cost tokens every turn
                     let extra: Vec<(String, serde_json::Value)> = if team_others { crate::team::team_server(idea.id, &lead_account).into_iter().collect() } else { vec![] };
-                    if let Some(p) = crate::mcp::run_config(&st.root, &offered_slugs, &format!("idea{}", idea.id), &extra) {
-                        let mut names: Vec<String> = crate::mcp::for_run(&st.root, &offered_slugs).into_iter().map(|s| s.id).collect();
+                    // + the tools picked for this idea with "/" (ISSUE-171), and TOOLS.md says how to use each
+                    let picked = crate::mcp::idea_tools(&st.db.lock(), idea.id);
+                    let tools = crate::mcp::for_idea(&st.root, &picked, &offered_slugs);
+                    crate::mcp::write_tools_md(&workspace::idea_dir(&st.ws, &idea.slug), &tools);
+                    if let Some(p) = crate::mcp::config_for(&st.root, &tools, &format!("idea{}", idea.id), &extra) {
+                        let mut names: Vec<String> = tools.iter().map(|s| s.id.clone()).collect();
                         names.extend(extra.iter().map(|(k, _)| k.clone()));
                         st.push_log(format!("🔌 เครื่องมือ (MCP) ที่ให้รอบนี้: {}", names.join(", ")));
                         env.push((crate::runner::MCP_CONFIG_ENV.into(), p.to_string_lossy().into_owned()));

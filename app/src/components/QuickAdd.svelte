@@ -109,8 +109,7 @@
   <button type="button" class="ghost expand" onclick={toggleBig} title={big ? "ย่อกลับ (Esc)" : "ขยายเป็นช่องใหญ่ — สำหรับไอเดียยาวๆ และแนบรูป"}><Icon name={big ? "collapse" : "layers"} /></button>
   <Attach bind:this={att} bind:staged fallback priority={1} />
   <Scope bind:value={scope} compact />
-  <IdeaAi bind:value={ai} />
-  <TeamPick bind:value={ai.team} {text} />
+  <div class="meta"><IdeaAi bind:value={ai} /><TeamPick bind:value={ai.team} {text} /></div>
   {#if err}<span class="err">{err}</span>{/if}
   {#if big}<div class="bigbar"><span class="faint small grow">Ctrl+Enter จดไอเดีย · Esc ย่อกลับ</span><button type="button" class="ghost" onclick={() => (big = false)}>ย่อกลับ</button><button type="button" class="primary" onclick={submit}>จดไอเดีย</button></div>{/if}
 </div>
@@ -118,11 +117,16 @@
 <style>
   .qa { flex: 1; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 0 12px; transition: border-color .15s; }
   .qa:focus-within { border-color: var(--teal); }
+  /* AI and "ใครทำ" on one line under the box (they took two lines: less room on a laptop, ISSUE-166) */
+  .meta { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 20px; padding: 0 0 6px; margin-top: -8px; }
+  /* compact: the whole box about as tall as the status card beside it (ISSUE-169) */
+  .meta :global(select) { padding: 3px 26px 3px 8px; font-size: 13px; }
+  .meta :global(.head) { padding: 0; }
   .tw { position: relative; flex: 1; display: flex; min-width: 200px; }
   .tw textarea { flex: 1; }
   .qa :global(.scope) { margin-top: 6px; }
   .plus { color: var(--teal); font-size: 18px; padding-top: 8px; }
-  textarea { flex: 1; min-width: 200px; border: none; background: transparent; padding: 10px 8px; font-size: 15px; resize: none; line-height: 1.4; font-family: inherit; }
+  textarea { flex: 1; min-width: 200px; border: none; background: transparent; padding: 9px 8px 6px; font-size: 15px; resize: none; line-height: 1.4; font-family: inherit; }
   .expand { padding: 6px 8px; margin-top: 4px; color: var(--text-3); }
   .expand:hover { color: var(--teal); }
   /* the big editor: centred over a dimmed window, the box fills it */

@@ -2,6 +2,7 @@
   // The idea's team at work: who got which part, on which AI/model, and how it went (team_parts in db.rs).
   import { onMount } from "svelte";
   import Icon from "./Icon.svelte";
+  import RoleIcon from "./RoleIcon.svelte";
   import { api } from "../lib/api.js";
   import { store } from "../lib/store.svelte.js";
 
@@ -23,7 +24,7 @@
   const t = $derived(teams.find((x) => x.slug === team));
   const member = (slug) => t?.member_roles.find((m) => m.slug === slug);
   const BUILTIN = { helper: "ผู้ช่วยทั่วไป", "helper-fast": "ผู้ช่วยงานเร็ว", reviewer: "ผู้ตรวจงาน" };
-  const who = (p) => { const m = member(p.role); return m ? `${m.emoji || ""} ${m.name}` : BUILTIN[p.role] ?? (p.role || "ผู้ช่วย"); };
+  const who = (p) => { const m = member(p.role); return m ? m.name : BUILTIN[p.role] ?? (p.role || "ผู้ช่วย"); };
   const STATUS = { running: ["กำลังทำ", "teal"], ok: ["เสร็จ", "teal"], error: ["ไม่สำเร็จ", "red"], timeout: ["หมดเวลา", "amber"], killed: ["ถูกหยุด", "amber"] };
   const clock = (s) => new Date(s * 1000).toLocaleString(store.lang === "th" ? "th-TH" : undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 </script>
@@ -31,11 +32,11 @@
 {#if t}
   <div class="tc">
     <div class="row wrap small">
-      <b>{t.emoji || "👥"} {t.name}</b>
+      <b><RoleIcon emoji={t.emoji || "i:users"} words={t.name} /> {t.name}</b>
       <span class="faint">หัวหน้า = AI ของไอเดียนี้ · แบ่งพร้อมกันได้ {t.helpers} งาน</span>
     </div>
     <div class="row wrap small">
-      {#each t.member_roles as m (m.slug)}<span class="chip" title={m.title}>{m.emoji} {m.name}{m.account ? ` · ${m.account}` : ""}</span>{/each}
+      {#each t.member_roles as m (m.slug)}<span class="chip" title={m.title}><RoleIcon emoji={m.emoji} words={m.title + " " + m.name} /> {m.name}{m.account ? ` · ${m.account}` : ""}</span>{/each}
       {#if !t.member_roles.length}<span class="faint">ยังไม่มีสมาชิก — หัวหน้าใช้ผู้ช่วยทั่วไป</span>{/if}
     </div>
     {#if parts.length}

@@ -3,6 +3,7 @@
   import McpTools from "../components/McpTools.svelte";
   import { onMount } from "svelte";
   import { api } from "../lib/api.js";
+  import Bilingual from "../components/Bilingual.svelte";
   import { toast } from "../lib/store.svelte.js";
   import { ask } from "../lib/dialog.svelte.js";
   import SkillCheck from "../components/SkillCheck.svelte";
@@ -194,7 +195,7 @@
 </script>
 
 <div class="wrapx">
-  <h1>สกิล</h1>
+  <h1>สกิลและเครื่องมือ</h1>
   <p class="muted small">
     สกิลคือ<b>สูตร</b>ที่ AI เปิดอ่านเมื่อจำเป็น — สูตรต่างกันได้ผลต่างกันแม้เป็นอาหารจานเดียวกัน จึงไม่มีสูตร “ถูก” ตัวเดียว
     ใส่สูตรที่ทำงานเดียวกันไว้ใน <b>ตระกูล</b> (family) เดียวกัน บอทจะเสนอทีละสูตรแล้วเก็บผลให้คุณดู คุณปักหมุดสูตรโปรดได้เสมอ
@@ -227,7 +228,7 @@
                 <button class="small" class:pin={s.pinned} onclick={() => set(s.slug, "pinned", !s.pinned)} title="ปักหมุด: ใช้สูตรนี้เสมอในตระกูลนี้"><Icon name="pin" /> {s.pinned ? "ปักหมุดอยู่" : "ปักหมุด"}</button>
               {/if}
             </div>
-            <div class="muted small">{s.description}</div>
+            <div class="muted small"><Bilingual text={s.description} /></div>
             <div class="row wrap small faint">
               <span>เสนอ {s.stats.offered} รอบ</span>
               <span>· เปิดใช้จริง {s.stats.used}</span>
@@ -288,7 +289,7 @@
           <div class="row wrap"><b class="grow">{r.repo}</b><span class="chip {r.trust === 'known' ? 'blue' : 'amber'}">{r.trust === "known" ? "แหล่งที่รู้จัก" : "ชุมชน"}</span>
             {#if r.stars != null}<span class="faint small"><Icon name="star" /> {r.stars}</span>{/if}{#if sort === "trending" && r.stars_per_day}<span class="faint small"><Icon name="flame" /> {r.stars_per_day}/วัน</span>{/if}{#if r.license}<span class="faint small">{r.license}</span>{/if}</div>
           <div class="row wrap small"><span class="faint">{CATS[r.category || "other"]}</span>{#if r.created}<span class="faint">· สร้าง {r.created.slice(0, 10)}</span>{/if}</div>
-          {#if r.description}<div class="muted small">{r.description}</div>{/if}
+          {#if r.description}<div class="muted small"><Bilingual text={r.description} /></div>{/if}
         </button>
       {:else}
         <div class="faint">ไม่พบ</div>
@@ -331,7 +332,7 @@
       <div class="card pv">
         <div class="row wrap"><b class="grow">{preview.name}</b>
           <span class="chip {pv === 'clean' ? 'teal' : pv === 'warn' ? 'amber' : 'red'}">{pv === "clean" ? "ผ่านการสแกน" : pv === "warn" ? "มีคำเตือน" : "อันตราย — ติดตั้งไม่ได้"}</span></div>
-        <div class="muted small">{preview.description}</div>
+        <div class="muted small"><Bilingual text={preview.description} /></div>
         <div class="small faint">ที่มา <a href={preview.source} target="_blank" rel="noreferrer">{preview.source}</a> · ไลเซนส์ {preview.license || "ไม่ระบุ"} · sha256 {preview.sha256.slice(0, 12)}… · {(preview.size / 1024).toFixed(1)} KB</div>
         {#if preview.domains.length}<div class="small faint">ลิงก์ในไฟล์ไปยัง: {preview.domains.join(", ")}</div>{/if}
         {#each preview.findings as f}
@@ -350,7 +351,7 @@
             {#if preview.skipped?.length}<div class="small faint">ไม่ติดตั้ง (ไม่ใช่ข้อความ หรือใหญ่เกิน): {preview.skipped.join(", ")}</div>{/if}
           </details>
         {/if}
-        <details open><summary class="small">เนื้อหาเต็ม (อ่านให้จบก่อนติดตั้ง)</summary><pre class="txt">{preview.text}</pre></details>
+        <details open><summary class="small">เนื้อหาเต็ม (อ่านให้จบก่อนติดตั้ง)</summary><Bilingual text={preview.text} md /></details>
         {#if pv === "warn"}<label class="small"><input type="checkbox" bind:checked={accept} /> ฉันอ่านเนื้อหาและคำเตือนทั้งหมดแล้ว และต้องการติดตั้ง</label>{/if}
         <div class="row">
           <button class="primary" disabled={installing || pvWait || pv === "danger" || (pv === "warn" && !accept)} onclick={install}>{installing ? "กำลังติดตั้ง…" : pvWait ? "รอผลตรวจก่อน…" : "ติดตั้งสกิลนี้"}</button>

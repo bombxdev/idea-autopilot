@@ -5,6 +5,7 @@
   import Icon from "./Icon.svelte";
   import { onMount } from "svelte";
   import { api } from "../lib/api.js";
+  import Bilingual from "./Bilingual.svelte";
   import { toast } from "../lib/store.svelte.js";
   import { ask } from "../lib/dialog.svelte.js";
 
@@ -103,11 +104,15 @@
       <label class="small"><input type="checkbox" checked={t.enabled} onchange={(e) => set(t, "enabled", e.target.checked)} /> เปิดใช้</label>
       <button class="ghost small" onclick={() => remove(t)} title="เอาออก"><Icon name="trash" /></button>
     </div>
-    {#if t.description}<div class="muted small">{t.description}</div>{/if}
+    {#if t.description}<div class="muted small"><Bilingual text={t.description} /></div>{/if}
+    <!-- how to use it, in TOOLS.md of each idea that has it; empty = the description above (ISSUE-171) -->
+    <label class="small howto">วิธีใช้ (บอก AI ว่าใช้ทำอะไร เมื่อไร — ว่าง = ใช้คำอธิบายด้านบน)
+      <textarea rows="2" maxlength="600" value={t.howto ?? ""} placeholder={t.description || "เช่น ใช้เปิดเว็บและกดปุ่มจริงเมื่อต้องทดสอบหน้าเว็บ"} onchange={(e) => set(t, "howto", e.currentTarget.value)}></textarea></label>
+    <div class="faint small">เรียกใช้: พิมพ์ <code>/tool-{t.id.toLowerCase()}</code> ในช่องจดไอเดียหรือแชต แล้วไอเดียนั้นจะได้เครื่องมือนี้ทุกรอบ</div>
     <div class="faint small mono">{t.command}{#if t.env_names.length} · ค่าที่ตั้งไว้: {t.env_names.join(", ")}{/if}</div>
     <div class="row wrap small links">
       <span>สกิลที่ใช้:</span>
-      {#each t.skills as k (k)}<span class="chip teal">{skillName(k)}</span>{:else}<span class="faint">ยังไม่มี — บอทจะไม่เปิดเครื่องมือนี้</span>{/each}
+      {#each t.skills as k (k)}<span class="chip teal">{skillName(k)}</span>{:else}<span class="faint">ยังไม่มี — ได้เฉพาะไอเดียที่เรียกด้วย /tool-… หรือเมื่อติ๊ก “ทุกรอบ”</span>{/each}
       <button class="ghost small" onclick={() => (linking = linking === t.id ? "" : t.id)}><Icon name="pencil" /> เลือก</button>
       <label class="faint" title="เปิดให้ทุกรอบ แม้ไม่มีสกิลที่ต้องใช้ — เสีย token ทุกข้อความ"><input type="checkbox" checked={t.always} onchange={(e) => set(t, "always", e.target.checked)} /> ทุกรอบ</label>
     </div>
@@ -153,7 +158,7 @@
   {#each shown as r (r.name)}
     <div class="card tool">
       <div class="row wrap"><b class="grow">{r.title || r.name}</b><span class="faint small">{cats[r.category || "other"]}</span>{#if r.stars != null}<span class="faint small">★ {r.stars.toLocaleString()}</span>{/if}<span class="faint small">v{r.version} · {r.published?.slice(0, 10)}</span></div>
-      <div class="muted small">{r.description}</div>
+      <div class="muted small"><Bilingual text={r.description} /></div>
       <div class="row wrap small"><span class="faint mono">{r.name}</span>{#if r.repo}<a href={r.repo} target="_blank" rel="noreferrer">source</a>{/if}
         <span class="grow"></span><button class="small" onclick={() => pick(r)}>ติดตั้ง…</button></div>
       {#if open?.name === r.name}
@@ -177,6 +182,8 @@
   h3 { margin: 18px 0 8px; font-size: 15px; }
   .tool { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
   .tool.off { opacity: .6; }
+  .howto { display: flex; flex-direction: column; gap: 4px; }
+  .howto textarea { font-size: 13px; }
   .mono { font-family: ui-monospace, monospace; word-break: break-all; }
   .links { gap: 6px; align-items: center; }
   .pick { gap: 10px; padding: 8px; background: var(--bg-2); border-radius: 8px; }

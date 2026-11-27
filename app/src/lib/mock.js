@@ -73,7 +73,7 @@ const state = {
     today_allowance: 6.5, bot_used_today: 3.2, five_cap: 95, sprint: false, turbo: false, paused: false, hours_to_reset: 98, next_work_start: now + 12 * H,
   },
   snap: { ts: now - 120, five_pct: 22, five_reset: now + 3 * H, week_pct: 58, week_reset: now + 98 * H, source: "cache" },
-  idea_ai: { 1: { account: "codex01", model: "gpt-6.1-sol", effort: "high", skills: [], team: "web-app" } },
+  idea_ai: { 1: { account: "codex01", model: "gpt-6.1-sol", effort: "high", skills: [], team: "web-app", backups: ["claude01"] } },
   accounts: [
     { id: "claude01", label: "claude01", kind: "claude", shared: true, active: true,
       decision: { allow: true, reason: "นอกเวลางาน — บอททำงานได้", slot: "off", week_pct: 58, five_pct: 22, reserve: 30, bot_budget: 9, today_allowance: 6.5, bot_used_today: 3.2, five_cap: 95, sprint: false, turbo: false, paused: false, hours_to_reset: 98 },
@@ -91,7 +91,7 @@ const state = {
     { ts: now - 280, text: "🙋 คุณ: เพิ่มตารางเปรียบเทียบปริมาณน้ำตาลของกาแฟเย็นแต่ละร้าน" }, { ts: now - 278, text: "🙋 คุณ: At line:1 char:207\n+ ... ore } from './agent/keystore.mjs'; const p = wincredKeystore().get('g ...\n+ ~\nAn expression was expected after '('.\nAt line:1 char:244\n+ ... st p = wincredKeystore().get('goatcounter/password'); if (!p) throw n ...\n+ ~\nMissing statement block after if ( condition ).\n+ CategoryInfo : ParserError: (:) [], ParentContainsErrorRecordException\n+ FullyQualifiedErrorId : ExpectedExpression" },
     { ts: now - 270, text: "💬 จะอ่านรายงานเดิมก่อน เพื่อดูว่ามีข้อมูลน้ำตาลอะไรอยู่แล้วบ้าง" }, { ts: now - 265, text: "💬 ลองรันนี้ใน PowerShell:\n```powershell\ncd D:/x\nnode a.mjs | Set-Clipboard\n```\nแล้วกด **Ctrl+V** หรือล้างด้วย `Set-Clipboard -Value ''`" },
     { ts: now - 265, text: "📖 อ่านไฟล์ REPORT.md" }, { ts: now - 240, text: "🌐 ค้นเว็บ: ปริมาณน้ำตาล กาแฟเย็น Amazon Café" },
-    { ts: now - 200, text: "💬 ได้ข้อมูล 5 ร้านแล้ว จะทำเป็นตารางและใส่แหล่งอ้างอิงท้ายตาราง" },
+    { ts: now - 200, text: "💬 ได้ข้อมูล 5 ร้านแล้ว จะทำเป็นตารางและใส่แหล่งอ้างอิงท้ายตาราง" }, { ts: now - 190, text: "💬 ตัวช่วยที่ค้นมาและน่าลอง:\n\n| ตัวช่วย | เหมาะช่วยอะไร |\n|---|---|\n| [pdfplumber](https://github.com/jsvine/pdfplumber) | ตรวจขอบตาราง — **มีติดตั้งอยู่แล้ว** |\n| [Typhoon OCR](https://huggingface.co/typhoon-ai) | อ่านหน้าไทย/อังกฤษ |\n\nบันทึกไว้ใน [รายงาน](D:/x/workspace/ideas/idea-0005-coffee/REPORT.md)" },
     { ts: now - 190, text: "✏️ แก้ไฟล์ REPORT.md" }] }],
   live_log: [
     "▶ เกมการ์ดเล่นสั้นบนเว็บ — verdict (strong)",
@@ -278,6 +278,10 @@ const handlers = {
   codex_thread: ({ id }) => (id === 1 ? { thread: "019a-demo-thread", account: "codex01", command: "codex resume 019a-demo-thread" } : null),
   idea_ask: ({ id, text, replace }) => { const x = state.sessions.find((s) => s.idea_id === id); if (x) { x.feed.push({ ts: Math.floor(Date.now() / 1000), text: `🙋 คุณ: ${replace ? "✏️ " : ""}${text}` }); x.status = "working"; } return null; },
   list_ideas: () => ({ ideas, questions, stages }),
+  idea_rounds: () => [
+    { id: 2, started: Math.floor(Date.now() / 1000) - 1800, updated: Math.floor(Date.now() / 1000) - 1500, prompt: "หาวิธีปรับให้ตารางแม่นขึ้น", answer: "**จุดที่คุ้มที่สุดคือปรับการตัดสินโครงสร้างตาราง**\n\n| ตัวช่วย | เหมาะช่วยอะไร |\n|---|---|\n| pdfplumber | ตรวจขอบตาราง |\n| PP-StructureV3 | layout หลายคอลัมน์ |\n\nบันทึกไว้ใน [IMPROVEMENT-RESEARCH.md](IMPROVEMENT-RESEARCH.md)\n\n➡️ ลองแก้ routing ตารางแล้วทดสอบ 19 PDF ใหม่\n➡️ ทดลอง PP-StructureV3 กับหน้าที่ยังพัง", next: ["ลองแก้ routing ตารางแล้วทดสอบ 19 PDF ใหม่", "ทดลอง PP-StructureV3 กับหน้าที่ยังพัง"], says: ["จะอ่านรายงานเดิมก่อน", "ลอง probe 5 PDF ด้วย use_layout=False"], steps: 23, files: ["IMPROVEMENT-RESEARCH.md", "REPORT.md"], problems: [{ text: "ขาดไลบรารี Python (paddleocr) ที่สคริปต์ต้องใช้ — AI ต้องติดตั้งก่อนหรือเลือกวิธีอื่น", raw: "ModuleNotFoundError: No module named 'paddleocr'" }], note: "ค้นแล้ว จุดปรับหลักคือแยกตาราง/คอลัมน์", done: true, imported: false },
+    { id: 1, started: Math.floor(Date.now() / 1000) - 90000, updated: Math.floor(Date.now() / 1000) - 89000, prompt: "เทียบ 3 ตัวให้หน่อย", answer: "เทียบครบ 11 PDF แล้ว OpenThai เด่นสุดกับหน้าสแกน", next: [], says: [], steps: 40, files: [], problems: [], note: "", done: true, imported: true },
+  ],
   get_idea: ({ id }) => ({
     idea: ideas.find((i) => i.id === id), files: { report: md, idea: "# ไอเดีย\n\nข้อความเดิมของคุณ" },
     runs: [{ id: 9, stage: "research", status: "ok", started: now - 3 * H, input_tokens: 2e4, output_tokens: 9e3, cache_write: 6e4, week_before: 52, week_after: 55.5 }, { id: 8, stage: "clarify", status: "ok", started: now - 27 * H, input_tokens: 1e4, output_tokens: 4e3, cache_write: 2e4, week_before: 50, week_after: 51 }],
@@ -297,6 +301,7 @@ const handlers = {
     return { date: d.toISOString().slice(0, 10), kind, default: kind, override: false, note: null };
   }),
   get_settings: () => ({
+    ...mockCt,
     model_default: "auto", autostart: "1", reserve_per_hour: null, root: "C:/IdeaAutopilot", language: DEMO_LANG || "th", meter: "auto", provider: "auto",
     schedule: { start: 9, lunch_start: 12, lunch_end: 13, end: 18, half_end: 12, days: { mon: "full", tue: "full", wed: "full", thu: "full", fri: "full", sat: "off", sun: "off" } },
   }),
@@ -354,6 +359,11 @@ function toEnglish(v) {
 }
 
 // team roles (roles.rs) for the preview
+const mockCt = (() => { try { return JSON.parse(sessionStorage.getItem("ia-mock-ct") || "{}"); } catch { return {}; } })();
+let demoPersonas = [
+  { slug: "bom", name: "บอม", traits: ["funny", "loud", "direct", "nerd"], levels: { humor: 2, direct: 3, formal: 0, words: 1 }, catchphrase: "เอาจริงดิ? งั้นลุยเลย!", donts: "หยาบคาย", bio: "หนุ่มสาย nerd ใส่แว่น หัวฟู", look: { skin: 1, hair: "fluffy", hair_color: "#2b2118", glasses: "round", shirt: "#4f7cff", extra: "none", face: "grin" } },
+  { slug: "nam", name: "น้ำ", traits: ["calm", "perfectionist", "polite"], levels: { humor: 0, direct: 1, formal: 2, words: 2 }, catchphrase: "ขอเช็กอีกรอบนะคะ", donts: "", bio: "สาย QA ใจเย็น", look: { skin: 0, hair: "long", hair_color: "#3a2a1f", glasses: "none", shirt: "#5dcaa5", extra: "earrings", face: "smile" } },
+];
 const demoRoles = [
   { slug: "bom", name: "บอม", title: "Front-end developer", emoji: "🧑‍💻", description: "ทำหน้าเว็บ Svelte/React ให้สวย ใช้ง่าย รองรับมือถือ", instructions: "You build clean, accessible UIs.", persona: "พูดตรง สั้น เป็นกันเอง ชอบลองของใหม่แต่เลือกทางที่ดูแลง่าย", tier: "balanced", account: "", model_override: "", tools: "", source: "", license: "" },
   { slug: "nam", name: "น้ำ", title: "Tester", emoji: "🧪", description: "หาบั๊ก เขียนเทสต์ ตรวจว่าใช้งานได้จริง", instructions: "You find bugs and write tests.", persona: "", tier: "fast", account: "codex01", model_override: "", tools: "", source: "https://github.com/VoltAgent/awesome-claude-code-subagents/blob/x/categories/04-quality-security/qa-expert.md", license: "MIT" },
@@ -361,6 +371,20 @@ const demoRoles = [
 const roleRender = (r, withPersona) => `---\nname: "${r.name}"\ndescription: "${r.description}"\ntitle: "${r.title}"\ntools: Read, Write, Edit, Bash, Glob, Grep, WebSearch, WebFetch\ntier: ${r.tier}\n---\n\n${r.instructions}\n` + (withPersona && r.persona ? `\n<!-- persona -->\n## Persona\n\n${r.persona}\n<!-- /persona -->\n` : "");
 function rolesMock(cmd, args) {
   if (cmd === "roles_list") return { roles: structuredClone(demoRoles), tiers: ["auto", "fast", "balanced", "strong"], curated: [] };
+  // characters (ISSUE-172)
+  if (cmd === "personas_list") return {
+    personas: demoPersonas,
+    traits: [["funny", "ตลก ขี้เล่น"], ["loud", "โผงผาง"], ["direct", "พูดตรง"], ["polite", "สุภาพ อ่อนโยน"], ["nerd", "สาย nerd"], ["calm", "ใจเย็น"], ["perfectionist", "ละเอียดจัด"], ["creative", "คิดนอกกรอบ"]].map(([key, label]) => ({ key, label })),
+    presets: [
+      { slug: "jay", name: "เจ", traits: ["creative"], levels: { humor: 2 }, catchphrase: "ลองแบบนี้ดูไหม?", bio: "ดีไซเนอร์สายครีเอทีฟ", look: { skin: 2, hair: "spiky", hair_color: "#c94f7c", glasses: "none", shirt: "#f2b04a", extra: "headphones", face: "wink" }, installed: false },
+      { slug: "pa-daeng", name: "ป้าแดง", traits: ["polite"], levels: {}, catchphrase: "ค่อยเป็นค่อยไปนะลูก", bio: "รุ่นใหญ่ใจดี ชอบสอน", look: { skin: 1, hair: "bun", hair_color: "#8a8a8a", glasses: "square", shirt: "#e2574c", extra: "none", face: "smile" }, installed: false },
+    ],
+  };
+  if (cmd === "persona_save") { const p = { ...args.persona, slug: args.persona.slug || "p" + Date.now() }; demoPersonas = [...demoPersonas.filter((x) => x.slug !== p.slug), p]; return p; }
+  if (cmd === "persona_delete") { demoPersonas = demoPersonas.filter((x) => x.slug !== args.slug); return null; }
+  if (cmd === "persona_preset") return null;
+  if (cmd === "persona_export") return { text: JSON.stringify({ spec: "chara_card_v2", data: { name: "บอม" } }, null, 2), warnings: [] };
+  if (cmd === "persona_import") return { name: "นำเข้า" };
   if (cmd === "role_save") {
     const r = { ...args.role, slug: args.role.slug || args.role.name.toLowerCase().replace(/[^a-z0-9]+/g, "-") || `role-${demoRoles.length + 1}` };
     const i = demoRoles.findIndex((x) => x.slug === r.slug);
@@ -437,6 +461,7 @@ function accountsInOrder(r) {
 export async function mockInvoke(cmd, args = {}) {
   await new Promise((r) => setTimeout(r, 60));
   if (cmd.startsWith("role")) { const r = rolesMock(cmd, args); if (r !== undefined) return r; }
+  if (cmd.startsWith("persona")) { const r = rolesMock(cmd, args); if (r !== undefined) return r; }
   if (cmd.startsWith("team") || cmd.startsWith("idea_team")) { const r = teamsMock(cmd, args); if (r !== undefined) return r; }
   if (cmd === "account_update" && args.enabled != null) { accState.on[args.id] = args.enabled; return null; }
   if (cmd === "account_move") { accState.moves.push([args.id, args.dir]); return null; }
@@ -448,6 +473,12 @@ export async function mockInvoke(cmd, args = {}) {
   if (cmd === "stop_current") { state.current = null; return null; }
   if (cmd === "set_paused") { state.paused = !!args.paused; if (args.paused) state.current = null; return null; }
   if (cmd === "answer_question") { const q = questions.find((x) => x.id === args.id); if (q) q.answer = args.answer; return null; }
+  // translating English content side by side (ISSUE-174)
+  if (cmd === "idea_ai_set") { state.idea_ai = { ...state.idea_ai, [args.id]: { ...(state.idea_ai[args.id] ?? {}), account: args.account ?? "", model: args.model ?? "", effort: args.effort ?? "", backups: args.backups ?? [] } }; return null; }
+  if (cmd === "set_setting" && args.key.startsWith("ct_")) { mockCt[args.key] = args.value; try { sessionStorage.setItem("ia-mock-ct", JSON.stringify(mockCt)); } catch {} return null; }
+  if (cmd === "ct_status") return { on: mockCt.ct_on === "1", lang: "th", lang_name: "Thai", account: mockCt.ct_account ?? "", accounts: [{ id: "claude01", label: "claude01" }, { id: "codex01", label: "Codex งาน" }], now: "claude01", now_label: "claude01" };
+  if (cmd === "ct_cached") return null;
+  if (cmd === "ct_translate") { await new Promise((r) => setTimeout(r, 600)); return { text: "(คำแปลตัวอย่าง) " + String(args.text).slice(0, 80), account: "claude01", cached: false }; }
   if (cmd === "set_setting" && args.key === "onboarded") { try { sessionStorage.setItem("ia-mock-onboarded", "1"); } catch {} return null; }
   if (cmd === "pause_all") {
     state.shelf = { ts: now, by_owner: true, was_paused: false, run: state.current ? [state.current.idea_id, state.current.title, state.current.stage] : null,

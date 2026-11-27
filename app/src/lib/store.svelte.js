@@ -7,6 +7,7 @@ export const store = $state({
   questions: [],
   stages: [],
   openIdea: null, // id of the idea shown in the drawer
+  chatDraft: null, // { id, text }: a suggested next prompt put into that idea's chat box (ISSUE-159)
   settingsTab: null, // a tab of the Settings page to open next (e.g. "about" from the version button)
   page: (typeof location !== "undefined" && new URLSearchParams(location.search).get("page")) || "morning",
   toast: null,

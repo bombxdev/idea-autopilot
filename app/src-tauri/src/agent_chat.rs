@@ -198,6 +198,7 @@ pub fn ask(app: &AppHandle, id: i64, agent: &str, text: &str, ai: &ChatAi) -> Re
                 started: db::now(),
                 sid: agent.to_string(),
                 ai: crate::remote::ai_label(&st.db.lock(), &ai.account, label(agent), agent, None, &ai.model),
+                agent: agent.to_string(),
                 ..Default::default()
             },
         );
@@ -240,6 +241,10 @@ fn worker(app: &AppHandle, id: i64) {
         let Some(((text, ai), agent)) = next else { break };
         if let Err(e) = turn(app, id, &agent, &text, &ai) {
             feed(app, id, format!("⚠️ {e}"), Some("idle"));
+            // at the account's limit: the same message carries on with a backup account (ISSUE-176)
+            if e.starts_with("บัญชีนี้ชนลิมิต") && crate::remote::retry_on_backup(app, id, &text, &ai) {
+                return;
+            }
         }
     }
     feed(app, id, String::new(), Some("idle"));
@@ -266,10 +271,18 @@ fn turn(app: &AppHandle, id: i64, agent: &str, text: &str, ai: &ChatAi) -> Resul
     let _ = std::fs::create_dir_all(dir.join("logs"));
     let prompt_file = dir.join("logs").join("prompt.md");
     std::fs::write(&prompt_file, &prompt).map_err(|e| e.to_string())?;
-    let inv = crate::providers::build(agent, &model, "", "", "", &prompt_file)?;
+    let mut inv = crate::providers::build(agent, &model, "", "", "", &prompt_file)?;
+    // tools (MCP): "always" ones and those picked for this idea with "/", described in TOOLS.md (ISSUE-171)
+    let tools = crate::mcp::for_idea(&st.root, &crate::mcp::idea_tools(&st.db.lock(), id), &[]);
+    crate::mcp::write_tools_md(&dir, &tools);
+    let mut tool_env: Vec<(String, String)> = vec![];
+    if let Some(p) = crate::mcp::config_for(&st.root, &tools, &format!("chat{id}"), &[]) {
+        crate::mcp::apply_to_run(agent, &p, &dir, &mut inv.args, &mut tool_env, &[]);
+    }
     remember(&dir, "Owner", text);
 
     let mut cmd = Command::new(&inv.program);
+    cmd.envs(tool_env);
     cmd.args(&inv.args).current_dir(&dir).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     if let Some(a) = &account {
         for (k, v) in crate::accounts::env_with_secret(a, &st.root) {
@@ -336,7 +349,7 @@ fn turn(app: &AppHandle, id: i64, agent: &str, text: &str, ai: &ChatAi) -> Resul
             reply.push_str(t);
             reply.push('\n');
         }
-        feed(app, id, format!("💬 {}", short(t, 700)), None);
+        feed(app, id, format!("💬 {}", crate::narrate::whole(t)), None); // whole (ISSUE-162)
     }
     let status = shared.lock().wait().ok();
     done.store(true, std::sync::atomic::Ordering::Relaxed);

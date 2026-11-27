@@ -85,8 +85,24 @@ pub struct Role {
     pub team: bool,
     pub instructions: String,
     pub persona: String,
+    /// filled by `teams::members`: the persona that plays this role in that team (ISSUE-172), never saved with the role
+    pub cast: String,
+    pub cast_name: String,
     pub source: String,
     pub license: String,
+}
+
+/// A team's or role's icon as stored: an emoji (up to 4 characters, as before) or an icon of the app's own set picked in
+/// the app, "i:<name>" (ISSUE-168 — cutting that to 4 characters too would have turned "i:users" into "i:us").
+pub fn icon_value(v: &str) -> String {
+    let v = v.trim();
+    if let Some(name) = v.strip_prefix("i:") {
+        if !name.is_empty() && name.len() <= 24 && name.chars().all(|c| c.is_ascii_alphanumeric()) {
+            return v.to_string();
+        }
+        return String::new();
+    }
+    v.chars().take(4).collect()
 }
 
 pub fn dir(root: &Path) -> PathBuf {
@@ -128,7 +144,7 @@ pub fn parse(text: &str, slug: &str) -> R<Role> {
         slug: if slug.is_empty() { "role".into() } else { slug },
         name: name.trim().into(),
         title: fm_get(fm, "title"),
-        emoji: fm_get(fm, "emoji").chars().take(4).collect(),
+        emoji: crate::roles::icon_value(&fm_get(fm, "emoji")),
         description: description.trim().into(),
         tools: fm_get(fm, "tools"),
         tier,
@@ -137,6 +153,8 @@ pub fn parse(text: &str, slug: &str) -> R<Role> {
         team: fm_get(fm, "team") == "true",
         instructions,
         persona,
+        cast: String::new(),
+        cast_name: String::new(),
         source: fm_get(fm, "source"),
         license: fm_get(fm, "license"),
     })
@@ -244,7 +262,7 @@ fn from_json(v: &Value) -> Role {
         slug: s("slug", 64),
         name: s("name", 60).trim().into(),
         title: s("title", 80).trim().into(),
-        emoji: s("emoji", 4),
+        emoji: crate::roles::icon_value(&s("emoji", 40)),
         description: s("description", 400).trim().into(),
         tools: s("tools", 300),
         tier: clean_tier(&s("tier", 16)),
@@ -253,6 +271,8 @@ fn from_json(v: &Value) -> Role {
         team: false,
         instructions: s("instructions", 40_000),
         persona: s("persona", 12_000),
+        cast: String::new(),
+        cast_name: String::new(),
         source: s("source", 300),
         license: s("license", 40),
     }
@@ -314,11 +334,14 @@ pub fn team_prompt(team_name: &str, roles: &[Role], lead_account: &str, subagent
     let mut s = format!("\n\n## Your team: {team_name}\nGive parts to the member whose role fits; brief them like any helper (they see only your brief). Members:\n");
     for r in roles {
         let who = if r.title.is_empty() { r.description.clone() } else { format!("{} — {}", r.title, r.description) };
+        // played by a character (ISSUE-172): its name, and the role id carries it to the AI that plays it
+        let name = if r.cast_name.is_empty() { r.name.clone() } else { format!("{} (played by {})", r.name, r.cast_name) };
+        let role_id = if r.cast.is_empty() { r.slug.clone() } else { format!("{}@{}", r.slug, r.cast) };
         if r.account.is_empty() && subagents_ok {
-            s.push_str(&format!("- {} (subagent `role-{}`): {}\n", r.name, r.slug, who));
+            s.push_str(&format!("- {} (subagent `role-{}`): {}\n", name, r.slug, who));
         } else {
             let acct = if r.account.is_empty() { lead_account } else { &r.account };
-            s.push_str(&format!("- {} (call `ask_other_ai` with account `{}`, role `{}`): {}\n", r.name, acct, r.slug, who));
+            s.push_str(&format!("- {} (call `ask_other_ai` with account `{}`, role `{}`): {}\n", name, acct, role_id, who));
         }
     }
     s
@@ -326,7 +349,12 @@ pub fn team_prompt(team_name: &str, roles: &[Role], lead_account: &str, subagent
 
 /// The brief another AI gets when it plays a role (`ask_other_ai` with `role`).
 pub fn delegate_brief(root: &Path, slug: &str) -> Option<String> {
-    let r = find(root, slug)?;
+    // "front-end@bom": the role played by a character (ISSUE-172)
+    let (slug, cast) = slug.split_once('@').unwrap_or((slug, ""));
+    let mut r = find(root, slug)?;
+    if let Some(p) = crate::personas::find(root, cast) {
+        r.persona = crate::personas::prompt(&p);
+    }
     let mut s = format!("You play the team role \"{}\"{}.\n{}\n", r.name, if r.title.is_empty() { String::new() } else { format!(" ({})", r.title) }, r.instructions.trim());
     if !r.persona.trim().is_empty() {
         s.push_str(&format!("\n## Your persona\n{}\n", r.persona.trim()));
@@ -602,11 +630,21 @@ pub async fn roles_shop_install(app: AppHandle, repo: String, commit: String, pa
 mod tests {
     use super::*;
 
+    #[test]
+    fn an_icon_picked_in_the_app_is_kept_whole_and_emoji_stay_short() {
+        assert_eq!(icon_value("i:users"), "i:users");
+        assert_eq!(icon_value("i:bad name!"), "");
+        assert_eq!(icon_value("🧑‍💻"), "🧑‍💻");
+        assert_eq!(icon_value("abcdefgh"), "abcd");
+        let r = from_json(&serde_json::json!({ "slug": "x", "name": "X", "emoji": "i:palette" }));
+        assert_eq!(r.emoji, "i:palette");
+    }
+
     fn sample() -> Role {
         Role {
             slug: "bom".into(), name: "บอม".into(), title: "Front-end developer".into(), emoji: "🧑‍💻".into(),
             description: "Builds the UI".into(), tools: DEFAULT_TOOLS.into(), tier: "balanced".into(), account: "codex01".into(), model_override: String::new(), team: false,
-            instructions: "You build clean, accessible UIs.".into(), persona: "พูดตรง สั้น ชอบลองของใหม่".into(), source: String::new(), license: String::new(),
+            instructions: "You build clean, accessible UIs.".into(), persona: "พูดตรง สั้น ชอบลองของใหม่".into(), cast: String::new(), cast_name: String::new(), source: String::new(), license: String::new(),
         }
     }
 

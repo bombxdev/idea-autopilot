@@ -169,7 +169,28 @@ pub fn open(path: &Path) -> Result<Connection> {
     // (kept out of the "ready" column until the owner marks it working)
     let _ = conn.execute("ALTER TABLE ideas ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0", []);
     let _ = conn.execute("ALTER TABLE ideas ADD COLUMN fixing INTEGER NOT NULL DEFAULT 0", []);
+    crate::rounds::migrate(&conn);
+    clear_failed_by_chat(&conn);
     Ok(conn)
+}
+
+/// "ติดปัญหา" belongs to the bot's queue: three failed bot runs in a row. When the owner then carried the idea on in
+/// a chat and the chat reported results (a `note` after the last error), the idea is not stuck any more — it stayed
+/// red for good because nothing cleared it (ISSUE-158). It becomes "done": the bot does not retry the step that
+/// failed (it would fail again and spend quota); ไปต่อ / ขุดลึก / ลองอีกแนว still start new work. Returns the ids.
+pub fn clear_failed_by_chat(c: &Connection) -> Vec<i64> {
+    let ids: Vec<i64> = c
+        .prepare(
+            "SELECT i.id FROM ideas i WHERE i.status='failed' AND EXISTS (SELECT 1 FROM events n WHERE n.idea_id=i.id AND n.kind='note'
+               AND n.ts >= COALESCE((SELECT MAX(e.ts) FROM events e WHERE e.idea_id=i.id AND e.kind='error'), 0))",
+        )
+        .and_then(|mut q| q.query_map([], |r| r.get(0)).map(|it| it.flatten().collect()))
+        .unwrap_or_default();
+    for id in &ids {
+        let _ = c.execute("UPDATE ideas SET status='done', fail_count=0, updated=?2 WHERE id=?1", params![id, now()]);
+        log_event(c, "status", Some(*id), "ทำต่อในแชตสำเร็จแล้ว — เอาสถานะ “ติดปัญหา” ออก (บอทไม่ลองขั้นที่ล้มเหลวซ้ำ)");
+    }
+    ids
 }
 
 pub fn now() -> i64 {
@@ -803,6 +824,32 @@ mod board_tests {
         // every order is listed for later runs, without a checklist for the owner to tick (ISSUE-070)
         assert!(md.contains("] (สั่งในแชต) login ผ่าน claude เองบนมือถือ") && md.contains("] ไปต่อได้เลย"));
         assert!(!md.contains("**#") && !md.contains("req <"));
+    }
+
+    #[test]
+    fn a_chat_that_reports_results_clears_failed_but_a_still_failing_idea_stays() {
+        let dir = std::env::temp_dir().join(format!("ia_failclr_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let _ = std::fs::create_dir_all(&dir);
+        let c = open(&dir.join("t.db")).unwrap();
+        let fixed = insert_idea(&c, "a", "a", "", 0, false).unwrap();
+        let stuck = insert_idea(&c, "b", "b", "", 0, false).unwrap();
+        for id in [fixed, stuck] {
+            let mut i = get_idea(&c, id).unwrap();
+            i.status = "failed".into();
+            i.fail_count = 3;
+            save_idea(&c, &i).unwrap();
+        }
+        let t = now();
+        let ev = |id: i64, ts: i64, kind: &str| c.execute("INSERT INTO events(ts,kind,idea_id,text) VALUES(?1,?2,?3,'x')", params![ts, kind, id]).unwrap();
+        ev(fixed, t - 100, "error");
+        ev(fixed, t - 50, "note"); // the chat carried on and reported results
+        ev(stuck, t - 100, "note");
+        ev(stuck, t - 50, "error"); // an old note, then the bot failed again
+        assert_eq!(clear_failed_by_chat(&c), vec![fixed]);
+        let f = get_idea(&c, fixed).unwrap();
+        assert_eq!((f.status.as_str(), f.fail_count), ("done", 0));
+        assert_eq!(get_idea(&c, stuck).unwrap().status, "failed");
+        assert!(clear_failed_by_chat(&c).is_empty());
     }
 
     #[test]

@@ -9,6 +9,7 @@
   import { setUiLang, tr } from "./lib/uitrans.svelte.js";
   import { ui } from "./lib/uilang.svelte.js";
   import Morning from "./pages/Morning.svelte";
+  import Dashboard from "./pages/Dashboard.svelte";
   import Board from "./pages/Board.svelte";
   import Quota from "./pages/Quota.svelte";
   import Usage from "./pages/Usage.svelte";
@@ -32,6 +33,7 @@
   // 8 entries in 3 groups (ISSUE-098): pages about the same thing share one entry and show as tabs on the page
   // ("usage" under quota, "sessions" under activity) — the page keys stay, so old links still open the right view
   const NAV = [
+    { key: "dashboard", icon: "dashboard" },
     { group: "ไอเดีย" },
     { key: "morning", icon: "sun" },
     { key: "board", icon: "board" },
@@ -97,6 +99,14 @@
   let menuOpen = $state(false);
   const phone = $derived(winW < 760);
   const rail = $derived(!phone && (store.page === "workspace" || winW < 1100));
+  // the collapsed menu shows only icons: its name appears beside the icon on hover, right away (ISSUE-167)
+  let tip = $state(null);
+  function railTip(e, text) {
+    if (!rail) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    tip = { text, y: r.top + r.height / 2 };
+  }
+  $effect(() => { if (!rail) tip = null; });
   $effect(() => {
     store.page;
     menuOpen = false; // picking a page closes the drawer
@@ -181,7 +191,8 @@
     <nav>
       {#each NAV as n}
         {#if n.group}<div class="navgrp">{n.group}</div>{:else}
-        <button class="nav" class:on={store.page === n.key || n.also?.includes(store.page)} onclick={() => (store.page = n.key)} title={t("nav_" + n.key, store.lang)}>
+        <button class="nav" class:on={store.page === n.key || n.also?.includes(store.page)} onclick={() => (store.page = n.key)} title={rail ? undefined : t("nav_" + n.key, store.lang)}
+          onmouseenter={(e) => railTip(e, t("nav_" + n.key, store.lang))} onmouseleave={() => (tip = null)}>
           <span class="ico"><Icon name={n.icon} /></span>{t("nav_" + n.key, store.lang)}
           {#if n.key === "morning" && openQ > 0}<span class="badge">{openQ}</span>{/if}
         </button>
@@ -194,6 +205,7 @@
       <button class="ghost small ver" onclick={() => { store.settingsTab = "about"; store.page = "settings"; }} title="ดูประวัติเวอร์ชัน / อัปเดต">v{s?.version ?? ""}{#if upd} <span class="newdot" title="มีเวอร์ชันใหม่ v{upd.latest}"><Icon name="dot" size="0.8em" /> ใหม่ v{upd.latest}</span>{/if}</button>
     </div>
   </aside>
+  {#if tip}<div class="railtip" style="top:{tip.y}px">{tip.text}</div>{/if}
 
   <main>
     <header>
@@ -231,6 +243,7 @@
         </div>
       {/if}
       {#if store.page === "morning"}<Morning />
+      {:else if store.page === "dashboard"}<Dashboard />
       {:else if store.page === "workspace"}<Workspace />
       {:else if store.page === "board"}<Board />
       {:else if store.page === "quota"}<Quota />
@@ -259,8 +272,10 @@
   .newdot { color: var(--amber); }
   .other.upd { background: var(--card-2); border-bottom-color: var(--teal); }
   .other { position: fixed; top: 0; left: 0; right: 0; z-index: 60; background: var(--amber-bg); color: var(--text); padding: 10px 16px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 13px; border-bottom: 1px solid var(--amber); }
-  .shell { display: grid; grid-template-columns: 220px 1fr; height: 100vh; }
-  aside { background: var(--bg-2); border-right: 1px solid var(--line); display: flex; flex-direction: column; padding: 18px 12px; gap: 18px; }
+  /* the shell is exactly the window: a sidebar taller than the window (nav + quota cards) scrolls inside itself instead of
+     making the whole window scroll and leaving an empty strip under the app (ISSUE-154) */
+  .shell { display: grid; grid-template-columns: 220px 1fr; grid-template-rows: minmax(0, 1fr); height: 100vh; overflow: hidden; }
+  aside { background: var(--bg-2); border-right: 1px solid var(--line); display: flex; flex-direction: column; padding: 18px 12px; gap: 18px; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
   .brand { display: flex; gap: 10px; align-items: center; padding: 0 6px; }
   .logo { width: 34px; height: 34px; border-radius: 10px; background: var(--teal-bg); color: var(--teal); display: grid; place-items: center; font-size: 20px; }
   .name { font-weight: 600; }
@@ -295,7 +310,10 @@
   .shelve { white-space: nowrap; flex: none; }
   .page.full { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
   .shell.rail { grid-template-columns: 60px 1fr; }
-  .rail aside { padding: 18px 8px; align-items: center; }
+  /* nothing in the narrow menu is wider than it: no sideways scrollbar under it (ISSUE-167) */
+  .rail aside { padding: 18px 8px; align-items: center; overflow-x: hidden; }
+  .railtip { position: fixed; left: 64px; transform: translateY(-50%); z-index: 90; pointer-events: none; background: var(--card-2); color: var(--text);
+    border: 1px solid var(--line-2); border-radius: 8px; padding: 4px 10px; font-size: 13px; white-space: nowrap; box-shadow: 0 4px 14px rgba(0, 0, 0, .3); }
   .rail .brand > div:last-child, .rail .side-foot :global(.mini), .rail .kbd, .rail .ver { display: none; }
   .rail .brand { padding: 0; }
   .rail .nav { font-size: 0; justify-content: center; padding: 10px 0; width: 44px; position: relative; }

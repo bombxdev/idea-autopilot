@@ -1,5 +1,9 @@
 mod accounts;
 mod agy;
+mod rounds;
+mod personas;
+mod content_translate;
+mod fallback;
 mod acct_models;
 mod model_check;
 mod activity;
@@ -182,10 +186,17 @@ fn register_toast_identity() {
     }
 }
 
+/// The main window is shown maximized the first time in a run: the fixed 1280×840 start size spilled off a laptop
+/// screen or left a strip on a big one (ISSUE-178). Later shows (from the tray) keep the size the owner gave it.
+static SHOWN_ONCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 pub fn show_main(app: &AppHandle, idea: Option<i64>) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.unminimize();
         let _ = w.show();
+        if !SHOWN_ONCE.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            let _ = w.maximize();
+        }
         let _ = w.set_focus();
     }
     if let Some(id) = idea {
@@ -436,15 +447,20 @@ pub fn run() {
             keep_awake_thread(handle.clone());
             api::start(handle.clone());
             skill::install(&handle.state::<AppState>());
+            // roles' old free-text personas become characters of their own, once (ISSUE-172)
+            personas::migrate_roles(&handle.state::<AppState>().root);
             // every idea folder is its own git repo with AGENTS.md (see workspace::ensure_repo)
             let h = handle.clone();
             std::thread::spawn(move || {
                 let st = h.state::<state::AppState>();
                 let ideas = db::list_ideas(&st.db.lock()).unwrap_or_default();
                 for i in ideas.iter().filter(|i| i.status != "deleted") {
-                    if let Err(e) = workspace::ensure_repo(&workspace::idea_dir(&st.ws, &i.slug), i, &remote::ia_path()) {
+                    let dir = workspace::idea_dir(&st.ws, &i.slug);
+                    if let Err(e) = workspace::ensure_repo(&dir, i, &remote::ia_path()) {
                         st.push_log(format!("[git] #{} {e:#}", i.id));
                     }
+                    // work left uncommitted (chat rounds before ISSUE-161, a run cut off): into the history now
+                    workspace::commit(&dir, "บันทึกงานที่ยังไม่ได้ commit (จากแชต/รอบที่ค้าง)");
                 }
             });
             tauri::async_runtime::spawn(scheduler::run_loop(handle.clone()));
@@ -489,6 +505,16 @@ pub fn run() {
             commands::library,
             commands::open_folder,
             commands::open_report_link,
+            commands::idea_rounds,
+            personas::personas_list,
+            content_translate::ct_status,
+            content_translate::ct_cached,
+            content_translate::ct_translate,
+            personas::persona_save,
+            personas::persona_delete,
+            personas::persona_preset,
+            personas::persona_export,
+            personas::persona_import,
             commands::run_prototype,
             commands::hide_capture,
             commands::export_brain,

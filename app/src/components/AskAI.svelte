@@ -21,6 +21,14 @@
 
   let { id } = $props();
   let text = $state("");
+  // a suggested next prompt picked in the idea's rounds (ISSUE-159): into the box, ready to edit or send
+  $effect(() => {
+    const d = store.chatDraft;
+    if (!d || d.id !== id) return;
+    text = d.text;
+    store.chatDraft = null;
+    setTimeout(() => { box?.focus(); box?.scrollIntoView({ behavior: "smooth", block: "center" }); }, 0);
+  });
   let sending = $state(false);
   // the AI for this chat: collapsed and automatic until the owner opens it and chooses (account → model → effort)
   let ai = $state({ account: "", model: "", effort: "" });
@@ -124,9 +132,17 @@
     }
   }
 
+  // follow new lines only while the owner is at the bottom: every status refresh (a few seconds) rebuilt the feed and
+  // pulled it down again, so scrolling up to read an earlier answer was impossible (ISSUE-156)
+  let stick = true;
+  let lastKey = "";
+  const feedScrolled = () => { if (feedEl) stick = feedEl.scrollHeight - feedEl.scrollTop - feedEl.clientHeight < 40; };
   $effect(() => {
-    feed.length;
-    feedEl?.scrollTo({ top: feedEl.scrollHeight, behavior: "smooth" });
+    const last = feed[feed.length - 1];
+    const key = last ? `${feed.length}|${last.ts}|${last.text.length}` : "";
+    if (key === lastKey) return;
+    lastKey = key;
+    if (stick) feedEl?.scrollTo({ top: feedEl.scrollHeight, behavior: "smooth" });
   });
 
   // stop the AI and think again: while it works, or to edit the last message and send it in place of the old one
@@ -306,7 +322,7 @@
       <button class="primary send" onclick={() => send()} disabled={sending || (!text.trim() && !staged.length)}>{sending ? "กำลังส่ง…" : editing ? `ส่งแทนอันเดิม` : `ส่งให้ ${sendTo}`}</button>
     </div>
   </div>
-  <div class="aiwrap"><IdeaAi bind:value={ai} title="AI สำหรับแชตนี้" autoNote="ถ้าไม่เลือก ใช้ AI/โมเดลที่ตั้งไว้ให้ไอเดียนี้ ไม่ก็ค่าเริ่มต้นของ Claude" /></div>
+  <div class="aiwrap"><IdeaAi bind:value={ai} backups={false} title="AI สำหรับแชตนี้" autoNote="ถ้าไม่เลือก ใช้ AI/โมเดลที่ตั้งไว้ให้ไอเดียนี้ ไม่ก็ค่าเริ่มต้นของ Claude" /></div>
   <div class="hint small faint">
     {#if !picked}ยังไม่พบ AI ในเครื่องนี้ — ติดตั้งอย่างใดอย่างหนึ่งแล้วกลับมาใหม่
     {:else if picked.id === "codex"}คุยกับ Codex ตรงนี้ได้เลย — แต่ละข้อความรัน Codex ต่อจากบทสนทนาเดิมในโฟลเดอร์ของ Idea #{id} (ดูมือถือ/แอป Claude ไม่ได้) · Ctrl+Enter ส่ง · บอทกลางคืนจะเว้นไอเดียนี้ระหว่างเปิด
@@ -327,13 +343,13 @@
         <span class="grow"></span>
         <button type="button" class="ghost small" onclick={() => (full = !full)} title={full ? "ย่อกลับ (Esc)" : "ขยายเต็มจอ"}><Icon name={full ? "collapse" : "expand"} /> {full ? "ย่อ" : "ขยาย"}</button>
       </div>
-      <div class="feed" bind:this={feedEl}>
+      <div class="feed" bind:this={feedEl} onscroll={feedScrolled}>
         {#each feed as f, i (f.ts + ":" + i)}
           {@const k = f.ts + ":" + f.text.length}
           {@const long = isLong(f.text)}
           {@const day = dayBreak(feed, i)}
           {#if day}<div class="daybreak"><span>{day}</span></div>{/if}
-          <div class="line {kind(f.text)}"><span class="t">{hhmm(f.ts)}</span><div class="x"><div class="body" class:clamp={long && !opened[k]}><FeedText text={f.text} /></div>{#if long}<button type="button" class="more" onclick={() => (opened[k] = !opened[k])}>{opened[k] ? "ย่อ ▴" : "ดูเต็ม ▾"}</button>{/if}</div></div>
+          <div class="line {kind(f.text)}"><span class="t">{hhmm(f.ts)}</span><div class="x"><div class="body" class:clamp={long && !opened[k]}><FeedText text={f.text} onlink={(h) => api.openReportLink(id, h).catch((e) => toast(String(e), "err"))} /></div>{#if long}<button type="button" class="more" onclick={() => (opened[k] = !opened[k])}>{opened[k] ? "ย่อ ▴" : "ดูเต็ม ▾"}</button>{/if}</div></div>
         {/each}
       </div>
     </div>

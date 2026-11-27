@@ -682,7 +682,7 @@ pub fn expand_slash(c: &Connection, root: &Path, text: &str) -> Result<Option<St
 /// Where "/name" is typed as a word of its own, anywhere in the text (start, middle, after a new line): byte range + name.
 /// A path ("src/app", "/usr/bin") or a URL is not one: the slash must start the text or follow a space, and the
 /// name must end at a space, the end, or punctuation.
-fn slash_tokens(text: &str) -> Vec<(usize, usize, String)> {
+pub(crate) fn slash_tokens(text: &str) -> Vec<(usize, usize, String)> {
     let mut out = Vec::new();
     let mut prev: Option<char> = None;
     for (i, ch) in text.char_indices() {
@@ -1586,7 +1586,10 @@ pub async fn shop_install(app: &AppHandle, repo: &str, commit: &str, path: &str,
 /// Skills callable from chat as /slug.
 #[tauri::command]
 pub fn skills_slash_list(st: State<AppState>) -> Value {
-    json!(slash_list(&st.db.lock()))
+    // skills, then the tools (MCP) that can be picked the same way (ISSUE-171)
+    let mut v = slash_list(&st.db.lock());
+    v.extend(crate::mcp::slash_items(&st.root));
+    json!(v)
 }
 
 #[tauri::command]

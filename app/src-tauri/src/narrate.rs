@@ -102,7 +102,9 @@ pub fn tidy(s: &str, n: usize) -> String {
 
 /// A whole message for the feed: its lines kept (blank runs squeezed), up to WHOLE_MAX characters. The feed shows a
 /// few lines and expands in place to the rest, so it is no longer cut to 300-700 characters (ISSUE-074).
-pub const WHOLE_MAX: usize = 3000;
+/// 3000 still cut long final answers mid-sentence ("ผมเสนอให้เริ่มตรวจขั้นต่อ…"): an answer is kept whole now; only
+/// the phone's copy is shortened (sync, ISSUE-162).
+pub const WHOLE_MAX: usize = 40_000;
 pub fn whole(s: &str) -> String {
     let mut out: Vec<&str> = Vec::new();
     for l in s.trim().lines().map(str::trim_end) {

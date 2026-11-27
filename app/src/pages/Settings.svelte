@@ -10,6 +10,9 @@
   import UpdateCard from "../components/UpdateCard.svelte";
   import VideoAddon from "../components/VideoAddon.svelte";
   import DocsAddon from "../components/DocsAddon.svelte";
+  import { ct, loadCt } from "../lib/ct.svelte.js";
+  import { LANGS } from "../lib/i18n.js";
+  import BackupList from "../components/BackupList.svelte";
 
   let s = $state({});
   let cal = $state([]);
@@ -115,12 +118,15 @@
     return () => clearInterval(t);
   });
 
+  function ctLoad() { loadCt(true); }
+
   async function save(key, value) {
     try {
       await api.setSetting(key, String(value));
       toast("บันทึกแล้ว");
       load();
       refresh();
+      if (key.startsWith("ct_")) loadCt(true);
     } catch (e) {
       toast(String(e), "err");
     }
@@ -215,10 +221,19 @@
       <Accounts />
       <!-- ISSUE-102 -->
       <div class="row field"><span class="grow">เมื่อบัญชีที่ไอเดียเลือกไว้ใช้ไม่ได้ <span class="faint small">(โควต้าหมด ติดลิมิต หรือเชื่อมต่อไม่ได้)</span></span>
-        <select value={s.account_switch === "wait" ? "wait" : "auto"} onchange={(e) => save("account_switch", e.target.value)}>
-          <option value="auto">สลับไปบัญชีอื่นที่ว่างให้อัตโนมัติ (แนะนำ)</option>
-          <option value="wait">รอบัญชีนั้น ไม่สลับ</option>
+        <select value={["wait", "list"].includes(s.account_switch) ? s.account_switch : "auto"} onchange={(e) => save("account_switch", e.target.value)}>
+          <option value="auto">สลับให้อัตโนมัติ — ตามลำดับสำรอง แล้วตัวไหนก็ได้ที่ยังมีโควต้า (แนะนำ)</option>
+          <option value="list">สลับเฉพาะ AI สำรองที่เลือกไว้ ตามลำดับ</option>
+          <option value="wait">ไม่สลับ — รอบัญชีนั้นจนโควต้ากลับมา</option>
         </select></div>
+      <!-- backups for every idea, in order (ISSUE-176) -->
+      {#if s.account_switch !== "wait"}
+        <div class="field">
+          <BackupList value={(s.backup_accounts ?? "").split(",").map((x) => x.trim()).filter(Boolean)} label="AI สำรองสำหรับทุกไอเดีย (ตามลำดับ)" onchange={(l) => save("backup_accounts", l.join(","))} />
+          <div class="faint small">ใช้ทั้งรอบของบอทและแชต · ไอเดียที่ตั้ง “AI สำรอง” ของตัวเองไว้ (หน้าไอเดีย → AI สำหรับไอเดียนี้) จะใช้รายการของไอเดียก่อน แล้วค่อยใช้รายการนี้ ·
+            {s.account_switch === "list" ? "ถ้าสำรองใช้ไม่ได้ทั้งหมด จะรอบัญชีเดิม" : "ถ้าสำรองใช้ไม่ได้ทั้งหมด จะใช้บัญชีไหนก็ได้ที่ยังมีโควต้า"} · แชตที่สลับบัญชีจะเริ่มบทสนทนาใหม่ (งานเดิมอยู่ในไฟล์ของไอเดีย)</div>
+        </div>
+      {/if}
       <!-- the older single "main AI" choice only matters when no account is set: folded away (ISSUE-098) -->
       <details class="adv">
       <summary>ขั้นสูง: AI หลักเมื่อยังไม่มีบัญชี <span class="faint small">· ตอนนี้: {prov.active_label}</span></summary>
@@ -260,6 +275,42 @@
   <div class="card">
     <h2><Icon name="globe" /> Language / ภาษา</h2>
     <LanguagePicker value={s.language || "en"} follow={s.lang_follow ?? "1"} />
+  </div>
+  <!-- English skills, tools, roles and characters with a translation beside them (ISSUE-174) -->
+  <div class="card ct" use:ctLoad>
+    <h2><Icon name="globe" /> แปลเนื้อหาภาษาอังกฤษ</h2>
+    <p class="muted small">สกิล เครื่องมือ (MCP) บทบาท และตัวละคร ที่เป็นภาษาอังกฤษ จะมีคำแปลวางเทียบด้านขวา (ซ้าย = ต้นฉบับ) แปลด้วย AI ของคุณเอง</p>
+    <label class="row"><input type="checkbox" checked={s.ct_on === "1"} onchange={(e) => save("ct_on", e.currentTarget.checked ? "1" : "0")} /> เปิดโหมดแปลเทียบ</label>
+    {#if s.ct_on === "1"}
+      <div class="row wrap">
+        <label>แปลเป็น
+          <select value={s.ct_lang ?? ""} onchange={(e) => save("ct_lang", e.currentTarget.value)}>
+            <option value="">ตามภาษาหน้าจอ</option>
+            {#each LANGS as l (l.code)}<option value={l.code}>{l.name}</option>{/each}
+          </select></label>
+        {#if ct.accounts.length === 1}
+          <span class="small">AI ที่แปล: <b>{ct.accounts[0].label}</b> <span class="faint">(มีตัวเดียว เลือกให้อัตโนมัติ)</span></span>
+        {:else if ct.accounts.length > 1}
+          <label>AI ที่แปล (ค่าเริ่มต้น)
+            <select value={s.ct_account ?? ""} onchange={(e) => save("ct_account", e.currentTarget.value)}>
+              <option value="">อัตโนมัติ — ตัวแรกที่ยังมีโควต้า</option>
+              {#each ct.accounts as a (a.id)}<option value={a.id}>{a.label}</option>{/each}
+            </select></label>
+        {/if}
+      </div>
+      {#if ct.accounts.length > 1}
+        <label class="row small"><input type="checkbox" checked={s.ct_fallback !== "0"} onchange={(e) => save("ct_fallback", e.currentTarget.checked ? "1" : "0")} /> สลับไปใช้บัญชีอื่นอัตโนมัติเมื่อโควต้าของตัวที่เลือกหมด</label>
+      {/if}
+      <div class="warnbox small">
+        {#if s.ct_fallback !== "0" && ct.accounts.length > 1}
+          <Icon name="warning" /> ถ้าโควต้าของ AI ที่เลือกหมด แอปจะ<b>สลับไปแปลด้วย AI ตัวอื่นที่ยังมีโควต้าให้อัตโนมัติ</b> (ใช้โควต้าของตัวนั้นแทน) · ถ้าไม่เหลือตัวไหนเลย ช่องคำแปลจะไม่แสดง
+        {:else}
+          <Icon name="warning" /> แปลด้วย AI ตัวที่เลือกเท่านั้น — ถ้าโควต้าของตัวนั้นหมด จะ<b>ไม่สลับไปใช้ตัวอื่น</b> และช่องคำแปลจะซ่อนไว้จนกว่าโควต้าจะกลับมา
+        {/if}
+        · แปลเมื่อกดปุ่ม “แปล” เท่านั้นและเก็บไว้ใช้ซ้ำ จึงไม่เสียโควต้าตอนเปิดดูเฉยๆ
+      </div>
+      <div class="small">ตอนนี้จะแปลด้วย: {#if ct.now}<b>{ct.now_label}</b>{:else}<span style="color:var(--amber)">ไม่มี AI ที่ยังมีโควต้าเหลือ — ซ่อนช่องคำแปลไว้ก่อน</span>{/if}</div>
+    {/if}
   </div>
   {/if}
 
@@ -558,4 +609,6 @@
   .adv { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 10px; }
   .adv > summary { cursor: pointer; color: var(--text-2); font-size: 13px; padding: 4px 0; }
   .adv[open] > summary { margin-bottom: 8px; color: var(--text); }
+  .ct .warnbox { background: color-mix(in srgb, var(--amber, #f2b04a) 12%, transparent); border-radius: 8px; padding: 8px 12px; margin: 8px 0; }
+  .ct label { display: inline-flex; gap: 8px; align-items: center; }
 </style>

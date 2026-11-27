@@ -199,7 +199,7 @@ pub fn dispatch(app: &AppHandle, cmd: &str, a: Value) -> Result<Value, String> {
         "agents" => Ok(crate::agents::list_json(&st().db.lock())),
         // `ai` (optional): { account, model, effort } chosen for this message, as in the desktop chat
         "ask" => unit(commands::idea_ask(app.clone(), st(), id(&a)?, text(&a, "text").unwrap_or_default(), uploads(app, &a)?, a.get("ai").and_then(|v| serde_json::from_value(v.clone()).ok()), a.get("replace").and_then(|v| v.as_bool()))),
-        "idea_ai" => unit(commands::idea_ai_set(st(), id(&a)?, text(&a, "account"), text(&a, "model"), text(&a, "effort"))),
+        "idea_ai" => unit(commands::idea_ai_set(st(), id(&a)?, text(&a, "account"), text(&a, "model"), text(&a, "effort"), None)),
         "hold" => {
             let on = a.get("on").and_then(Value::as_bool).unwrap_or(true);
             unit(commands::idea_hold(app.clone(), st(), id(&a)?, on))

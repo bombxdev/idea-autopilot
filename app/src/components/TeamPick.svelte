@@ -3,6 +3,7 @@
   // words is suggested as a chip — never picked by itself.
   import { onMount } from "svelte";
   import Icon from "./Icon.svelte";
+  import RoleIcon from "./RoleIcon.svelte";
   import { api } from "../lib/api.js";
 
   let { value = $bindable(""), text = "", onchange = null } = $props();
@@ -34,10 +35,10 @@
   <span class="faint"><Icon name="user" /> ใครทำ:</span>
   <select value={value} onchange={(e) => pick(e.currentTarget.value)} title="AI ตัวเดียวทำทั้งหมด หรือให้ทีมแบ่งงานกันทำ (หัวหน้าทีม = AI ของไอเดียนี้)">
     <option value="">AI ตัวเดียว (อัตโนมัติ)</option>
-    {#each teams as t (t.slug)}<option value={t.slug}>{t.emoji || "👥"} {t.name} ({t.member_roles.length} คน)</option>{/each}
+    {#each teams as t (t.slug)}<option value={t.slug}>{t.name} ({t.member_roles.length} คน)</option>{/each}
   </select>
-  {#if sug}<button type="button" class="chip sug" onclick={() => pick(sug.slug)} title="คำในไอเดียตรงกับงานที่ทีมนี้ถนัด">แนะนำ: {sug.emoji} {sug.name}</button>{/if}
-  {#if cur}<span class="faint" title={cur.member_roles.map((m) => `${m.name}${m.title ? " · " + m.title : ""}`).join("\n")}>{cur.member_roles.map((m) => m.emoji || m.name.slice(0, 1)).join(" ")}</span>{/if}
+  {#if sug}<button type="button" class="chip sug" onclick={() => pick(sug.slug)} title="คำในไอเดียตรงกับงานที่ทีมนี้ถนัด">แนะนำ: <RoleIcon emoji={sug.emoji || "i:users"} words={sug.name} /> {sug.name}</button>{/if}
+  {#if cur}<span class="faint" title={cur.member_roles.map((m) => `${m.name}${m.title ? " · " + m.title : ""}`).join("\n")}>{#each cur.member_roles as m (m.slug)}<RoleIcon emoji={m.emoji} words={m.title + " " + m.name} />{/each}</span>{/if}
   {#if !teams.length}<a href="?page=roles" class="faint" onclick={(e) => { e.preventDefault(); location.search = "?page=roles"; }}>สร้างทีม</a>{/if}
 </span>
 

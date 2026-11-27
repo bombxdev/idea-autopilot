@@ -5,7 +5,7 @@
   import { api, pct, clock } from "../lib/api.js";
   import IdeaCard from "../components/IdeaCard.svelte";
   import LiveLog from "../components/LiveLog.svelte";
-  import { inbox, markReviewed } from "../lib/review.svelte.js";
+  import { inbox } from "../lib/review.svelte.js";
 
   let digest = $state(null);
   onMount(async () => {
@@ -17,7 +17,6 @@
   const asking = $derived(visible.filter((i) => questionsFor(i.id).length > 0));
   // one list of everything that waits for the owner (ISSUE-100)
   const box = $derived(inbox());
-  const KIND = { ready: "พร้อมลองเล่น", done: "เสร็จแล้ว", failed: "ติดปัญหา" };
   const ready = $derived(visible.filter((i) => i.status === "ready" && !asking.includes(i)));
   const fresh = $derived(
     visible.filter((i) => i.updated >= since && ["done", "failed"].includes(i.status) && !asking.includes(i)),
@@ -56,17 +55,12 @@
 
   <section>
     <h2><Icon name="user" /> รอคุณ {#if box.count}<span class="count">{box.count}</span>{/if}
-      {#if box.count}<span class="faint small">ตอบคำถาม หรือดูงานที่เสร็จแล้วกด “ตรวจแล้ว”</span>{/if}</h2>
+      {#if box.count}<span class="faint small">ตอบคำถาม หรือเปิดดูงานที่เสร็จแล้ว — เปิดดูแล้วจะออกจากรายการนี้เอง · ย้ายไป “เสร็จแล้ว” ได้ที่บอร์ด</span>{/if}</h2>
     {#if box.count}
-      <div class="grid">
-        {#each box.asking as idea (idea.id)}<IdeaCard {idea} />{/each}
-        {#each box.rest as idea (idea.id)}
-          <div class="rev">
-            <div class="revbar"><span class="chip {idea.status === 'failed' ? 'red' : 'teal'}">{KIND[idea.status]}</span><span class="grow"></span>
-              <button class="small" onclick={() => markReviewed(idea)} title="เอาออกจากรายการรอคุณ (งานยังอยู่ในบอร์ดและคลังความรู้)"><Icon name="check" /> ตรวจแล้ว</button></div>
-            <IdeaCard {idea} />
-          </div>
-        {/each}
+      <!-- cards of different heights packed in columns, no empty space under a short one (ISSUE-177) -->
+      <div class="masonry">
+        {#each box.asking as idea (idea.id)}<div class="mi"><IdeaCard {idea} /></div>{/each}
+        {#each box.rest as idea (idea.id)}<div class="mi"><IdeaCard {idea} /></div>{/each}
       </div>
     {:else}
       <div class="card done-all"><Icon name="checkCircle" /> ไม่มีอะไรรอคุณ — บอททำงานต่อเองได้</div>
@@ -88,7 +82,7 @@
   <section>
     <h2><Icon name="compass" /> ในคิว</h2>
     {#if moving.length}
-      <div class="grid">{#each moving as idea (idea.id)}<IdeaCard {idea} compact />{/each}</div>
+      <div class="masonry">{#each moving as idea (idea.id)}<div class="mi"><IdeaCard {idea} compact /></div>{/each}</div>
     {:else}
       <div class="empty card">
         <div class="big"><Icon name="bulb" size="40" /></div>
@@ -115,8 +109,9 @@
   .empty { text-align: center; padding: 32px; display: flex; flex-direction: column; gap: 4px; align-items: center; }
   .big { font-size: 34px; }
   .count { background: var(--amber); color: #2a1a00; font-size: 12px; font-weight: 600; border-radius: 999px; padding: 0 8px; align-self: center; }
-  .rev { display: flex; flex-direction: column; gap: 6px; }
-  .revbar { display: flex; align-items: center; gap: 8px; }
+  .masonry { column-width: 420px; column-gap: 14px; }
+  .masonry .mi { break-inside: avoid; margin-bottom: 14px; }
+  .masonry .mi > :global(*) { width: 100%; box-sizing: border-box; }
   .done-all { color: var(--text-2); display: flex; gap: 8px; align-items: center; }
   .need ul { margin: 2px 0 10px; }
 </style>

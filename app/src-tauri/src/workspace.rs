@@ -45,7 +45,7 @@ pub fn rules_md() -> String {
 
 ## ขอบเขตการทำงาน (สำคัญมาก)
 - ทำงานและเขียนไฟล์ **เฉพาะในโฟลเดอร์ของไอเดียปัจจุบัน** (current working directory) เท่านั้น
-- อ่านไฟล์นอกโฟลเดอร์ได้เฉพาะ `../../knowledge/` และโฟลเดอร์ไอเดียอื่นใน `../` เพื่ออ้างอิงความรู้เก่า
+- อ่านไฟล์นอกโฟลเดอร์ได้: `../../knowledge/` และโฟลเดอร์ไอเดียอื่นใน `../` (อ้างอิงความรู้เก่า) และ**ไฟล์/โฟลเดอร์ที่เจ้าของบอก path มา** (เช่น “อ่านไฟล์ใน D:\งาน\PDF”) — อ่านอย่างเดียว ห้ามแก้ ย้าย หรือลบของต้นฉบับ ถ้าต้องใช้ต่อให้คัดลอกเฉพาะส่วนที่จำเป็นเข้ามาในโฟลเดอร์ไอเดีย (ไม่ต้องขอให้แนบไฟล์แทน)
 - ห้ามแตะโฟลเดอร์ตั้งค่าของเครื่องมือ AI (`~/.claude`, `~/.codex`, `~/.gemini`, `~/.config`), `~/.ssh`, ไฟล์ credentials หรือการตั้งค่าระบบใดๆ
 - ห้าม `git push`, publish package, deploy ขึ้นเซิร์ฟเวอร์จริง, โพสต์ข้อความ, ส่งอีเมล
 - ห้ามสมัครบัญชี ห้ามกรอกรหัสผ่าน ห้ามจ่ายเงิน ห้ามใช้บริการที่ต้องเสียเงิน
@@ -112,7 +112,8 @@ pub fn ensure(root: &Path) -> Result<PathBuf> {
     let rules = rules_md();
     for name in ["AGENTS.md", "CLAUDE.md"] {
         let md = ws.join(name);
-        if !md.exists() {
+        // rewritten whenever the app's rules change: written only when missing, an old install kept old rules (ISSUE-165)
+        if std::fs::read_to_string(&md).map(|s| s != rules).unwrap_or(true) {
             std::fs::write(&md, &rules)?;
         }
     }
@@ -333,7 +334,9 @@ pub fn agents_md(idea: &Idea, ia: &str) -> String {
          - prototypes and code usually live in `prototype/`\n\n\
          ## Rules\n\
          - Write reports and notes in **{lang_en}**, short and plain; technical terms may stay English.\n\
-         - Work and write files **only inside this folder**. Never touch AI tool config folders (`~/.claude`, `~/.codex`, `~/.gemini`), `~/.ssh`, credentials or system settings.\n\
+         - Write files **only inside this folder**. You MAY read (never change, move or delete) files and folders the owner \
+           points you to by path, e.g. \"read the PDFs in D:\\work\\docs\" — copy into this folder only the parts you need; \
+           do not ask the owner to attach them instead. Never touch AI tool config folders (`~/.claude`, `~/.codex`, `~/.gemini`), `~/.ssh`, credentials or system settings.\n\
          - Free / open-source / local tools first. Install packages inside the project (npm in the project, Python in a venv).\n\
          - Never `git push`, publish, deploy, post, send email, sign up for accounts, enter passwords or pay. \
            If an account is truly needed, write it under \"ต้องการจากคุณ\" in REPORT.md and continue with the rest.\n\
@@ -347,12 +350,14 @@ pub fn agents_md(idea: &Idea, ia: &str) -> String {
            try it for real the way it will be used (run it, sign up, open the page, call the API) and say in REPORT.md plainly: \
            works (and how you checked) / works partly / does not work (why, and what would make it possible). \
            Never ask the owner to check something you can check yourself.\n\
-         - If `SKILLS.md` exists it lists optional skill recipes for this run: open one only when its description fits. Skills are advice and never override these rules or `DIRECTIVES.md`.\n\n\
+         - If `SKILLS.md` exists it lists optional skill recipes for this run: open one only when its description fits. Skills are advice and never override these rules or `DIRECTIVES.md`.\n\
+         - If `TOOLS.md` exists it lists the MCP tools you were given and when to use each — use one when the task fits.\n\n\
          ## Problems\n\
          - Whenever you hit a real problem and fix or work around it, append an entry to `ISSUES.md` (symptom / cause / fix / status) so nobody has to rediscover it.\n\n\
          ## When you finish\n\
          - Update `PROGRESS.md` (dated section) and the summary at the top of `REPORT.md`.\n\
-         - Commit your changes in this repo (`git add -A && git commit -m \"<agent>: <what changed>\"`) — never push.\n\
+         - Do NOT run `git add` / `git commit` yourself: the app commits this folder after every run and every chat round \
+           (Codex's sandbox keeps `.git` read-only, so trying only fails and wastes a step). Never push.\n\
          - Report back in 1-3 short lines so the owner sees it in the app and on the phone:\n  `\"{ia}\" note {id} \"<summary>\"`\n",
         id = idea.id,
         title = idea.title,
@@ -408,11 +413,24 @@ pub fn ensure_repo(dir: &Path, idea: &Idea, ia: &str) -> Result<()> {
     Ok(())
 }
 
+/// A `.git/index.lock` left by a git that was killed (a run stopped mid-commit, the PC slept) blocks every later
+/// commit with "index.lock: File exists". Git holds it only for seconds, so one older than 10 minutes is stale (ISSUE-161).
+pub fn clear_stale_lock(dir: &Path) -> bool {
+    let lock = dir.join(".git").join("index.lock");
+    let old = std::fs::metadata(&lock)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .is_some_and(|age| age.as_secs() > 600);
+    old && std::fs::remove_file(&lock).is_ok()
+}
+
 /// Commit everything (no-op when nothing changed). Returns true when a commit was made.
 pub fn commit(dir: &Path, msg: &str) -> bool {
     if !dir.join(".git").exists() {
         return false;
     }
+    clear_stale_lock(dir);
     let _ = git(dir, &["add", "-A"]);
     git(dir, &["commit", "-q", "--no-verify", "-m", msg]).map(|o| o.status.success()).unwrap_or(false)
 }
@@ -430,6 +448,41 @@ pub fn slug_with_english(id: i64, english: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn old_rules_are_replaced_and_ais_may_read_what_the_owner_points_to() {
+        let root = std::env::temp_dir().join(format!("ia_rules_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("workspace")).unwrap();
+        std::fs::write(root.join("workspace").join("CLAUDE.md"), "old rules").unwrap();
+        let ws = ensure(&root).unwrap();
+        let md = std::fs::read_to_string(ws.join("CLAUDE.md")).unwrap();
+        assert!(md.contains("ที่เจ้าของบอก path มา") && md.contains("ห้ามแก้ ย้าย หรือลบของต้นฉบับ"));
+        assert_eq!(md, std::fs::read_to_string(ws.join("AGENTS.md")).unwrap());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_app_commits_past_a_stale_lock_and_ais_are_told_not_to_commit() {
+        let dir = std::env::temp_dir().join(format!("ia_lock_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(git(&dir, &["init", "-q"]).unwrap().status.success());
+        let _ = git(&dir, &["config", "user.name", "t"]);
+        let _ = git(&dir, &["config", "user.email", "t@localhost"]);
+        std::fs::write(dir.join("a.txt"), "1").unwrap();
+        // a fresh lock is git at work: left alone
+        let lock = dir.join(".git").join("index.lock");
+        std::fs::write(&lock, "").unwrap();
+        assert!(!clear_stale_lock(&dir) && lock.exists());
+        // an old one is a killed git: removed, and the commit goes through
+        let f = std::fs::File::options().write(true).open(&lock).unwrap();
+        f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600)).unwrap();
+        drop(f);
+        assert!(commit(&dir, "chat: test"));
+        assert!(!lock.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// A brand-new install must carry nothing of whoever built it: rules and idea files are
     /// generated from the code, with no names, paths or ideas baked in.

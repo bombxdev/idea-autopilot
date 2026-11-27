@@ -13,6 +13,7 @@
 <meta name="theme-color" content="#0f1218" />
 <script>
 // the phone's font size, applied to the whole page at once so the input box and its drawn text grow together (ISSUE-104)
+if (window.IAApp && /Android/i.test(navigator.userAgent)) document.documentElement.classList.add("in-app"); // the Android shell pads the bars itself; iOS uses env() (ISSUE-157)
 try { var fs = window.IAApp && IAApp.fontScale(); if (fs > 0.5 && fs < 3 && Math.abs(fs - 1) > 0.01) document.documentElement.style.zoom = fs; } catch (e) {}
 </script>
 <style>
@@ -145,7 +146,18 @@ textarea.big { height: 62vh !important; overflow-y: auto !important; }
 /* iPhone home-screen app draws under the notch and home bar: keep clear of them (0 on Android, whose shell pads) */
 body { padding-top: env(safe-area-inset-top); }
 nav { padding-bottom: calc(6px + env(safe-area-inset-bottom)); }
+.in-app body { padding-top: 0; } .in-app nav { padding-bottom: 6px; } .in-app .sheet { padding-bottom: 40px; }
 .sheet { padding-bottom: calc(40px + env(safe-area-inset-bottom)); }
+/* a file a report links to, shown over the idea instead of leaving the page (ISSUE-155) */
+#viewer .scrim { z-index: 14; } #viewer .sheet { z-index: 15; max-height: 96vh; }
+.vhead { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; }
+.vhead button { flex: none; padding: 6px 12px; font-size: 14px; }
+.vhead b { overflow-wrap: anywhere; font-size: 13px; color: var(--text2); }
+.vnote { font-size: 13px; color: var(--text3); background: var(--bg2); border-radius: 10px; padding: 10px 12px; margin: 8px 0; }
+.vpre { font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg2); padding: 10px; border-radius: 10px; max-height: 60vh; overflow: auto; }
+.vimg { max-width: 100%; border-radius: 10px; display: block; margin: 6px 0; }
+#vbody td, #vbody th { white-space: nowrap; }
+.vlist a { display: block; padding: 8px 0; border-bottom: 1px solid var(--line); }
 </style>
 </head>
 <body>
@@ -190,6 +202,7 @@ nav { padding-bottom: calc(6px + env(safe-area-inset-bottom)); }
 </div>
 
 <div id="overlay"></div>
+<div id="viewer"></div>
 <div id="toast" class="toast hidden"></div>
 
 <script src="version.js"></script>
@@ -210,6 +223,16 @@ let data = { live: null, ideas: [], questions: [], runs: [], leader: null };
 let tab = "now", filter = "all", fetchedAt = 0, loading = false;
 let sentAnswers = load("sent") || {}; // question id -> answer, until the PC confirms
 
+// The phone keeps as little as it can: the PC is where the data lives (ISSUE-160). The copy kept for opening the app
+// offline holds only what the first screens show — the newest runs (and each idea's last one), questions still open
+// and the two settings the phone reads — not every run, answer and setting (~850 KB rewritten on each refresh).
+function slim(d) {
+  const seen = new Set();
+  const runs = (d.runs || []).filter((r, n) => { const keep = n < 6 || !seen.has(r.idea_id); seen.add(r.idea_id); return keep; });
+  const s = d.settings || {};
+  return { ...d, runs, questions: (d.questions || []).filter((q) => !q.answer),
+    settings: { reviewed: s.reviewed, telegram_questions: s.telegram_questions } };
+}
 function load(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } }
 function save(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
 function ago(ts) {
@@ -325,12 +348,12 @@ async function refresh(quiet) {
   loading = true;
   $("#refresh").textContent = "…";
   try {
-    const [live, ideas, questions, runs, leader, settings, models] = await Promise.all([
+    const [live, ideas, questions, runs, leader, settings, models, rounds] = await Promise.all([
       ghJson("state/live.json"), ghJson("state/ideas.json"), ghJson("state/questions.json"), ghJson("state/runs.json"), ghJson("leader.json"),
-      ghJson("state/settings.json"), ghJson("state/models.json"),
+      ghJson("state/settings.json"), ghJson("state/models.json"), ghJson("state/rounds.json").catch(() => null),
     ]);
     data = {
-      live, leader, models: models || { accounts: [] },
+      live, leader, models: models || { accounts: [] }, rounds: rounds || [],
       settings: Object.fromEntries((settings || []).map((r) => [r.key, r.value])),
       ideas: (ideas || []).filter((i) => i.status !== "deleted")
         .map((i) => ({ ...i, intents: parseList(i.intents), recipe: parseList(i.recipe), needs: parseList(i.needs) }))
@@ -345,7 +368,7 @@ async function refresh(quiet) {
     for (const k of Object.keys(pendingRemote)) if (!!sessionOf(Number(k)) === pendingRemote[k]) delete pendingRemote[k];
     for (const k of Object.keys(pendingAsk)) if ((sessionOf(Number(k))?.feed || []).some((f) => squash(f.text).includes(askKey(pendingAsk[k])))) delete pendingAsk[k];
     save("sent", sentAnswers);
-    save("cache", data);
+    save("cache", slim(data));
     fetchedAt = Date.now();
     render();
   } catch (e) {
@@ -430,7 +453,10 @@ function renderNow(L, d, stale) {
   const curIdea = cur && data.ideas.find((i) => i.id === cur.idea_id);
   const week = d.week_pct ?? L.snap?.week_pct, res = Math.max(0, Math.min(100 - (week || 0), d.reserve || 0));
   const queue = data.ideas.filter((i) => ["active", "inbox"].includes(i.status) && i.id !== cur?.idea_id).slice(0, 3);
-  const runs = data.runs.slice(0, 6);
+  // bot runs and chat rounds together, newest first: a day of chat work used to leave this list on yesterday (ISSUE-164)
+  const runs = [...data.runs.slice(0, 8).map((r) => ({ ...r, kind: "run" })),
+    ...(data.rounds || []).slice(0, 8).map((r) => ({ ...r, kind: "chat", started: r.updated || r.started }))]
+    .sort((a, b) => b.started - a.started).slice(0, 8);
   $("#tab-now").innerHTML = `
     ${L.shelf ? `<div class="card" style="border-color:var(--teal)"><b>⏸ ${L.shelf.by_owner ? `พักงานไว้ตั้งแต่ ${hm(L.shelf.ts)}` : "ครั้งก่อนคอมฯ ปิดไปตอนที่ AI ยังทำงานอยู่"}</b>
       <div class="muted small">${(L.shelf.sessions || []).map((x) => `#${x.id} ${esc(x.title)} — ${x.working ? "AI ทำค้างอยู่" : "แชตเปิดอยู่"}`).join(" · ")}${L.shelf.run ? `${(L.shelf.sessions || []).length ? " · " : ""}บอททำ #${L.shelf.run[0]} ค้างไว้` : ""}</div>
@@ -449,21 +475,21 @@ function renderNow(L, d, stale) {
     </div>
     ${quotaCard(L, d)}
     ${(L.sessions || []).length ? `<div class="card" style="border-color:var(--teal)"><b>🛠 AI กำลังทำงานกับไอเดีย</b>
-      ${(L.sessions || []).map((x) => `<div class="run" data-open="${x.idea_id}"><div style="flex:1;min-width:0">
-        <div class="small"><b>${esc(x.name)}</b> <span class="chip ${(SESS[x.status] || SESS.idle)[1]}">${(SESS[x.status] || SESS.idle)[0]}</span></div>
-        ${x.ai ? `<div class="faint small">🤖 ${esc(x.ai)}</div>` : ""}
-        <div class="small muted ellipsis">${esc(x.feed?.at(-1)?.text || "")}</div></div></div>`).join("")}
-      <button data-url="https://claude.ai/code" class="primary" style="width:100%;margin-top:10px">เปิดแอป Claude</button></div>` : ""}
+      ${(L.sessions || []).map(sessionRow).join("")}
+      <div class="faint small" style="margin-top:8px">แตะไอเดียเพื่อดูความคืบหน้าทั้งหมดและสั่งต่อ</div>
+      ${(L.sessions || []).some(isClaude) ? `<button data-url="https://claude.ai/code" style="width:100%;margin-top:10px">เปิด session ของ Claude ในแอป Claude</button>` : ""}</div>` : ""}
     ${queue.length ? `<div class="card"><h3>คิวถัดไป</h3>${queue.map((i) => `
       <div class="run" data-open="${i.id}"><div style="flex:1;min-width:0"><div class="small"><span class="idn">#${i.id}</span><b>${esc(i.title)}</b></div>
       <div class="prog"><div class="bar"><i style="width:${progress(i)}%"></i></div><span class="small faint">${progress(i)}%</span></div></div></div>`).join("")}</div>` : ""}
     <div class="card"><h3>ทำล่าสุด</h3>${runs.length ? runs.map((r, n) => {
-      const idea = data.ideas.find((i) => i.id === r.idea_id); const st = RUNST[r.status] || [r.status, ""];
+      const idea = data.ideas.find((i) => i.id === r.idea_id); const st = r.kind === "chat" ? (r.done ? ["จบรอบ", "c-teal"] : ["กำลังทำ", "c-blue"]) : RUNST[r.status] || [r.status, ""];
       const day = dayBreak(runs.map((x) => ({ ts: x.started })), n);
       return `${day ? `<div class="daybreak"><span>${esc(day)}</span></div>` : ""}<div class="run" data-open="${r.idea_id}"><div class="tm">${hm(r.started)}</div><div style="flex:1;min-width:0">
         <div class="small"><span class="dot" style="background:${PALETTE[r.idea_id % PALETTE.length]}"></span><span class="idn">#${r.idea_id}</span><b>${esc(idea?.title || "")}</b></div>
-        <div class="small muted">${esc(STAGES[r.stage] || r.stage)} · <span class="chip ${st[1]}" style="margin:0">${st[0]}</span></div>
-        ${r.summary ? `<div class="small faint">${esc(r.summary)}</div>` : ""}</div></div>`;
+        <div class="small muted">${r.kind === "chat" ? "💬 แชต" : esc(STAGES[r.stage] || r.stage)} · <span class="chip ${st[1]}" style="margin:0">${st[0]}</span>${r.problems ? ` <span class="small" style="color:var(--amber)">⚠️ ${r.problems}</span>` : ""}</div>
+        ${r.kind === "chat" && r.prompt ? `<div class="small ellipsis">🙋 ${esc(r.prompt)}</div>` : ""}
+        ${r.kind === "chat" ? (r.result ? `<div class="small faint" style="display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">${esc(r.result)}</div>` : "")
+          : r.summary ? `<div class="small faint">${esc(r.summary)}</div>` : ""}</div></div>`;
     }).join("") : `<div class="faint small">ยังไม่มีรอบงาน</div>`}</div>`;
 }
 
@@ -586,6 +612,25 @@ function renderMore() {
 
 const isStep = (l) => l.startsWith("›") || (/^\p{Extended_Pictographic}/u.test(l) && !l.startsWith("💬"));
 const SESS = { starting: ["กำลังเปิด", "c-amber"], working: ["AI กำลังทำ", "c-teal"], idle: ["รอคำสั่ง", ""], error: ["มีปัญหา", "c-amber"] };
+// Only a Claude chat runs through Remote Control and can be opened in the Claude app; Codex, Gemini, OpenCode… run
+// headless on the PC and are followed here (ISSUE-163). Older PCs send no "agent": a Claude session id is a UUID.
+const isClaude = (x) => !!x && (x.agent ? x.agent === "claude" : /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(x.sid || ""));
+// what to watch at a glance: how long this round runs, what the AI last said, what it is doing now, a problem if any
+function sessionRow(x) {
+  const feed = x.feed || [];
+  const last = (k) => [...feed].reverse().find((f) => feedKind(f.text) === k);
+  const said = last("say"), step = last("step"), warn = last("warn");
+  const mins = x.busy_since ? Math.floor((Date.now() / 1000 - x.busy_since) / 60) : -1;
+  const st = SESS[x.status] || SESS.idle;
+  return `<div class="run" data-open="${x.idea_id}"><div style="flex:1;min-width:0">
+    <div class="small"><b>${esc(x.name)}</b> <span class="chip ${st[1]}">${st[0]}</span>${mins >= 1 ? ` <span class="faint small">· รอบนี้ ${mins} นาที</span>` : ""}</div>
+    ${x.ai ? `<div class="faint small">🤖 ${esc(x.ai)}</div>` : ""}
+    ${said ? `<div class="small" style="display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;margin-top:4px">${esc(said.text.replace(/^💬\s*/, ""))}</div>` : ""}
+    ${step && (!said || step.ts >= said.ts) ? `<div class="small faint ellipsis">ตอนนี้: ${esc(step.text)}</div>` : ""}
+    ${warn && (!said || warn.ts >= said.ts) ? `<div class="small ellipsis" style="color:var(--amber)">${esc(warn.text)}</div>` : ""}
+    ${!said && !step && feed.length ? `<div class="small muted ellipsis">${esc(feed.at(-1).text)}</div>` : ""}
+  </div></div>`;
+}
 const feedKind = (t) => t.startsWith("💬") ? "say" : t.startsWith("🙋") ? "me" : /^(✅|📝)/u.test(t) ? "done" : t.startsWith("⚠️") ? "warn" : "step";
 const sessionOf = (id) => (data.live?.sessions || []).find((x) => x.idea_id === id);
 let pendingRemote = {}; // idea id -> wanted state, until the PC confirms
@@ -595,7 +640,7 @@ function overlay(html) {
   $("#overlay").innerHTML = `<div class="scrim" data-close="1"></div><div class="sheet"><div class="grab"></div>${html}</div>`;
 }
 function closeOverlay() { const had = !!$("#overlay").innerHTML; $("#overlay").innerHTML = ""; return had; }
-window.onBack = () => closeOverlay();
+window.onBack = () => closeViewer() || closeOverlay();
 
 async function openIdea(id) {
   const i = data.ideas.find((x) => x.id === id);
@@ -622,9 +667,191 @@ async function openIdea(id) {
   try {
     const md = (await gh(`workspace/ideas/${i.slug}/REPORT.md`)) || (await gh(`workspace/ideas/${i.slug}/KNOWLEDGE.md`));
     const el = $("#report");
-    if (el) { el.classList.remove("faint"); el.innerHTML = md ? DOMPurify.sanitize(marked.parse(md)) : `<div class="faint">ยังไม่มีรายงาน</div>`; }
+    if (el) {
+      el.classList.remove("faint"); el.dataset.base = `workspace/ideas/${i.slug}/`; el.dataset.slug = i.slug;
+      el.innerHTML = md ? DOMPurify.sanitize(marked.parse(md)) : `<div class="faint">ยังไม่มีรายงาน</div>`;
+    }
   } catch (e) { const el = $("#report"); if (el) el.textContent = "โหลดรายงานไม่ได้"; }
 }
+
+// ---------- files a report links to (ISSUE-155) ----------
+// A link in a report used to load in the WebView itself: the page went to file:///android_asset/<file>, which does not
+// exist, and Back could not return. Every link is caught now: web links open in the browser, "#part" scrolls, and a
+// file of the idea is fetched from the sync repo and shown in a light sheet — only what is worth reading on a phone.
+const IMG_TYPES = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp" };
+const PLAIN = /^(txt|log|py|js|mjs|cjs|ts|tsx|jsx|rs|go|java|kt|swift|sh|ps1|bat|cmd|toml|ya?ml|ini|cfg|xml|svg|css|sql|svelte|vue|c|h|cpp|hpp|cs|rb|php|lua|dart|gradle|properties)$/;
+const LINES = 80; // lines of text/code shown before "แสดงเพิ่ม"
+let views = []; // [{ path, frag, slug }] — Back steps out one file at a time
+const extOf = (p) => (p.split("/").pop().match(/\.([^.]+)$/) || [])[1]?.toLowerCase() || "";
+const slugify = (s) => s.trim().toLowerCase().replace(/[^\p{L}\p{M}\p{N}\s_-]/gu, "").replace(/\s+/g, "-");
+
+// href of a link in a report → { web } | { frag } | { path, frag } inside the sync repo | null
+function linkTarget(href, base, slug) {
+  const raw = (href || "").trim();
+  if (!raw) return null;
+  if (raw.startsWith("#")) return { frag: decodeURIComponent(raw.slice(1)) };
+  if (/^(mailto|tel):/i.test(raw)) return { web: raw };
+  if (/^https?:\/\//i.test(raw) && !/^https?:\/\/(tauri\.)?localhost/i.test(raw)) return { web: raw };
+  let p = raw.replace(/^https?:\/\/[^/]+/i, "").replace(/^file:\/*/i, "/").replace(/^\/?android_asset\//, "");
+  const h = p.indexOf("#"); const frag = h >= 0 ? decodeURIComponent(p.slice(h + 1)) : "";
+  if (h >= 0) p = p.slice(0, h);
+  p = p.split("?")[0];
+  try { p = decodeURIComponent(p); } catch {}
+  p = p.replace(/\\/g, "/");
+  // a full path on the PC (D:/…/workspace/ideas/…) or a link that already names the idea folder
+  const at = p.search(/(^|\/)ideas\/[^/]+\//);
+  let full;
+  if (at >= 0) full = "workspace/" + p.slice(at).replace(/^\//, "");
+  else if (/^\/|^[a-z]:\//i.test(p)) full = base + p.replace(/^\/?([a-z]:\/)?/i, ""); // root-relative: the idea folder
+  else full = base + p;
+  const out = [];
+  for (const s of full.split("/")) {
+    if (s === "..") { if (!out.length) return null; out.pop(); } else if (s && s !== ".") out.push(s);
+  }
+  // an older name of this idea's folder (same idea-NNNN number) → its folder now
+  if (slug && out[0] === "workspace" && out[1] === "ideas" && out[2] && out[2] !== slug) {
+    const num = (s) => (s.match(/^idea-(\d+)/) || [])[1];
+    if (num(out[2]) && num(out[2]) === num(slug)) out[2] = slug;
+  }
+  return { path: out.join("/") + (p.endsWith("/") ? "/" : ""), frag };
+}
+
+function scrollToFrag(box, frag) {
+  if (!frag || !box) return;
+  const want = slugify(frag);
+  const hit = [...box.querySelectorAll("[id], h1, h2, h3, h4, h5, h6")].find((h) => h.id === frag || slugify(h.textContent) === want);
+  if (hit) hit.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+async function ghBinary(path) {
+  if (MOCK) { const r = await fetch(`${MOCK}/${path}`); return r.ok ? r.blob() : null; }
+  const r = await fetch(`https://api.github.com/repos/${cfg.repo}/contents/${path}?t=${Date.now()}`, {
+    headers: { Authorization: `Bearer ${cfg.token}`, Accept: "application/vnd.github.raw", "X-GitHub-Api-Version": "2022-11-28" },
+    cache: "no-store",
+  });
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error(`GitHub ${r.status}`);
+  return r.blob();
+}
+
+function closeViewer() {
+  if (!views.length) return false;
+  views.pop();
+  if (views.length) showView(); else $("#viewer").innerHTML = "";
+  return true;
+}
+function openView(v) { views.push(v); showView(); }
+
+const NOT_SYNCED = `<div class="vnote">ไฟล์นี้ไม่ได้อยู่ในข้อมูลที่ส่งมามือถือ (ส่งเฉพาะรายงาน โค้ด ข้อมูล และรูปเล็ก) — เปิดดูที่คอมฯ</div>`;
+async function showView() {
+  const v = views[views.length - 1], name = v.path.replace(/\/$/, "").split("/").pop() || v.path;
+  $("#viewer").innerHTML = `<div class="scrim" data-vback="1"></div><div class="sheet"><div class="grab"></div>
+    <div class="vhead"><button data-vback="1">‹ กลับ</button><b>${esc(name)}</b></div><div id="vbody" class="faint">กำลังโหลด…</div></div>`;
+  const body = () => $("#vbody");
+  const ext = extOf(v.path);
+  try {
+    if (IMG_TYPES[ext]) {
+      const b = await ghBinary(v.path);
+      if (!body()) return;
+      body().classList.remove("faint");
+      body().innerHTML = b ? `<img class="vimg" src="${await readAsDataUrl(b)}" alt="${esc(name)}" />` : NOT_SYNCED;
+      return;
+    }
+    // zip, pdf, video…: not worth downloading to a phone (and the sync leaves most of them out)
+    if (ext && !v.path.endsWith("/") && !/^(md|markdown|json|csv|tsv|html?)$/.test(ext) && !PLAIN.test(ext)) {
+      body().classList.remove("faint");
+      body().innerHTML = `<div class="vnote">ไฟล์ .${esc(ext)} เปิดบนมือถือไม่ได้ — ดูที่คอมฯ</div>`;
+      return;
+    }
+    const text = await gh(v.path.replace(/\/$/, ""));
+    const el = body();
+    if (!el) return;
+    el.classList.remove("faint");
+    if (text == null) { el.innerHTML = NOT_SYNCED; return; }
+    el.innerHTML = renderFile(ext, text, v);
+    if (el.classList.contains("md")) scrollToFrag(el, v.frag);
+  } catch (e) { const el = body(); if (el) { el.classList.remove("faint"); el.innerHTML = `<div class="vnote">โหลดไฟล์ไม่ได้: ${esc(e.message)}</div>`; } }
+}
+
+function cut(text, all) {
+  const lines = text.split("\n");
+  if (all || lines.length <= LINES) return `<div class="vpre">${esc(text)}</div>`;
+  return `<div class="vpre">${esc(lines.slice(0, LINES).join("\n"))}</div>
+    <div class="acts"><button data-vmore="1">แสดงเพิ่มอีก ${lines.length - LINES} บรรทัด</button></div>`;
+}
+
+function renderFile(ext, text, v) {
+  const box = $("#vbody");
+  box.classList.remove("md"); box.dataset.base = ""; box.dataset.slug = "";
+  // a folder: GitHub answers with its listing
+  if (!ext || v.path.endsWith("/")) {
+    try {
+      const list = JSON.parse(text);
+      if (Array.isArray(list) && list.every((f) => f.name && f.type)) {
+        const dir = v.path.replace(/\/?$/, "/");
+        box.classList.add("md"); box.dataset.base = dir;
+        return `<div class="vlist">${list.sort((a, b) => (a.type === "dir") - (b.type === "dir") || a.name.localeCompare(b.name))
+          .map((f) => `<a href="${esc(encodeURIComponent(f.name) + (f.type === "dir" ? "/" : ""))}">${f.type === "dir" ? "📁" : "📄"} ${esc(f.name)}</a>`).join("")}</div>`;
+      }
+    } catch {}
+  }
+  if (ext === "md" || ext === "markdown") {
+    box.classList.add("md"); box.dataset.base = v.path.replace(/[^/]*$/, ""); box.dataset.slug = v.slug || "";
+    const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n/); // a skill's name/description block
+    return (fm ? `<div class="vpre">${esc(fm[1])}</div>` : "") + DOMPurify.sanitize(marked.parse(fm ? text.slice(fm[0].length) : text));
+  }
+  if (ext === "json") {
+    let pretty = text;
+    try { pretty = JSON.stringify(JSON.parse(text), null, 1); } catch {}
+    return cut(pretty, v.all);
+  }
+  if (ext === "csv" || ext === "tsv") {
+    const sep = ext === "tsv" ? "\t" : ",";
+    const rows = text.split(/\r?\n/).filter((l) => l.trim());
+    const cell = (l) => l.split(sep).map((c) => c.replace(/^"|"$/g, ""));
+    const show = rows.slice(0, v.all ? 500 : 20);
+    box.classList.add("md");
+    return `<table>${show.map((r, n) => `<tr>${cell(r).map((c) => n ? `<td>${esc(c)}</td>` : `<th>${esc(c)}</th>`).join("")}</tr>`).join("")}</table>
+      ${rows.length > show.length ? `<div class="acts"><button data-vmore="1">แสดงเพิ่ม (ทั้งหมด ${rows.length - 1} แถว)</button></div>` : ""}`;
+  }
+  if (ext === "html" || ext === "htm") {
+    // a dashboard made for a big screen: show its title, headings and words, not the page itself
+    const doc = new DOMParser().parseFromString(text, "text/html");
+    doc.querySelectorAll("script, style, noscript, svg, canvas").forEach((n) => n.remove());
+    const title = doc.title || doc.querySelector("h1")?.textContent || "";
+    const heads = [...doc.querySelectorAll("h1, h2, h3")].map((h) => h.textContent.trim()).filter(Boolean).slice(0, 15);
+    const paras = [...doc.querySelectorAll("p, li")].map((p) => p.textContent.replace(/\s+/g, " ").trim()).filter((t) => t.length >= 40);
+    const shown = paras.slice(0, v.all ? 40 : 3);
+    return `<div class="vnote">หน้าเว็บนี้ทำไว้ดูบนจอคอมฯ (กราฟ/ตารางโต้ตอบ) — บนมือถือแสดงแค่หัวข้อและข้อความสำคัญ</div>
+      ${title ? `<h3>${esc(title.trim())}</h3>` : ""}
+      ${heads.length ? `<ul class="small">${heads.map((h) => `<li>${esc(h)}</li>`).join("")}</ul>` : ""}
+      ${shown.map((p) => `<p class="small muted">${esc(p)}</p>`).join("")}
+      ${paras.length > shown.length ? `<div class="acts"><button data-vmore="1">อ่านข้อความต่อ (${paras.length - shown.length} ย่อหน้า)</button></div>` : ""}`;
+  }
+  if (PLAIN.test(ext)) return cut(text, v.all);
+  return `<div class="vnote">ไฟล์ชนิดนี้เปิดบนมือถือไม่ได้ — ดูที่คอมฯ</div>`;
+}
+
+// every link inside a report or a file shown above it
+document.addEventListener("click", (e) => {
+  const a = e.target.closest(".md a[href]");
+  if (!a) return;
+  e.preventDefault(); e.stopPropagation();
+  const box = a.closest(".md");
+  const t = linkTarget(a.getAttribute("href"), box.dataset.base || "", box.dataset.slug || "");
+  if (!t) return toast("ลิงก์นี้ชี้ออกนอกข้อมูลของไอเดีย — เปิดดูที่คอมฯ");
+  if (t.web) { location.href = t.web; return; } // MainActivity hands web links to the browser
+  if (t.path === undefined) return scrollToFrag(box, t.frag);
+  if (!box.dataset.base) return toast("ลิงก์นี้เปิดบนมือถือไม่ได้");
+  openView({ path: t.path, frag: t.frag, slug: box.dataset.slug || "" });
+}, true);
+document.addEventListener("click", (e) => {
+  const t = e.target.closest("[data-vback], [data-vmore]");
+  if (!t) return;
+  e.stopPropagation();
+  if (t.dataset.vback) closeViewer();
+  else { views[views.length - 1].all = true; showView(); }
+}, true);
 
 const accts = () => data.models?.accounts || [];
 const acctOf = (id) => accts().find((a) => a.id === id);
@@ -938,7 +1165,7 @@ function remoteCard(i) {
     <div class="faint small" style="margin-top:6px">${esc(msg)}</div>
     ${feed.length ? `<div class="log feed">${joinFences(feed).map((f, i, all) => { const k = f.ts + ":" + f.text.length, long = f.text.length > 200 || f.text.split("\n").length > 4, day = dayBreak(all, i);
       return `${day ? `<div class="daybreak"><span>${esc(day)}</span></div>` : ""}<div class="${feedKind(f.text)}"><span class="faint">${hm(f.ts)}</span> <span class="fb${long && !moreOpen.has(k) ? " clamp" : ""}">${fmtFeed(f.text)}</span>${long ? `<button class="more" data-more="${esc(k)}">${moreOpen.has(k) ? "ย่อ ▴" : "ดูเต็ม ▾"}</button>` : ""}</div>`; }).join("")}</div>` : ""}
-    ${r ? `<div class="acts" style="margin:10px 0 0"><button data-url="https://claude.ai/code">เปิดในแอป Claude</button><button data-remote="${i.id}" data-on="0">ปิด session</button></div>` : ""}
+    ${r ? `<div class="acts" style="margin:10px 0 0">${isClaude(r) ? `<button data-url="https://claude.ai/code">เปิดในแอป Claude</button>` : ""}<button data-remote="${i.id}" data-on="0">ปิด session</button></div>` : ""}
   </div>`;
 }
 

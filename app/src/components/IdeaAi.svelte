@@ -5,8 +5,9 @@
   import { onMount } from "svelte";
   import { api, effortName, effortOption } from "../lib/api.js";
   import ModelPicker from "./ModelPicker.svelte";
+  import BackupList from "./BackupList.svelte";
 
-  let { value = $bindable({ account: "", model: "", effort: "" }), onchange = null, startOpen = false, title = "AI สำหรับไอเดียนี้", autoNote = "ถ้าไม่เลือก บอทใช้บัญชีและโมเดลตามที่ตั้งไว้" } = $props();
+  let { value = $bindable({ account: "", model: "", effort: "" }), onchange = null, startOpen = false, backups = true, title = "AI สำหรับไอเดียนี้", autoNote = "ถ้าไม่เลือก บอทใช้บัญชีและโมเดลตามที่ตั้งไว้" } = $props();
   let models = $state([]);
   let hiddenModels = $state([]);
   let source = $state("");
@@ -57,7 +58,7 @@
   const summary = $derived(
     !value.account && !value.model && !value.effort
       ? "อัตโนมัติ"
-      : [acct ? acct.label || acct.id : value.account || "AI อัตโนมัติ", models.find((m) => m.id === value.model)?.label || value.model || "model auto", value.effort ? `effort ${effortName(value.effort)}` : "effort auto"].join(" · "),
+      : [acct ? acct.label || acct.id : value.account || "AI อัตโนมัติ", models.find((m) => m.id === value.model)?.label || value.model || "model auto", value.effort ? `effort ${effortName(value.effort)}` : "effort auto"].join(" · ") + (value.backups?.length ? " · สำรอง " + value.backups.length : ""),
   );
 
   function set(patch) {
@@ -68,7 +69,7 @@
   }
 </script>
 
-<div class="ai">
+<div class="ai" class:open>
   <button type="button" class="head small" onclick={() => (open = !open)} aria-expanded={open}>
     <Icon name="bot" /> {title}: <b>{summary}</b> <span class="faint"><Icon name={open ? "chevronUp" : "chevronDown"} /></span>
   </button>
@@ -90,16 +91,21 @@
       {:else if !accounts.length}<span class="faint">ยังไม่มีบัญชี AI ที่เปิดอยู่ — เพิ่มได้ที่ตั้งค่า → บัญชี AI</span>
       {:else if value.account}<span class="faint">{loading ? "กำลังอ่านรายชื่อโมเดล…" : source === "account" ? "รายชื่อมาจากบัญชีนี้โดยตรง" : "รายชื่อมาตรฐานของผู้ให้บริการ"}</span>
       {:else}<span class="faint">เลือกบัญชีก่อนเพื่อกำหนดโมเดลและ effort · {autoNote}</span>{/if}
+      <!-- backups when this account hits its limit (ISSUE-176) -->
+      {#if backups && value.account}<div class="backups"><BackupList value={value.backups ?? []} exclude={value.account} onchange={(l) => set({ backups: l })} /></div>{/if}
     </div>
   {/if}
 </div>
 
 <style>
-  .ai { display: flex; flex-direction: column; gap: 6px; flex-basis: 100%; }
+  /* a one-line summary that shares its line (with "ใครทำ"); the whole width only while its choices are open (ISSUE-166) */
+  .ai { display: flex; flex-direction: column; gap: 6px; flex: 0 1 auto; min-width: 0; }
+  .ai.open { flex-basis: 100%; }
   .head { align-self: flex-start; border: none; background: transparent; padding: 2px 0; color: var(--text-2); text-align: left; }
   .head:hover { background: transparent; color: var(--text); }
   .body { gap: 12px; align-items: center; padding-bottom: 6px; }
   .inl { display: inline-flex; gap: 6px; align-items: center; }
   .body label { display: inline-flex; gap: 6px; align-items: center; }
   .faint { color: var(--text-3); }
+  .backups { flex-basis: 100%; }
 </style>

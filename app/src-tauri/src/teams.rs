@@ -17,6 +17,8 @@ use crate::state::AppState;
 type R<T> = Result<T, String>;
 
 const ROLE_MARK: &str = "<!-- role: ";
+/// a persona card inside a shared team file (ISSUE-172)
+const PERSONA_MARK: &str = "<!-- persona: ";
 pub const MAX_HELPERS: u32 = 3;
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -33,6 +35,8 @@ pub struct Team {
     pub helpers: u32,
     /// this machine only: the account that should lead ("" = the idea's own AI)
     pub lead: String,
+    /// who plays each role: role slug -> persona slug (ISSUE-172)
+    pub cast: std::collections::BTreeMap<String, String>,
 }
 
 pub fn dir(root: &Path) -> PathBuf {
@@ -56,6 +60,9 @@ fn head(t: &Team, for_sharing: bool) -> String {
     fm.push(format!("use_for: {}", q(&t.use_for)));
     fm.push(format!("members: {}", t.members.join(", ")));
     fm.push(format!("helpers: {}", t.helpers.clamp(1, MAX_HELPERS)));
+    if !t.cast.is_empty() {
+        fm.push(format!("cast: {}", t.cast.iter().map(|(r, p)| format!("{r}={p}")).collect::<Vec<_>>().join(", ")));
+    }
     if !for_sharing && !t.lead.is_empty() {
         fm.push(format!("lead: {}", q(&t.lead)));
     }
@@ -78,13 +85,23 @@ pub fn parse_head(text: &str, slug: &str) -> R<Team> {
     Ok(Team {
         slug: if slug.is_empty() { slugify(&name) } else { slug.to_string() },
         name: name.trim().chars().take(60).collect(),
-        emoji: fm_get(fm, "emoji").chars().take(4).collect(),
+        emoji: crate::roles::icon_value(&fm_get(fm, "emoji")),
         description: fm_get(fm, "description").chars().take(400).collect(),
         use_for: fm_get(fm, "use_for").chars().take(200).collect(),
         members,
         helpers: fm_get(fm, "helpers").parse().unwrap_or(MAX_HELPERS).clamp(1, MAX_HELPERS),
         lead: fm_get(fm, "lead"),
+        cast: parse_cast(&fm_get(fm, "cast")),
     })
+}
+
+/// "front-end=bom, qa=nam" -> role -> persona
+fn parse_cast(s: &str) -> std::collections::BTreeMap<String, String> {
+    s.split(',')
+        .filter_map(|kv| kv.split_once('='))
+        .map(|(r, p)| (r.trim().to_string(), p.trim().to_string()))
+        .filter(|(r, p)| valid_slug(r) && valid_slug(p))
+        .collect()
 }
 
 pub fn list(root: &Path) -> Vec<Team> {
@@ -114,7 +131,7 @@ pub fn find(root: &Path, slug: &str) -> Option<Team> {
     parse_head(&std::fs::read_to_string(dir(root).join(format!("{slug}.md"))).ok()?, slug).ok()
 }
 
-fn write(root: &Path, t: &Team) -> R<()> {
+pub fn write(root: &Path, t: &Team) -> R<()> {
     if !valid_slug(&t.slug) {
         return Err("ชื่อไฟล์ของทีมใช้ได้เฉพาะ a-z 0-9 และ -".into());
     }
@@ -134,8 +151,20 @@ fn free_slug(root: &Path, want: &str) -> String {
 }
 
 /// The members that still exist (a deleted role simply drops out).
+/// The team's roles, each with the character that plays it (its persona text replaces the role's own, ISSUE-172).
 pub fn members(root: &Path, t: &Team) -> Vec<Role> {
-    t.members.iter().filter_map(|m| roles::find(root, m)).collect()
+    t.members
+        .iter()
+        .filter_map(|m| roles::find(root, m))
+        .map(|mut r| {
+            if let Some(p) = t.cast.get(&r.slug).and_then(|p| crate::personas::find(root, p)) {
+                r.persona = crate::personas::prompt(&p);
+                r.cast = p.slug.clone();
+                r.cast_name = p.name.clone();
+            }
+            r
+        })
+        .collect()
 }
 
 /// v0.9.0's "in the team" ticks become one named team, once.
@@ -147,7 +176,7 @@ fn migrate(root: &Path) {
     let _ = std::fs::create_dir_all(dir(root));
     let ticked: Vec<String> = roles::list(root).into_iter().filter(|r| r.team).map(|r| r.slug).collect();
     if !ticked.is_empty() && !dir(root).join("my-team.md").exists() {
-        let t = Team { slug: "my-team".into(), name: "ทีมของฉัน".into(), emoji: "👥".into(), description: "ทีมจากเวอร์ชันก่อน".into(), use_for: String::new(), members: ticked, helpers: MAX_HELPERS, lead: String::new() };
+        let t = Team { slug: "my-team".into(), name: "ทีมของฉัน".into(), emoji: "👥".into(), description: "ทีมจากเวอร์ชันก่อน".into(), use_for: String::new(), members: ticked, helpers: MAX_HELPERS, lead: String::new(), cast: Default::default() };
         let _ = write(root, &t);
     }
     let _ = std::fs::write(mark, "v0.9 team ticks moved into named teams");
@@ -189,8 +218,14 @@ fn preset_members(root: &Path, keys: &[&str]) -> Vec<String> {
 }
 
 pub fn to_json(root: &Path, t: &Team) -> Value {
-    let m: Vec<Value> = members(root, t).iter().map(|r| json!({ "slug": r.slug, "name": r.name, "emoji": r.emoji, "title": r.title, "tier": r.tier, "account": r.account })).collect();
-    json!({ "slug": t.slug, "name": t.name, "emoji": t.emoji, "description": t.description, "use_for": t.use_for, "members": t.members, "member_roles": m, "helpers": t.helpers, "lead": t.lead })
+    let m: Vec<Value> = members(root, t)
+        .iter()
+        .map(|r| {
+            let look = crate::personas::find(root, &r.cast).map(|p| serde_json::to_value(p.look).unwrap_or(Value::Null)).unwrap_or(Value::Null);
+            json!({ "slug": r.slug, "name": r.name, "emoji": r.emoji, "title": r.title, "tier": r.tier, "account": r.account, "persona": r.cast, "persona_name": r.cast_name, "look": look })
+        })
+        .collect();
+    json!({ "slug": t.slug, "name": t.name, "emoji": t.emoji, "description": t.description, "use_for": t.use_for, "members": t.members, "member_roles": m, "helpers": t.helpers, "lead": t.lead, "cast": t.cast })
 }
 
 fn from_json(v: &Value) -> Team {
@@ -198,12 +233,13 @@ fn from_json(v: &Value) -> Team {
     Team {
         slug: s("slug", 64),
         name: s("name", 60).trim().into(),
-        emoji: s("emoji", 4),
+        emoji: crate::roles::icon_value(&s("emoji", 40)),
         description: s("description", 400).trim().into(),
         use_for: s("use_for", 200).trim().into(),
         members: v["members"].as_array().into_iter().flatten().filter_map(|m| m.as_str()).filter(|m| valid_slug(m)).map(String::from).collect(),
         helpers: v["helpers"].as_u64().unwrap_or(MAX_HELPERS as u64).clamp(1, MAX_HELPERS as u64) as u32,
         lead: s("lead", 32),
+        cast: v["cast"].as_object().into_iter().flatten().filter_map(|(r, p)| Some((r.clone(), p.as_str()?.to_string()))).filter(|(r, p)| valid_slug(r) && valid_slug(p)).collect(),
     }
 }
 
@@ -215,7 +251,16 @@ pub fn export_text(root: &Path, t: &Team, with_persona: bool) -> String {
     out.push_str(&format!("\n# {} {}\n\n{}\n", t.emoji, t.name, t.description));
     for r in members(root, t) {
         out.push_str(&format!("\n{ROLE_MARK}{} -->\n", r.slug));
-        out.push_str(&roles::render(&r, with_persona, true));
+        // the role's own text (the character goes as its own card below, not mixed into the role)
+        let own = roles::find(root, &r.slug).unwrap_or(r);
+        out.push_str(&roles::render(&own, with_persona, true));
+    }
+    if with_persona {
+        for (role, p) in &t.cast {
+            if let Some(p) = crate::personas::find(root, p) {
+                out.push_str(&format!("\n{PERSONA_MARK}{role} -->\n```json\n{}\n```\n", serde_json::to_string_pretty(&crate::personas::to_card(&p)).unwrap_or_default()));
+            }
+        }
     }
     out
 }
@@ -225,6 +270,7 @@ pub fn split(text: &str) -> R<(Team, Vec<(String, Role)>)> {
     let t = text.replace("\r\n", "\n");
     let team = parse_head(&t, "")?;
     let mut out = Vec::new();
+    let t = t.split(PERSONA_MARK).next().unwrap_or("").to_string();
     for part in t.split(ROLE_MARK).skip(1) {
         let (slug, body) = part.split_once("-->").ok_or("ส่วนของ role ในไฟล์ทีมเสีย")?;
         let slug = slug.trim().to_string();
@@ -256,14 +302,28 @@ fn import(root: &Path, text: &str, accept: bool) -> R<Team> {
     }
     let (mut team, members) = split(text)?;
     let mut slugs = Vec::new();
-    for (_, mut r) in members {
+    let mut renamed: std::collections::BTreeMap<String, String> = Default::default();
+    for (old, mut r) in members {
         r.slug = roles::free_slug(root, &r.name);
         r.account.clear(); // accounts and exact models are the receiver's own choice
         r.model_override.clear();
         r.team = false;
         roles::write(root, &r)?;
+        renamed.insert(old, r.slug.clone());
         slugs.push(r.slug);
     }
+    // the characters that came with the team, and who plays what (ISSUE-172)
+    let mut cast = std::collections::BTreeMap::new();
+    for part in text.replace("\r\n", "\n").split(PERSONA_MARK).skip(1) {
+        let Some((role, body)) = part.split_once("-->") else { continue };
+        let json = body.trim().trim_start_matches("```json").trim_start_matches("```").split("```").next().unwrap_or("").trim().to_string();
+        let Ok(p) = crate::personas::from_card(&json) else { continue };
+        let Ok(p) = crate::personas::save(root, p) else { continue };
+        if let Some(r) = renamed.get(role.trim()) {
+            cast.insert(r.clone(), p.slug);
+        }
+    }
+    team.cast = cast;
     team.slug = free_slug(root, &team.name);
     team.members = slugs;
     team.lead.clear();
@@ -314,7 +374,7 @@ pub fn team_preset(st: State<AppState>, key: String) -> R<Value> {
             members.push(m);
         }
     }
-    let t = Team { slug: free_slug(&st.root, name), name: name.to_string(), emoji: emoji.to_string(), description: desc.to_string(), use_for: use_for.to_string(), members, helpers: MAX_HELPERS, lead: String::new() };
+    let t = Team { slug: free_slug(&st.root, name), name: name.to_string(), emoji: emoji.to_string(), description: desc.to_string(), use_for: use_for.to_string(), members, helpers: MAX_HELPERS, lead: String::new(), cast: Default::default() };
     write(&st.root, &t)?;
     Ok(to_json(&st.root, &t))
 }
@@ -358,7 +418,7 @@ mod tests {
 
     fn role(slug: &str, name: &str, persona: &str, team: bool) -> Role {
         Role { slug: slug.into(), name: name.into(), title: "Dev".into(), emoji: String::new(), description: format!("{name} does work"), tools: String::new(), tier: "fast".into(),
-               account: "codex01".into(), model_override: "gpt-x".into(), team, instructions: "Do the work.".into(), persona: persona.into(), source: String::new(), license: String::new() }
+               account: "codex01".into(), model_override: "gpt-x".into(), team, instructions: "Do the work.".into(), persona: persona.into(), cast: String::new(), cast_name: String::new(), source: String::new(), license: String::new() }
     }
 
     #[test]
@@ -366,7 +426,7 @@ mod tests {
         let r = root();
         roles::write(&r, &role("bom", "Bom", "พูดตรง", false)).unwrap();
         roles::write(&r, &role("nam", "Nam", "", false)).unwrap();
-        let t = Team { slug: "web".into(), name: "Web app".into(), emoji: "🌐".into(), description: "Build".into(), use_for: "web, app".into(), members: vec!["bom".into(), "nam".into()], helpers: 2, lead: "claude01".into() };
+        let t = Team { slug: "web".into(), name: "Web app".into(), emoji: "🌐".into(), description: "Build".into(), use_for: "web, app".into(), members: vec!["bom".into(), "nam".into()], helpers: 2, lead: "claude01".into(), cast: Default::default() };
         write(&r, &t).unwrap();
         let text = export_text(&r, &t, true);
         assert!(!text.contains("codex01") && !text.contains("gpt-x") && !text.contains("claude01"));
@@ -380,6 +440,29 @@ mod tests {
         let m = members(&r2, &got);
         assert!(m.iter().all(|x| x.account.is_empty() && x.model_override.is_empty() && x.tier == "fast"));
         assert_eq!(m[0].persona, "พูดตรง");
+    }
+
+    #[test]
+    fn a_character_plays_a_role_and_comes_along_when_the_team_is_shared() {
+        let r = root();
+        roles::write(&r, &role("fe", "Front-end", "", false)).unwrap();
+        let bom = crate::personas::save(&r, crate::personas::presets().into_iter().find(|p| p.slug == "bom").unwrap()).unwrap();
+        let mut t = Team { slug: "web".into(), name: "Web".into(), members: vec!["fe".into()], helpers: 2, ..Default::default() };
+        t.cast.insert("fe".into(), bom.slug.clone());
+        write(&r, &t).unwrap();
+        let back = find(&r, "web").unwrap();
+        assert_eq!(back.cast.get("fe"), Some(&bom.slug));
+        let m = members(&r, &back);
+        assert!(m[0].persona.contains("บอม") && m[0].cast_name == "บอม");
+        assert!(roles::team_prompt("Web", &m, "claude01", false).contains("role `fe@bom`"));
+        assert!(roles::delegate_brief(&r, "fe@bom").unwrap().contains("Your character: บอม"));
+        // shared: the character goes as a card, and lands as a persona playing the same role
+        let text = export_text(&r, &back, true);
+        let r2 = root().join("other");
+        std::fs::create_dir_all(&r2).unwrap();
+        let got = import(&r2, &text, false).unwrap();
+        let p = got.cast.values().next().and_then(|s| crate::personas::find(&r2, s)).unwrap();
+        assert_eq!((p.name.as_str(), p.look.hair.as_str()), ("บอม", "fluffy"));
     }
 
     #[test]

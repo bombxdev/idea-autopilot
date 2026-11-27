@@ -32,7 +32,8 @@
   const items = $derived.by(() => {
     if (q === null) return [];
     // only names that START with what was typed, narrowing with every letter
-    return skills.filter((s) => s.slug.startsWith(q) || s.name.toLowerCase().startsWith(q));
+    // tools (MCP) are "tool-<id>": "/rea" finds them too (ISSUE-171)
+    return skills.filter((s) => s.slug.startsWith(q) || s.slug.replace(/^tool-/, "").startsWith(q) || s.name.toLowerCase().startsWith(q));
   });
   const open = $derived(q !== null && !closed);
 
@@ -81,12 +82,13 @@
     {#each items as s, i (s.slug)}
       <button type="button" role="option" aria-selected={i === idx} class:on={i === idx} onmousedown={(e) => { e.preventDefault(); accept(s); }} onmouseenter={() => (idx = i)}>
         <b>/{s.slug}</b>
+        {#if s.kind === "tool"}<span class="kind" title="เครื่องมือ (MCP): AI ของไอเดียนี้จะได้เครื่องมือนี้และถูกขอให้ใช้">เครื่องมือ</span>{/if}
         <span class="d">{s.description || s.name}</span>
       </button>
     {:else}
-      <div class="empty">{skills.length ? "ไม่มีสกิลที่ขึ้นต้นด้วยคำนี้" : "ยังไม่มีสกิลที่เปิดใช้ — เพิ่มได้ที่หน้าสกิล"}</div>
+      <div class="empty">{skills.length ? "ไม่มีสกิลหรือเครื่องมือที่ขึ้นต้นด้วยคำนี้" : "ยังไม่มีสกิลหรือเครื่องมือที่เปิดใช้ — เพิ่มได้ที่หน้าสกิลและเครื่องมือ"}</div>
     {/each}
-    <div class="foot">↑ ↓ เลือก · Enter / Tab ใส่ชื่อสกิล · Esc ปิด</div>
+    <div class="foot">↑ ↓ เลือก · Enter / Tab ใส่ชื่อสกิลหรือเครื่องมือ · Esc ปิด</div>
   </div>
 {/if}
 
@@ -98,6 +100,7 @@
   button.on { background: var(--teal-bg); }
   b { color: var(--teal); font-weight: 600; flex: none; }
   .d { color: var(--text-2); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .kind { flex: none; font-size: 11px; color: var(--blue, var(--teal)); border: 1px solid currentColor; border-radius: 999px; padding: 0 7px; }
   .empty { padding: 8px 10px; color: var(--text-3); font-size: 13px; }
   .foot { padding: 4px 10px 2px; color: var(--text-3); font-size: 11px; border-top: 1px solid var(--line); margin-top: 2px; }
 </style>

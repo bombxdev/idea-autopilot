@@ -45,6 +45,26 @@ const MIRROR_IMAGE: &[&str] = &["png", "jpg", "jpeg", "gif", "webp"];
 const MIRROR_TEXT_MAX: u64 = 2 * 1024 * 1024;
 const MIRROR_IMAGE_MAX: u64 = 512 * 1024;
 
+/// The phone gets a light copy of the chat feeds (it keeps little, ISSUE-160): the last 40 lines of each session,
+/// each line up to 4000 characters — the desktop keeps answers whole (ISSUE-162).
+fn phone_feed(v: &mut Value) {
+    const LINES: usize = 40;
+    const CHARS: usize = 4000;
+    let Some(ss) = v["sessions"].as_array_mut() else { return };
+    for s in ss {
+        let Some(f) = s["feed"].as_array_mut() else { continue };
+        let n = f.len();
+        if n > LINES {
+            f.drain(..n - LINES);
+        }
+        for item in f.iter_mut() {
+            if let Some(t) = item["text"].as_str().filter(|t| t.chars().count() > CHARS) {
+                item["text"] = json!(format!("{}… (ข้อความยาว — อ่านเต็มได้ในแท็บรอบคุยบนคอมฯ)", t.chars().take(CHARS).collect::<String>()));
+            }
+        }
+    }
+}
+
 /// A folder the mirror leaves out: the list above, any virtualenv-like name, and hidden folders (.git, .venv, .claude…).
 fn mirror_skips_dir(name: &str) -> bool {
     let l = name.to_ascii_lowercase();
@@ -214,6 +234,8 @@ fn publish_state(c: &Connection, dir: &Path) -> Result<()> {
     }
     // the AIs and checked models the phone app can choose from
     write_if_changed(&state.join("models.json"), &serde_json::to_string_pretty(&crate::model_check::options_for_phone(c))?)?;
+    // the newest chat rounds, light, for the phone's "ทำล่าสุด" (ISSUE-164)
+    write_if_changed(&state.join("rounds.json"), &serde_json::to_string_pretty(&crate::rounds::recent_light(c, 30))?)?;
     let events = dump_table(c, "events", "ORDER BY id DESC LIMIT 500")?;
     write_if_changed(&state.join("events.json"), &serde_json::to_string_pretty(&events)?)?;
     // quota history, one CSV per month (only the current month changes)
@@ -526,6 +548,7 @@ pub fn tick(app: &AppHandle) -> Result<()> {
             v["open_questions"] = json!(db::questions(&st.db.lock(), None, true).map(|q| q.len()).unwrap_or(0));
             // the skills the phone may call with /name (ISSUE-073)
             v["slash"] = json!(crate::skills::slash_list(&st.db.lock()));
+            phone_feed(&mut v);
             let sessions: String = st.rt.lock().sessions.values().map(|s| format!("{}:{}:{}:{};", s.idea_id, s.status, s.feed.last().map(|f| f.ts).unwrap_or(0), s.ai)).collect();
             let sig = format!(
                 "{}|{}|{}|{}|{}|{}",
@@ -615,6 +638,19 @@ pub fn ensure_layout(dir: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_desktop_keeps_a_long_answer_whole_and_the_phone_gets_a_light_copy() {
+        let long = "ก".repeat(9000);
+        let fed = crate::narrate::whole(&long);
+        assert_eq!(fed.chars().count(), 9000, "no … in the middle of an answer on the desktop");
+        let mut v = json!({ "sessions": [{ "feed": (0..50).map(|i| json!({ "ts": i, "text": if i == 49 { long.clone() } else { "x".into() } })).collect::<Vec<_>>() }] });
+        phone_feed(&mut v);
+        let f = v["sessions"][0]["feed"].as_array().unwrap();
+        assert_eq!(f.len(), 40);
+        let last = f[39]["text"].as_str().unwrap();
+        assert!(last.chars().count() < 4100 && last.contains("อ่านเต็มได้"));
+    }
 
     #[test]
     fn device_named_files_are_skipped_not_fatal() {

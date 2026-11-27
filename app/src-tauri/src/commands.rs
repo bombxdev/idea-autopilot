@@ -33,6 +33,11 @@ pub fn list_ideas(st: State<AppState>) -> R<Value> {
 #[tauri::command]
 pub fn add_idea(st: State<AppState>, text: String, attachments: Option<Vec<String>>, ai: Option<crate::idea_ai::IdeaAi>, scope: Option<String>) -> R<i64> {
     let tokens = attachments.unwrap_or_default();
+    // "/tool-<id>" while jotting: the tool goes with the new idea (ISSUE-171)
+    let (tools, text) = {
+        let (t, rest) = crate::mcp::tool_tokens(&st.root, &text);
+        if t.is_empty() { (t, text) } else { (t, rest) }
+    };
     // "/web-research the coffee market": a skill named at the start is pinned to the new idea, the rest is the idea
     let (text, skill) = match crate::skills::slash_skill(&st.db.lock(), &text)? {
         Some((slug, rest)) if !rest.is_empty() => (rest, Some(slug)),
@@ -50,6 +55,11 @@ pub fn add_idea(st: State<AppState>, text: String, attachments: Option<Vec<Strin
         db::set_setting(&st.db.lock(), "scope_default", db::norm_scope(s)).map_err(e)?;
     }
     let id = scheduler::add_idea_in(&st, &text, scope.as_deref()).map_err(e)?;
+    if !tools.is_empty() {
+        let c = st.db.lock();
+        crate::mcp::add_idea_tools(&c, id, &tools.iter().map(|x| x.id.clone()).collect::<Vec<_>>());
+        let _ = db::add_directive(&c, id, &crate::mcp::tool_request(&tools));
+    }
     if ai.is_some() || skill.is_some() {
         let mut cfg = ai.unwrap_or_default();
         if let Some(s) = &skill {
@@ -216,12 +226,22 @@ fn attach_commit(st: &AppState, id: i64, tokens: &[String]) -> R<Vec<String>> {
 
 /// The AI account, model and effort chosen for one idea ("" or "auto" = automatic). Skills named at creation are kept.
 #[tauri::command]
-pub fn idea_ai_set(st: State<AppState>, id: i64, account: Option<String>, model: Option<String>, effort: Option<String>) -> R<()> {
+pub fn idea_ai_set(st: State<AppState>, id: i64, account: Option<String>, model: Option<String>, effort: Option<String>, backups: Option<Vec<String>>) -> R<()> {
     let c = st.db.lock();
     let mut cfg = crate::idea_ai::get(&c, id).unwrap_or_default();
     cfg.account = account.unwrap_or_default().trim().to_string();
     cfg.model = model.unwrap_or_default().trim().to_string();
     cfg.effort = effort.unwrap_or_default().trim().to_string();
+    // backup accounts in order (ISSUE-176): only accounts this machine has, never the idea's own, no repeats
+    if let Some(b) = backups {
+        let mut list: Vec<String> = vec![];
+        for a in b.into_iter().map(|x| x.trim().to_string()) {
+            if !a.is_empty() && a != cfg.account && !list.contains(&a) && crate::accounts::find(&c, &a).is_some() {
+                list.push(a);
+            }
+        }
+        cfg.backups = list;
+    }
     if !cfg.account.is_empty() && crate::accounts::find(&c, &cfg.account).is_none() {
         return Err("ไม่พบบัญชี AI นี้".into());
     }
@@ -612,6 +632,10 @@ const SETTING_KEYS: &[&str] = &[
     "language", "lang_follow", "quota_view", "auto_update", "session_idle_min", "power_mode", "power_ideas", "extra_models", "ss_auto", "onboarded", "effort_default", "effort_build", "effort_verify", "send_key", "grace_secs", "telegram_progress", "seen_version", "codex_approval", "web_check",
     // the ideas open as windows on the Workspace page (ISSUE-087)
     "workspace_windows",
+    // translating English content side by side (ISSUE-174)
+    "ct_on", "ct_lang", "ct_account", "ct_fallback",
+    // backup accounts for every idea, in order (ISSUE-176)
+    "backup_accounts",
 ];
 
 #[tauri::command]
@@ -796,6 +820,15 @@ fn browser_shows(p: &std::path::Path) -> bool {
 
 /// A link clicked in an idea's report (ISSUE-148): open the real file — in the browser when it can show it, keeping
 /// `#part` — or the folder in Explorer.
+/// The idea's chat rounds: each prompt with the whole answer, steps, problems in plain words, suggested next prompts
+/// (ISSUE-159).
+#[tauri::command]
+pub fn idea_rounds(st: State<AppState>, id: i64) -> R<Vec<serde_json::Value>> {
+    let c = st.db.lock();
+    let idea = db::get_idea(&c, id).map_err(e)?;
+    Ok(crate::rounds::list(&c, id, &workspace::idea_dir(&st.ws, &idea.slug), 200))
+}
+
 #[tauri::command]
 pub fn open_report_link(app: AppHandle, st: State<AppState>, id: i64, href: String) -> R<()> {
     let idea = db::get_idea(&st.db.lock(), id).map_err(e)?;
@@ -1038,6 +1071,12 @@ fn chat_text(st: &AppState, id: i64, text: &str, tokens: &[String]) -> R<String>
         Some(x) => x,
         None => text.trim().to_string(),
     };
+    // "/tool-<id>": the tool stays with the idea (its chats and bot runs get it) and the AI is asked to use it (ISSUE-171)
+    let (tools, rest) = crate::mcp::tool_tokens(&st.root, &t);
+    if !tools.is_empty() {
+        crate::mcp::add_idea_tools(&st.db.lock(), id, &tools.iter().map(|x| x.id.clone()).collect::<Vec<_>>());
+        t = format!("{}\n\n{}", crate::mcp::tool_request(&tools), if rest.is_empty() { "(no extra request — use it for the current task)".to_string() } else { rest });
+    }
     if !tokens.is_empty() {
         let names = attach_commit(st, id, tokens)?;
         // sent with a chat message: out of the idea's attachment list, still readable by the AI at the new path

@@ -55,7 +55,9 @@ public class MainActivity extends Activity {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest req) {
                 Uri u = req.getUrl();
-                if ("file".equals(u.getScheme())) return false;
+                // only the app's own page loads here: any other file:// (a report's relative link resolved against
+                // android_asset) does not exist and stranded the user on an error page Back could not leave (ISSUE-155)
+                if ("file".equals(u.getScheme())) return !"/android_asset/index.html".equals(u.getPath());
                 // links in reports open in the browser, not inside the app
                 startActivity(new Intent(Intent.ACTION_VIEW, u));
                 return true;
@@ -94,7 +96,9 @@ public class MainActivity extends Activity {
                 v.setPadding(insets.getSystemWindowInsetLeft(), insets.getSystemWindowInsetTop(),
                         insets.getSystemWindowInsetRight(), insets.getSystemWindowInsetBottom());
             }
-            return insets;
+            // the container has taken the bars' space: consume them, or a newer WebView turns the same insets into
+            // env(safe-area-inset-*) and the page pads again — the menu floated over an empty strip (ISSUE-157)
+            return Build.VERSION.SDK_INT >= 30 ? WindowInsets.CONSUMED : insets.consumeSystemWindowInsets();
         });
         setContentView(root);
         if (state != null) web.restoreState(state);
@@ -200,7 +204,10 @@ public class MainActivity extends Activity {
     public void onBackPressed() {
         // let the page close its sheets/dialogs first
         web.evaluateJavascript("window.onBack && window.onBack()", v -> {
-            if (!"true".equals(v)) MainActivity.super.onBackPressed();
+            if ("true".equals(v)) return;
+            // a page the app should never have left (an error page has no onBack): go back to it, not out of the app
+            if (web.canGoBack()) web.goBack();
+            else MainActivity.super.onBackPressed();
         });
     }
 }

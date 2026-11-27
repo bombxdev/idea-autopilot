@@ -26,6 +26,9 @@ pub struct IdeaAi {
     /// any number above 0 reads as the team made from those days ("my-team")
     #[serde(default, deserialize_with = "team_compat")]
     pub team: String,
+    /// accounts to carry on with, in order, when this idea's account hits its limit (ISSUE-176)
+    #[serde(default)]
+    pub backups: Vec<String>,
 }
 
 fn team_compat<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
@@ -38,7 +41,7 @@ fn team_compat<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Erro
 
 impl IdeaAi {
     pub fn is_empty(&self) -> bool {
-        self.account.is_empty() && self.model_forced().is_none() && self.effort_forced().is_none() && self.skills.is_empty() && self.team.is_empty()
+        self.account.is_empty() && self.model_forced().is_none() && self.effort_forced().is_none() && self.skills.is_empty() && self.team.is_empty() && self.backups.is_empty()
     }
 
     pub fn model_forced(&self) -> Option<&str> {
@@ -99,16 +102,16 @@ mod tests {
         };
         crate::accounts::save(&c, &[acct("codex01", true), acct("off01", false)]).unwrap();
         // pinned to an account that is switched off: as if not pinned
-        set(&c, 5, &IdeaAi { account: "off01".into(), model: "auto".into(), effort: "auto".into(), skills: vec![], team: String::new() }).unwrap();
+        set(&c, 5, &IdeaAi { account: "off01".into(), model: "auto".into(), effort: "auto".into(), skills: vec![], team: String::new(), backups: vec![] }).unwrap();
         assert!(pinned_account(&c, 5).is_none());
         assert!(get(&c, 3).is_none());
-        set(&c, 3, &IdeaAi { account: "codex01".into(), model: "gpt-6.1-sol".into(), effort: "high".into(), skills: vec![], team: String::new() }).unwrap();
+        set(&c, 3, &IdeaAi { account: "codex01".into(), model: "gpt-6.1-sol".into(), effort: "high".into(), skills: vec![], team: String::new(), backups: vec![] }).unwrap();
         let a = get(&c, 3).unwrap();
         assert_eq!((a.model_forced(), a.effort_forced()), (Some("gpt-6.1-sol"), Some("high")));
         assert_eq!(pinned_account(&c, 3).as_deref(), Some("codex01"));
         assert!(pinned_account(&c, 4).is_none());
         // "auto" everywhere and nothing pinned = no entry at all
-        set(&c, 3, &IdeaAi { account: String::new(), model: "auto".into(), effort: "auto".into(), skills: vec![], team: String::new() }).unwrap();
+        set(&c, 3, &IdeaAi { account: String::new(), model: "auto".into(), effort: "auto".into(), skills: vec![], team: String::new(), backups: vec![] }).unwrap();
         assert!(get(&c, 3).is_none());
     }
 
